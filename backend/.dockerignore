@@ -1,0 +1,38 @@
+# Ye files container me copy NAHI hongi (COPY . . ke waqt).
+# Fayda: build fast, image chhoti, aur secrets container me nahi jaate.
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+env/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Secrets — ye kabhi image me nahi jaane chahiye
+.env
+.env.*
+*.pem
+*.key
+
+# Git aur docs ki container me koi zaroorat nahi
+.git
+.gitignore
+Dockerfile
+.dockerignore
+README.md
+*.md
+
+# Local database files
+*.db
+*.sqlite3
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
