@@ -37,6 +37,11 @@ pnpm-debug.log*
 # ---------- Docker ----------
 docker-compose.override.yml
 
+# ---------- Personal Notes ----------
+# Setup guides aur command references — sirf local reference ke liye,
+# GitHub par nahi jaayenge
+documents/
+
 # ---------- Editors / OS ----------
 .vscode/*
 !.vscode/extensions.json

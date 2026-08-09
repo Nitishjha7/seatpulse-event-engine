@@ -22,7 +22,7 @@ When 5,000 people click "Book Seat A-12" at the same instant, a naive `SELECT` �
 Only **Docker Desktop** is required — no local Node or Python installation needed.
 
 ```bash
-git clone https://github.com/<your-username>/seatpulse-event-engine.git
+git clone https://github.com/Nitishjha7/seatpulse-event-engine.git
 cd seatpulse-event-engine
 docker compose up --build
 ```
@@ -49,19 +49,8 @@ seatpulse-event-engine/
 │   ├── Dockerfile
 │   └── .dockerignore
 ├── docker-compose.yml      # Orchestrates all services
-├── steps_to_build.md       # Full setup guide, line-by-line explained
-├── docker_commands.md      # Docker command reference
-├── PROJECT_LOG.md          # Running build journal
 └── README.md
 ```
-
-## 📚 Documentation
-
-| File | What's inside |
-|---|---|
-| [steps_to_build.md](steps_to_build.md) | Step-by-step project setup, every Dockerfile line explained |
-| [docker_commands.md](docker_commands.md) | Docker command cheatsheet + troubleshooting |
-| [PROJECT_LOG.md](PROJECT_LOG.md) | Chronological log of everything built |
 
 ## 🗺️ Roadmap
 
@@ -82,5 +71,3 @@ docker compose down               # stop everything
 docker compose logs -f backend    # live backend logs
 docker compose exec backend bash  # shell into backend
 ```
-
-Full reference: [docker_commands.md](docker_commands.md)
