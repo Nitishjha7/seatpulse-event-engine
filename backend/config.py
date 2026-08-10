@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     APP_NAME: str = "SeatPulse API"
     DEBUG: bool = True
 
+    # docker-compose isko environment variable ke through bhejta hai.
+    # "db" host ka naam compose service se aata hai — localhost yahan kaam nahi karega.
+    DATABASE_URL: str = "postgresql+psycopg2://seatpulse:seatpulse_dev_password@db:5432/seatpulse"
+
+    # SQL queries terminal me print karni hain? Debugging me kaam aata hai,
+    # par logs bahut bhar jaate hain — default off.
+    DB_ECHO: bool = False
+
     # Kaun se frontend origins API call kar sakte hain.
     # Comma se alag karke .env me likho: CORS_ORIGINS=http://localhost:5173,http://localhost:3000
     # Production me yahan asli domain aayega — ["*"] nahi.

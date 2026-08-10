@@ -1,4 +1,25 @@
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: seatpulse_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      # Host pe expose kar rahe hain taki pgAdmin/DBeaver se connect kar sako.
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      # Named volume — container delete hone par bhi data bacha rehta hai.
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # Postgres "started" hone aur "connections accept karne" me farak hai.
+      # Ye check pass hone par hi backend start hoga.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   backend:
     build: ./backend
     container_name: fastapi_backend
@@ -6,6 +27,14 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+    environment:
+      # "db" = compose service ka naam. Container network me yahi hostname hai.
+      # localhost yahan kaam NAHI karega — wo backend container ko khud ko point karega.
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    depends_on:
+      db:
+        # Sirf "started" nahi — DB ready hone tak wait karo.
+        condition: service_healthy
 
   frontend:
     build: ./frontend
@@ -17,3 +46,6 @@ services:
       - /app/node_modules
     depends_on:
       - backend
+
+volumes:
+  postgres_data:

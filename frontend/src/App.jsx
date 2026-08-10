@@ -71,6 +71,18 @@ function App() {
                 <dd className="text-slate-300">{data.version}</dd>
               </div>
               <div className="flex justify-between">
+                <dt className="text-slate-500">Database</dt>
+                <dd
+                  className={
+                    data.database === 'connected'
+                      ? 'text-emerald-300'
+                      : 'text-rose-300'
+                  }
+                >
+                  {data.database}
+                </dd>
+              </div>
+              <div className="flex justify-between">
                 <dt className="text-slate-500">Server time</dt>
                 <dd className="text-slate-300">
                   {new Date(data.time).toLocaleTimeString()}
