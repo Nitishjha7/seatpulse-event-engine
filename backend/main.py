@@ -9,11 +9,6 @@ from config import settings
 from database import get_db
 from models import Event, Seat
 
-app = FastAPI(
-    title=settings.APP_NAME,
-    description="High-concurrency event ticketing engine",
-    version="0.2.0",
-)
 
 # CORS: frontend 5173 pe hai, backend 8000 pe. Browser inhe alag websites
 # maanta hai, isliye explicitly allow karna padta hai.
