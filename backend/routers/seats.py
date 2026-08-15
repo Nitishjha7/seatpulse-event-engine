@@ -16,6 +16,7 @@ from config import settings
 from database import get_db
 from events_broadcast import broadcast_seat_update
 from models import SEAT_AVAILABLE, SEAT_LOCKED, Event, Seat, User, utcnow
+from rate_limit import SEAT_LOCK, limit_user
 from redis_client import (
     acquire_seat_lock,
     get_lock_owner,
@@ -95,7 +96,13 @@ def get_seat(seat_id: int, db: Session = Depends(get_db)):
     return seat
 
 
-@router.post("/seats/{seat_id}/lock", response_model=SeatLockOut)
+@router.post(
+    "/seats/{seat_id}/lock",
+    response_model=SeatLockOut,
+    # ⭐ Flash sale ka sabse garam endpoint — bots yahi hammer karte hain.
+    # 15 burst allowed (user 4-5 seats jaldi try kar sakta hai), phir 5/s.
+    dependencies=[Depends(limit_user(SEAT_LOCK))],
+)
 def lock_seat(
     seat_id: int,
     db: Session = Depends(get_db),

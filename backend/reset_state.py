@@ -31,12 +31,19 @@ def reset():
     finally:
         db.close()
 
-    # Sirf apni lock keys — flushall poora Redis udata hai, jo aage
-    # (jab Redis me aur cheezein hongi) galat hoga.
-    keys = list(redis_client.scan_iter("seat:*:lock"))
-    if keys:
-        redis_client.delete(*keys)
-    print(f"✅ {len(keys)} Redis locks saaf kiye")
+    # Pattern-wise delete karte hain, `flushall` nahi.
+    #
+    # flushall REFRESH TOKENS bhi uda deta — matlab har tester ka logout
+    # ho jata testing ke beech me. Ab wo bache rehte hain.
+    for pattern, label in [
+        ("seat:*:lock", "seat locks"),
+        ("rl:*", "rate limit buckets"),
+        ("idem:*", "idempotency keys"),
+    ]:
+        keys = list(redis_client.scan_iter(pattern))
+        if keys:
+            redis_client.delete(*keys)
+        print(f"✅ {len(keys)} {label} saaf kiye")
 
 
 if __name__ == "__main__":

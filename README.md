@@ -69,6 +69,8 @@ seatpulse-event-engine/
 │   ├── schemas.py          # Pydantic request/response contracts
 │   ├── auth.py             # Password hashing, JWT, current-user dependency
 │   ├── redis_client.py     # Seat locking (SET NX EX + Lua release)
+│   ├── rate_limit.py       # Token bucket in Lua
+│   ├── idempotency.py      # Replay-safe POST handling
 │   ├── websocket.py        # Connection manager + Redis pub/sub fan-out
 │   ├── routers/            # auth, events, seats, bookings
 │   ├── tests/              # Concurrency + auth test suite
@@ -116,7 +118,7 @@ seatpulse-event-engine/
 | `POST` | `/api/seats/{id}/lock` | Hold a seat for 5 minutes — `409` if held by someone else |
 | `DELETE` | `/api/seats/{id}/lock` | Release your hold (safe: only your own lock) |
 | `GET` | `/api/seats/{id}/lock` | Who holds the seat and for how long |
-| `POST` | `/api/bookings` | Book a seat — returns `409` if already taken |
+| `POST` | `/api/bookings` | Book a seat — returns `409` if already taken. Accepts an `Idempotency-Key` header |
 | `GET` | `/api/bookings` | Your bookings |
 | `DELETE` | `/api/bookings/{id}` | Cancel your booking, releasing the seat |
 | `GET` | `/api/health` | Service, database and Redis status |
@@ -135,6 +137,10 @@ seatpulse-event-engine/
 | `GET` | `/api/auth/google/login` | Start Google OAuth |
 
 Everything that acts on a user's behalf — locking, booking, cancelling — takes the user from the token, never from the request body.
+
+**Rate limiting** uses a Redis token bucket implemented in Lua, so the read-modify-write is atomic. Limits are keyed by **user or email, never by IP** — behind a proxy every request appears to come from one address, and `X-Forwarded-For` can be spoofed, so per-IP throttling belongs at the edge (nginx, Cloudflare) rather than in the application. Login only spends its budget on *failed* attempts, so a legitimate user who signs in often is never throttled. Every response carries `X-RateLimit-Limit` and `X-RateLimit-Remaining`; a `429` adds `Retry-After`. If Redis is unreachable the limiter fails **open** — throttling is a protection, not a correctness guarantee, and correctness already has three layers of its own.
+
+**Idempotency:** `POST /api/bookings` accepts an `Idempotency-Key`. The first response is cached in Redis for 24 hours against that key plus a fingerprint of the request body, so a double-click or a network retry returns the original booking (with `X-Idempotent-Replay: true`) rather than creating a second one. Reusing a key with a *different* body is rejected with `422` instead of silently replaying the wrong answer.
 
 Interactive docs at [`/docs`](http://localhost:8000/docs).
 
@@ -188,7 +194,7 @@ docker compose --profile loadtest run --rm locust \
     --host http://backend:8000
 
 docker compose exec backend python verify_integrity.py
-docker compose exec backend pytest tests/ -v         # 6 concurrency tests
+docker compose exec backend pytest tests/ -v         # 20 auth + concurrency tests
 ```
 
 ### What load testing actually caught
@@ -228,13 +234,13 @@ Result on the same 200-user flash sale: **1,250 requests with 58 failures and a 
 - [x] Admission control — bounded concurrency so the connection pool cannot be exhausted
 - [x] Dashboard UI — sidebar navigation, routed pages, and a shared booking context so one WebSocket survives navigation
 - [x] Event detail page, booking confirmation modal, and motion-safe animations (`prefers-reduced-motion`, `:focus-visible`)
+- [x] Rate limiting — Redis token bucket in Lua, scoped to the user or email rather than the IP
+- [x] Idempotency keys — a replayed booking returns the original result instead of creating a second one
 
 ### Planned
 
 Ordered by dependency — each item leans on the ones above it. None of these are built yet.
 
-- [ ] **Rate limiting** — Redis token bucket per IP and per user, so flash-sale bots cannot outrun real people
-- [ ] **Idempotency keys** — a replayed booking or payment returns the original result instead of executing twice
 - [ ] **RBAC** — organizer / attendee / admin roles behind a `require_role(...)` dependency
 - [ ] **Organizer portal** — create events, define seat pricing, view sales
 - [ ] **Background task queue** (ARQ + Redis) — QR code, PDF ticket and email generated outside the request, so checkout stays instant

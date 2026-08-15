@@ -54,6 +54,7 @@ from auth import (
 from config import settings
 from database import get_db
 from models import User
+from rate_limit import LOGIN_FAIL, REGISTER, check, client_ip, enforce
 from redis_client import redis_client
 from schemas import (
     AuthConfigOut,
@@ -106,8 +107,17 @@ def auth_config():
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-def register(payload: RegisterRequest, response: Response, db: Session = Depends(get_db)):
+def register(
+    payload: RegisterRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
     """Naya account. Signup ke baad seedha logged in — dobara login nahi karna padta."""
+    # Ek IP se account farm banane se rokta hai.
+    # Yahan IP hi use karna padta hai — abhi koi identity hai hi nahi.
+    enforce(response, f"register:{client_ip(request)}", REGISTER)
+
     user = User(
         email=payload.email.lower(),
         hashed_password=hash_password(payload.password),
@@ -130,7 +140,28 @@ def register(payload: RegisterRequest, response: Response, db: Session = Depends
 
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, response: Response, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(User.email == payload.email.lower()))
+    email = payload.email.lower()
+
+    # ---- Brute force protection ----
+    # ⭐ Limit EMAIL par hai, IP par nahi. Do wajah:
+    #
+    #   1. IP par lagate to office/college ke saare log ek doosre ki wajah
+    #      se block ho jaate (sab ek hi NAT IP share karte hain)
+    #   2. Attacker IP badal sakta hai, par jis account ko todna hai uska
+    #      email nahi badal sakta — isliye email par limit zyada targeted hai
+    #
+    # Aur ye budget sirf GALAT password par kharch hota hai (neeche dekho).
+    # Sahi login kabhi rate limit me nahi phasta.
+    bucket = f"login:{email}"
+    allowed, _, retry_after = check(bucket, LOGIN_FAIL, cost=0)   # cost=0 = sirf jhaank rahe hain
+    if not allowed:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Bahut zyada galat koshishein — thodi der baad try karo",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    user = db.scalar(select(User).where(User.email == email))
 
     # ⚠️ Read ke baad transaction turant band kar do.
     #
@@ -147,6 +178,10 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
     # Alag message dete to koi bhi email daal ke pata kar leta ki kaun
     # registered hai (user enumeration).
     if user is None or not verify_password(payload.password, user.hashed_password):
+        # Sirf FAIL hone par token kharch hota hai.
+        # Isliye ek genuine user jo roz login karta hai wo kabhi limit me
+        # nahi phasta — sirf galat guesses count hote hain.
+        check(bucket, LOGIN_FAIL, cost=1)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Email ya password galat hai")
 
     if not user.is_active:

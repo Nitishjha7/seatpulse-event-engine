@@ -73,6 +73,13 @@ class Settings(BaseSettings):
     def google_enabled(self) -> bool:
         return bool(self.GOOGLE_CLIENT_ID and self.GOOGLE_CLIENT_SECRET)
 
+    # Rate limiting on/off.
+    #
+    # Load testing ke waqt kaam aata hai — limits per-user hain, to normal
+    # load test waise bhi pass ho jata hai, par single-user stress test
+    # karna ho to isse band kar sakte ho.
+    RATE_LIMIT_ENABLED: bool = True
+
     # Seat lock kitni der chalega (seconds).
     # 300 = 5 minute — itna time user ko payment ke liye milta hai.
     # Iske baad Redis khud key delete kar deta hai aur seat wapas available.

@@ -12,7 +12,7 @@ Redis ne correctness nahi badli — usne sirf speed di. Isi baat par
 interview me sabse zyada baat hoti hai.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from auth import get_current_user
 from database import get_db
 from events_broadcast import broadcast_seat_update
+from idempotency import Idempotency
 from models import (
     BOOKING_CANCELLED,
     BOOKING_CONFIRMED,
@@ -31,15 +32,23 @@ from models import (
     Seat,
     User,
 )
+from rate_limit import BOOKING, limit_user
 from redis_client import acquire_seat_lock, get_lock_owner, release_seat_lock
 from schemas import BookingCreate, BookingDetail, BookingOut
 
 router = APIRouter(prefix="/api/bookings", tags=["bookings"])
 
 
-@router.post("", response_model=BookingOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=BookingOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(limit_user(BOOKING))],
+)
 def create_booking(
     payload: BookingCreate,
+    request: Request,
+    response: Response,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -51,6 +60,36 @@ def create_booking(
 
     User token se aata hai. Pehle body me `user_id` jata tha — koi bhi
     kisi aur ke naam booking kar sakta tha.
+
+    ---- Idempotency ----
+    Client `Idempotency-Key` header bhej sakta hai. Wahi key dubara aayi
+    to naya kaam nahi hota — pehla jawab wapas milta hai. Double-click
+    aur network retry dono isse safe ho jaate hain.
+    """
+    idem = Idempotency(request, user.id, "booking", payload.model_dump())
+    cached = idem.begin()
+    if cached:
+        return idem.replay(response, cached)
+
+    try:
+        booking = _perform_booking(payload, db, user)
+    except Exception:
+        # Fail hua to idempotency claim chhod do — warna user usi key se
+        # 60 second tak retry hi nahi kar payega
+        idem.abort()
+        raise
+
+    result = BookingOut.model_validate(booking).model_dump(mode="json")
+    idem.complete(result, status_code=status.HTTP_201_CREATED)
+    return result
+
+
+def _perform_booking(payload: BookingCreate, db: Session, user: User) -> Booking:
+    """
+    Asli booking logic — teeno defence layers.
+
+    Alag function isliye taki upar idempotency ka wrapper saaf dikhe aur
+    ye logic bilkul waisa ka waisa rahe jaisa Phase 4 me tha.
     """
     seat = db.get(Seat, payload.seat_id)
     if seat is None:

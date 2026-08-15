@@ -80,6 +80,12 @@ async function request(path, options = {}, { retry = true } = {}) {
     }
     const error = new Error(message);
     error.status = res.status;    // 409 ko UI me alag treat karna hai
+
+    // Rate limit hone par server batata hai kitni der ruko
+    if (res.status === 429) {
+      error.retryAfter = Number(res.headers.get("Retry-After")) || null;
+    }
+
     throw error;
   }
 
@@ -132,9 +138,21 @@ export const unlockSeat = (seatId) =>
 
 export const getMyBookings = () => request("/api/bookings");
 
-export const createBooking = (seatId) =>
+/**
+ * Seat book karo.
+ *
+ * `Idempotency-Key` bhejte hain taki double-click ya network retry se
+ * do bookings na banein. Wahi key dubara jaaye to server naya kaam nahi
+ * karta — pehla wala jawab wapas de deta hai.
+ *
+ * Key har ATTEMPT ke liye nayi banti hai, har seat ke liye nahi — matlab
+ * ek hi confirm click ka retry safe hai, par user jaan-boojh ke dubara
+ * book karna chahe to wo alag request hai.
+ */
+export const createBooking = (seatId, idempotencyKey = crypto.randomUUID()) =>
   request("/api/bookings", {
     method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
     body: JSON.stringify({ seat_id: seatId }),
   });
 

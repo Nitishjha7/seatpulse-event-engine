@@ -25,6 +25,17 @@ import { useWebSocket } from '../hooks/useWebSocket'
 
 const BookingContext = createContext(null)
 
+/** Error ko user ke padhne layak text me badlo. */
+function errorText(err) {
+  if (err.status === 429) {
+    // Server Retry-After header me batata hai kitni der ruko
+    const wait = err.retryAfter ? ` ${err.retryAfter} second ruk ke try karo.` : ''
+    return `🐢 Thoda dheere!${wait}`
+  }
+  if (err.status === 409) return `⚠️ ${err.message}`
+  return err.message
+}
+
 export function useBooking() {
   const ctx = useContext(BookingContext)
   if (!ctx) throw new Error('useBooking ko BookingProvider ke andar hi use karo')
@@ -185,10 +196,7 @@ export function BookingProvider({ children }) {
     } catch (err) {
       setSelectedSeat(null)
       setLockSecondsLeft(0)
-      setMessage({
-        type: 'error',
-        text: err.status === 409 ? `⚠️ ${err.message}` : err.message,
-      })
+      setMessage({ type: 'error', text: errorText(err) })
     } finally {
       setLocking(false)
       await refresh(event.id)
@@ -224,10 +232,7 @@ export function BookingProvider({ children }) {
       setSelectedSeat(null)
       setLockSecondsLeft(0)
     } catch (err) {
-      setMessage({
-        type: 'error',
-        text: err.status === 409 ? `⚠️ ${err.message}` : err.message,
-      })
+      setMessage({ type: 'error', text: errorText(err) })
     } finally {
       setBooking(false)
       await refresh(event.id)

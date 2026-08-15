@@ -161,6 +161,120 @@ def test_cannot_cancel_someone_elses_booking(client, tokens, free_seat):
 
 
 # ---------------------------------------------------------------------------
+# Rate limiting
+# ---------------------------------------------------------------------------
+
+def test_rate_limit_blocks_a_burst(client, tokens, free_seat):
+    """
+    Ek user 40 requests ek saath maare — kuch 429 milne chahiye.
+
+    Token bucket 15 burst allow karta hai, phir 5/s refill. Serial curl
+    loop me bhi refill hota rehta hai, isliye "kuch 429" check kar rahe
+    hain, "theek 25" nahi — wo flaky hota.
+    """
+    seat_id = free_seat['id']
+    token = tokens[3]
+
+    codes = [
+        client.post(f"/api/seats/{seat_id}/lock", headers=_headers(token)).status_code
+        for _ in range(40)
+    ]
+
+    assert 429 in codes, f"Rate limit laga hi nahi: {sorted(set(codes))}"
+    # Shuru wali requests to pass honi chahiye — limiter sab kuch block na kare
+    assert codes[0] in (200, 409)
+
+
+def test_rate_limit_sends_headers(client, tokens, free_seat):
+    """Client ko pata chalna chahiye ki wo limit ke kitna paas hai."""
+    res = client.post(
+        f"/api/seats/{free_seat['id']}/lock", headers=_headers(tokens[4])
+    )
+    assert "X-RateLimit-Limit" in res.headers
+    assert "X-RateLimit-Remaining" in res.headers
+
+
+def test_rate_limit_is_per_user_not_global(client, tokens, free_seat):
+    """
+    Ek user ke block hone se DUSRA user affect nahi hona chahiye.
+
+    Ye sabse important rate limit test hai — global limiter poore system
+    ko ek bot ki wajah se band kar deta.
+    """
+    seat_id = free_seat['id']
+    victim, other = tokens[5], tokens[6]
+
+    # Ek user ka bucket khatam karo
+    for _ in range(40):
+        client.post(f"/api/seats/{seat_id}/lock", headers=_headers(victim))
+
+    # Dusre user ko 429 nahi milna chahiye
+    res = client.post(f"/api/seats/{seat_id}/lock", headers=_headers(other))
+    assert res.status_code != 429, "Ek user ke limit se dusra block ho gaya"
+
+
+def test_wrong_password_eventually_rate_limited(client):
+    """Brute force protection — galat password baar baar dene par 429."""
+    email = "user9@seatpulse.dev"
+
+    codes = [
+        client.post(
+            "/api/auth/login", json={"email": email, "password": f"galat{i}"}
+        ).status_code
+        for i in range(12)
+    ]
+
+    assert 429 in codes, f"Brute force nahi ruka: {sorted(set(codes))}"
+
+
+# ---------------------------------------------------------------------------
+# Idempotency
+# ---------------------------------------------------------------------------
+
+def test_same_idempotency_key_returns_same_booking(client, tokens, free_seat):
+    """
+    ⭐ Double-click ka asli test.
+
+    Wahi key dubara -> wahi booking, aur database me sirf EK row.
+    """
+    seat_id = free_seat['id']
+    token = tokens[0]
+    headers = {**_headers(token), "Idempotency-Key": f"test-{seat_id}-once"}
+
+    first = client.post("/api/bookings", json={"seat_id": seat_id}, headers=headers)
+    assert first.status_code == 201
+
+    second = client.post("/api/bookings", json={"seat_id": seat_id}, headers=headers)
+    assert second.status_code == 201
+    assert second.json()["id"] == first.json()["id"], "Alag booking ban gayi!"
+    assert second.headers.get("X-Idempotent-Replay") == "true"
+
+    # Sabse zaroori check — DB me kitni bookings actually bani
+    mine = client.get("/api/bookings", headers=_headers(token)).json()
+    for_seat = [b for b in mine if b["seat_id"] == seat_id and b["status"] == "confirmed"]
+    assert len(for_seat) == 1
+
+
+def test_same_key_different_body_is_rejected(client, tokens, free_seat):
+    """Wahi key alag data ke saath = bug ya attack. Chupchap purana jawab mat do."""
+    seat_id = free_seat['id']
+    headers = {**_headers(tokens[0]), "Idempotency-Key": f"test-{seat_id}-mismatch"}
+
+    assert client.post("/api/bookings", json={"seat_id": seat_id}, headers=headers).status_code == 201
+
+    res = client.post("/api/bookings", json={"seat_id": seat_id + 1}, headers=headers)
+    assert res.status_code == 422
+
+
+def test_booking_works_without_idempotency_key(client, tokens, free_seat):
+    """Header optional hona chahiye — purane clients tootne nahi chahiye."""
+    res = client.post(
+        "/api/bookings", json={"seat_id": free_seat['id']}, headers=_headers(tokens[0])
+    )
+    assert res.status_code == 201
+
+
+# ---------------------------------------------------------------------------
 # Concurrency
 # ---------------------------------------------------------------------------
 
