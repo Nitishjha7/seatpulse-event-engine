@@ -82,6 +82,15 @@ def seed():
                 venue="DY Patil Stadium, Mumbai",
                 starts_at=utcnow() + timedelta(days=30),
                 total_seats=len(ROWS) * SEATS_PER_ROW,
+                category="Music",
+                description=(
+                    "Experience the magical voice of Arijit Singh live in concert. "
+                    "A night filled with soulful music, unforgettable moments and "
+                    "pure emotions.\n\n"
+                    "Gates open 90 minutes before showtime. Seats are held for "
+                    "5 minutes once selected — confirm your booking before the "
+                    "timer runs out."
+                ),
             )
             db.add(event)
             db.flush()   # id chahiye seats banane ke liye, isliye flush

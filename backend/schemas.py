@@ -29,6 +29,8 @@ class EventOut(ORMModel):
     venue: str
     starts_at: datetime
     total_seats: int
+    description: str | None = None
+    category: str | None = None
 
 
 class EventDetail(EventOut):
@@ -36,6 +38,9 @@ class EventDetail(EventOut):
     available_seats: int
     booked_seats: int
     locked_seats: int
+    # Detail page pe "₹800 – ₹2500" dikhane ke liye. None jab koi seat na ho.
+    min_price: float | None = None
+    max_price: float | None = None
 
 
 # ---------- Seat ----------

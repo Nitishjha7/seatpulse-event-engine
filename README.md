@@ -79,9 +79,12 @@ seatpulse-event-engine/
 ├── frontend/
 │   ├── src/
 │   │   ├── auth/           # AuthContext (token in memory) + login page
-│   │   ├── components/     # SeatGrid, BookingPanel
+│   │   ├── booking/        # Shared booking state + the single WebSocket
+│   │   ├── layout/         # AppShell, Sidebar, Topbar, icons
+│   │   ├── pages/          # Dashboard, Events, EventDetail, MyBookings, Profile
+│   │   ├── components/     # SeatGrid, HoldCard, EventHero, BookingConfirmedModal, …
 │   │   ├── hooks/          # useWebSocket (reconnect with backoff)
-│   │   ├── App.jsx
+│   │   ├── App.jsx         # Routes + auth gate
 │   │   └── api.js          # Single place for backend calls
 │   └── Dockerfile
 ├── loadtest/               # Locust scenarios
@@ -107,7 +110,7 @@ seatpulse-event-engine/
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET` | `/api/events` | List all events |
-| `GET` | `/api/events/{id}` | Event detail with seat counts by status |
+| `GET` | `/api/events/{id}` | Event detail — description, seat counts by status, price range |
 | `GET` | `/api/events/{id}/seats` | All seats for an event (powers the grid) |
 | `GET` | `/api/seats/{id}` | Single seat |
 | `POST` | `/api/seats/{id}/lock` | Hold a seat for 5 minutes — `409` if held by someone else |
@@ -146,7 +149,7 @@ WebSocket messages are fanned out through a Redis pub/sub channel per event, so 
 | Table | Purpose |
 |---|---|
 | `users` | Accounts — bcrypt password (nullable for Google users), `google_id`, avatar |
-| `events` | Event name, venue, start time, total seats |
+| `events` | Name, venue, start time, total seats, description, category |
 | `seats` | Position, price, `status`, **`version`** (optimistic lock), lock holder + expiry |
 | `bookings` | Links user ↔ seat, with a **partial unique index** enforcing one confirmed booking per seat |
 
@@ -223,6 +226,8 @@ Result on the same 200-user flash sale: **1,250 requests with 58 failures and a 
 - [x] JWT authentication — access token in memory, refresh token in an `httpOnly` cookie, revocable via Redis
 - [x] Google OAuth (Authorization Code flow)
 - [x] Admission control — bounded concurrency so the connection pool cannot be exhausted
+- [x] Dashboard UI — sidebar navigation, routed pages, and a shared booking context so one WebSocket survives navigation
+- [x] Event detail page, booking confirmation modal, and motion-safe animations (`prefers-reduced-motion`, `:focus-visible`)
 
 ### Planned
 

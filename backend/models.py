@@ -21,6 +21,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
     text,
 )
@@ -81,6 +82,13 @@ class Event(Base):
     venue: Mapped[str] = mapped_column(String(200))
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     total_seats: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Event detail page ke liye. Text (String nahi) kyunki description
+    # lambi ho sakti hai aur uspe koi length limit lagane ka matlab nahi.
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # "Music", "Comedy", "Sports" — UI me tag ki tarah dikhta hai
+    category: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     # cascade: event delete hua to uski seats bhi jaayengi
