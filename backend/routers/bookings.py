@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import get_db
+from events_broadcast import broadcast_seat_update
 from models import (
     BOOKING_CANCELLED,
     BOOKING_CONFIRMED,
@@ -144,6 +145,9 @@ def create_booking(payload: BookingCreate, db: Session = Depends(get_db)):
     # Redis me key pade rehne ka koi faayda nahi.
     release_seat_lock(payload.seat_id, payload.user_id)
 
+    # Sab clients ko batao — unke grid me seat turant laal ho jayegi
+    broadcast_seat_update(db, payload.seat_id, "booked")
+
     db.refresh(booking)
     return booking
 
@@ -203,5 +207,9 @@ def cancel_booking(booking_id: int, db: Session = Depends(get_db)):
     )
 
     db.commit()
+
+    # Seat wapas available — sab clients ke grid me turant hari ho jayegi
+    broadcast_seat_update(db, booking.seat_id, "cancelled")
+
     db.refresh(booking)
     return booking

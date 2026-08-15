@@ -15,6 +15,7 @@ import {
 } from './api'
 import BookingPanel from './components/BookingPanel'
 import SeatGrid from './components/SeatGrid'
+import { useWebSocket } from './hooks/useWebSocket'
 
 function App() {
   const [health, setHealth] = useState(null)
@@ -77,6 +78,36 @@ function App() {
     }
     init()
   }, [refresh])
+
+  /**
+   * ⭐ WebSocket se live seat updates.
+   *
+   * Pehle har booking ke baad poora data dubara maangte the (refresh).
+   * Ab sirf badli hui seat ka update aata hai — aur wo bhi bina maange,
+   * chahe change kisi DUSRE user ne kiya ho.
+   */
+  const handleSeatUpdate = useCallback((updatedSeat) => {
+    // Sirf wo ek seat replace karo, poori list nahi
+    setSeats((prev) =>
+      prev.map((s) => (s.id === updatedSeat.id ? updatedSeat : s)),
+    )
+
+    // Counts ke liye kuch karne ki zaroorat nahi — wo `seats` se derive
+    // hote hain (neeche `counts`), isliye apne aap sahi ho jaate hain.
+
+    // Meri hold ki hui seat kisi aur ke paas chali gayi? (TTL expire hone ke
+    // baad dusre ne le li) — to selection saaf kar do
+    setSelectedSeat((prev) => {
+      if (!prev || prev.id !== updatedSeat.id) return prev
+      const stillMine =
+        updatedSeat.status === 'locked' && updatedSeat.locked_by === userRef.current?.id
+      if (stillMine) return updatedSeat      // fresh version number mil gaya
+      setLockSecondsLeft(0)
+      return null
+    })
+  }, [])
+
+  const { status: wsStatus } = useWebSocket(event?.id ?? null, handleSeatUpdate)
 
   /**
    * Lock ka countdown.
@@ -227,8 +258,16 @@ function App() {
     )
   }
 
+  // Counts hamesha seats se nikaalte hain, event object se nahi.
+  // Wajah: WebSocket update seat badalta hai — counts apne aap sahi ho jaate
+  // hain, server se dobara poochhna nahi padta.
+  const counts = seats.reduce(
+    (acc, s) => ({ ...acc, [s.status]: (acc[s.status] || 0) + 1 }),
+    {},
+  )
+
   return (
-    <Shell health={health} user={user}>
+    <Shell health={health} user={user} wsStatus={wsStatus}>
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
         <SeatGrid
           seats={seats}
@@ -239,6 +278,7 @@ function App() {
         />
         <BookingPanel
           event={event}
+          counts={counts}
           selectedSeat={selectedSeat}
           lockSecondsLeft={lockSecondsLeft}
           onBook={handleBook}
@@ -253,7 +293,7 @@ function App() {
   )
 }
 
-function Shell({ children, health, user }) {
+function Shell({ children, health, user, wsStatus }) {
   return (
     <div className="min-h-screen bg-slate-950 p-6 text-slate-100">
       <div className="mx-auto max-w-5xl">
@@ -273,6 +313,19 @@ function Shell({ children, health, user }) {
                 <span className="text-slate-400">DB</span>
                 <Dot ok={health.redis === 'connected'} />
                 <span className="text-slate-400">Redis</span>
+                {/* Live connection ka status — open hone par pulse karta hai */}
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    wsStatus === 'open'
+                      ? 'animate-pulse bg-emerald-400'
+                      : wsStatus === 'connecting'
+                        ? 'bg-amber-400'
+                        : 'bg-rose-500'
+                  }`}
+                />
+                <span className="text-slate-400">
+                  {wsStatus === 'open' ? 'Live' : wsStatus === 'connecting' ? 'Connecting' : 'Offline'}
+                </span>
                 <span className="text-slate-600">· v{health.version}</span>
               </span>
             </div>

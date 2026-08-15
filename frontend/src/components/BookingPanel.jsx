@@ -12,6 +12,7 @@ function formatTime(seconds) {
 
 export default function BookingPanel({
   event,
+  counts,
   selectedSeat,
   lockSecondsLeft,
   onBook,
@@ -36,9 +37,11 @@ export default function BookingPanel({
           </p>
 
           <div className="mt-4 grid grid-cols-3 gap-2 border-t border-slate-800 pt-4 text-center">
-            <Stat value={event.available_seats} label="Available" className="text-emerald-300" />
-            <Stat value={event.locked_seats} label="Held" className="text-amber-300" />
-            <Stat value={event.booked_seats} label="Booked" className="text-rose-300" />
+            {/* counts seats se derive hote hain — WebSocket update aate hi
+                ye apne aap badal jaate hain, server call ke bina */}
+            <Stat value={counts.available || 0} label="Available" className="text-emerald-300" />
+            <Stat value={counts.locked || 0} label="Held" className="text-amber-300" />
+            <Stat value={counts.booked || 0} label="Booked" className="text-rose-300" />
           </div>
         </div>
       )}

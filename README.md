@@ -91,9 +91,16 @@ seatpulse-event-engine/
 | `POST` | `/api/bookings` | Book a seat — returns `409` if already taken |
 | `GET` | `/api/bookings?user_id=` | A user's bookings |
 | `DELETE` | `/api/bookings/{id}` | Cancel a booking, releasing the seat |
-| `GET` | `/api/health` | Service + database status |
+| `GET` | `/api/health` | Service, database and Redis status |
+| `WS` | `/ws/events/{id}` | Live seat updates — pushed on every lock, release, booking or cancellation |
 
 Interactive docs at [`/docs`](http://localhost:8000/docs).
+
+WebSocket messages are fanned out through a Redis pub/sub channel per event, so a change processed by one worker reaches clients connected to any other worker:
+
+```json
+{ "type": "seat_update", "action": "locked", "seat": { "id": 42, "status": "locked", "locked_by": 3, ... } }
+```
 
 ## 🗄️ Data Model
 
@@ -114,7 +121,7 @@ Interactive docs at [`/docs`](http://localhost:8000/docs).
 - [x] Pydantic schemas + CRUD APIs + interactive seat grid
 - [x] Optimistic locking — verified with 20 concurrent requests on one seat
 - [x] Redis distributed seat locking (`SET NX EX` + Lua-based safe release)
-- [ ] WebSocket real-time seat state broadcasting
+- [x] WebSocket real-time seat broadcasting via Redis pub/sub (multi-worker safe)
 - [ ] JWT authentication
 - [ ] Load testing (Locust) to prove zero overselling
 

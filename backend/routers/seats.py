@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from config import settings
 from database import get_db
+from events_broadcast import broadcast_seat_update
 from models import SEAT_AVAILABLE, SEAT_LOCKED, Event, Seat, User, utcnow
 from redis_client import (
     acquire_seat_lock,
@@ -37,13 +38,20 @@ def release_expired_locks(db: Session, event_id: int) -> None:
     Isliye seats padhne se pehle ek sasta UPDATE chala dete hain.
     Ye "lazy cleanup" hai — background job/cron ki zaroorat nahi.
     """
-    db.execute(
-        update(Seat)
-        .where(
+    expired = db.scalars(
+        select(Seat.id).where(
             Seat.event_id == event_id,
             Seat.status == SEAT_LOCKED,
             Seat.locked_until < utcnow(),
         )
+    ).all()
+
+    if not expired:
+        return
+
+    db.execute(
+        update(Seat)
+        .where(Seat.id.in_(expired))
         .values(
             status=SEAT_AVAILABLE,
             locked_by=None,
@@ -53,6 +61,10 @@ def release_expired_locks(db: Session, event_id: int) -> None:
         .execution_options(synchronize_session=False)
     )
     db.commit()
+
+    # Expire hui seats ka bhi broadcast — dusre tabs me wo turant hari ho jayengi
+    for seat_id in expired:
+        broadcast_seat_update(db, seat_id, "expired")
 
 
 @router.get("/events/{event_id}/seats", response_model=list[SeatOut])
@@ -138,6 +150,9 @@ def lock_seat(seat_id: int, payload: SeatLockRequest, db: Session = Depends(get_
     )
     db.commit()
 
+    # Sab connected clients ko batao — unke grid me ye seat turant peeli ho jayegi
+    broadcast_seat_update(db, seat_id, "locked")
+
     return SeatLockOut(
         seat_id=seat_id,
         locked_by=payload.user_id,
@@ -172,6 +187,7 @@ def unlock_seat(seat_id: int, user_id: int, db: Session = Depends(get_db)):
             .execution_options(synchronize_session=False)
         )
         db.commit()
+        broadcast_seat_update(db, seat_id, "released")
 
     # released=False bhi normal hai — lock TTL pe khud expire ho chuka hoga.
     # Isliye error nahi de rahe.
