@@ -1,130 +1,199 @@
-import { useEffect, useState } from 'react'
-import { getHealth, API_URL } from './api'
+import { useCallback, useEffect, useState } from 'react'
+
+import {
+  API_URL,
+  cancelBooking,
+  createBooking,
+  getEvent,
+  getEventSeats,
+  getEvents,
+  getHealth,
+  getMe,
+  getMyBookings,
+} from './api'
+import BookingPanel from './components/BookingPanel'
+import SeatGrid from './components/SeatGrid'
 
 function App() {
-  // Teen states: checking (abhi poochh rahe hain), online, offline
-  const [status, setStatus] = useState('checking')
-  const [data, setData] = useState(null)
-  const [error, setError] = useState(null)
+  const [health, setHealth] = useState(null)
+  const [user, setUser] = useState(null)
 
-  // Backend se health poochho
-  async function checkBackend() {
-    setStatus('checking')
-    setError(null)
+  const [event, setEvent] = useState(null)
+  const [seats, setSeats] = useState([])
+  const [bookings, setBookings] = useState([])
+
+  const [selectedSeat, setSelectedSeat] = useState(null)
+  const [booking, setBooking] = useState(false)
+  const [message, setMessage] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [fatalError, setFatalError] = useState(null)
+
+  /**
+   * Event + seats + bookings ek saath refresh karo.
+   *
+   * Abhi har booking ke baad poora data dubara maang rahe hain.
+   * Phase 5 me WebSocket ye replace kar dega — sirf badli hui seat ka
+   * update aayega, poori list nahi.
+   */
+  const refresh = useCallback(
+    async (eventId, userId) => {
+      const [eventData, seatData, bookingData] = await Promise.all([
+        getEvent(eventId),
+        getEventSeats(eventId),
+        getMyBookings(userId),
+      ])
+      setEvent(eventData)
+      setSeats(seatData)
+      setBookings(bookingData)
+    },
+    [],
+  )
+
+  // Pehli baar sab load karo
+  useEffect(() => {
+    async function init() {
+      try {
+        const [healthData, me, events] = await Promise.all([
+          getHealth(),
+          getMe(),
+          getEvents(),
+        ])
+        setHealth(healthData)
+        setUser(me)
+
+        if (events.length === 0) {
+          setFatalError("Koi event nahi mila — 'docker compose exec backend python seed.py' chalao")
+          return
+        }
+
+        await refresh(events[0].id, me.id)
+      } catch (err) {
+        setFatalError(err.message)
+      } finally {
+        setLoading(false)
+      }
+    }
+    init()
+  }, [refresh])
+
+  async function handleBook() {
+    if (!selectedSeat || !user) return
+
+    setBooking(true)
+    setMessage(null)
     try {
-      const json = await getHealth()
-      setData(json)
-      setStatus('online')
+      await createBooking(selectedSeat.id, user.id)
+      setMessage({ type: 'success', text: `Seat ${selectedSeat.row_label}-${selectedSeat.seat_number} book ho gayi!` })
+      setSelectedSeat(null)
+      await refresh(event.id, user.id)
     } catch (err) {
-      setError(err.message)
-      setStatus('offline')
+      // 409 = koi aur pehle le gaya. Ye "error" nahi, expected behaviour hai —
+      // isi ko rokne ke liye poora locking system bana hai.
+      const text = err.status === 409 ? `⚠️ ${err.message}` : err.message
+      setMessage({ type: 'error', text })
+      // Seat ki asli haalat dikhane ke liye refresh
+      await refresh(event.id, user.id)
+    } finally {
+      setBooking(false)
     }
   }
 
-  // Page load hote hi ek baar check karo
-  useEffect(() => {
-    checkBackend()
-  }, [])
+  async function handleCancel(bookingId) {
+    setMessage(null)
+    try {
+      await cancelBooking(bookingId)
+      setMessage({ type: 'success', text: 'Booking cancel ho gayi, seat wapas available hai' })
+      await refresh(event.id, user.id)
+    } catch (err) {
+      setMessage({ type: 'error', text: err.message })
+    }
+  }
 
-  // Har status ka apna color aur text
-  const styles = {
-    checking: { dot: 'bg-amber-400', text: 'text-amber-300', label: 'Checking…' },
-    online: { dot: 'bg-emerald-400', text: 'text-emerald-300', label: 'Online' },
-    offline: { dot: 'bg-rose-500', text: 'text-rose-300', label: 'Offline' },
-  }[status]
+  if (loading) {
+    return (
+      <Shell>
+        <p className="text-center text-slate-500">Loading…</p>
+      </Shell>
+    )
+  }
+
+  if (fatalError) {
+    return (
+      <Shell>
+        <div className="mx-auto max-w-md rounded-xl border border-rose-900/50 bg-rose-950/30 p-6 text-center">
+          <p className="text-rose-300">{fatalError}</p>
+          <p className="mt-2 text-xs text-slate-500">
+            Backend: <code className="text-slate-400">{API_URL}</code>
+          </p>
+        </div>
+      </Shell>
+    )
+  }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-6">
-      <div className="w-full max-w-md">
-        <header className="mb-8 text-center">
-          <h1 className="text-3xl font-bold tracking-tight">🎟️ SeatPulse</h1>
-          <p className="mt-1 text-sm text-slate-400">
-            High-Concurrency Event Booking Engine
-          </p>
-        </header>
+    <Shell health={health} user={user}>
+      <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+        <SeatGrid
+          seats={seats}
+          selectedSeat={selectedSeat}
+          onSelect={setSelectedSeat}
+        />
+        <BookingPanel
+          event={event}
+          selectedSeat={selectedSeat}
+          onBook={handleBook}
+          onCancel={handleCancel}
+          booking={booking}
+          message={message}
+          bookings={bookings}
+        />
+      </div>
+    </Shell>
+  )
+}
 
-        <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 shadow-lg">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-slate-400">Backend</span>
-            <span className="flex items-center gap-2">
-              {/* animate-pulse sirf tab jab check chal raha ho */}
-              <span
-                className={`h-2.5 w-2.5 rounded-full ${styles.dot} ${
-                  status === 'checking' ? 'animate-pulse' : ''
-                }`}
-              />
-              <span className={`text-sm font-semibold ${styles.text}`}>
-                {styles.label}
-              </span>
-            </span>
+/** Page ka frame — header, status badge, footer. */
+function Shell({ children, health, user }) {
+  return (
+    <div className="min-h-screen bg-slate-950 p-6 text-slate-100">
+      <div className="mx-auto max-w-5xl">
+        <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">🎟️ SeatPulse</h1>
+            <p className="text-sm text-slate-500">
+              High-Concurrency Event Booking Engine
+            </p>
           </div>
 
-          {/* Backend chal raha hai to uska response dikhao */}
-          {status === 'online' && data && (
-            <dl className="mt-5 space-y-2 border-t border-slate-800 pt-4 text-sm">
-              <div className="flex justify-between">
-                <dt className="text-slate-500">Service</dt>
-                <dd className="text-slate-300">{data.service}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-slate-500">Version</dt>
-                <dd className="text-slate-300">{data.version}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-slate-500">Database</dt>
-                <dd
-                  className={
-                    data.database === 'connected'
-                      ? 'text-emerald-300'
-                      : 'text-rose-300'
-                  }
-                >
-                  {data.database}
-                </dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-slate-500">Server time</dt>
-                <dd className="text-slate-300">
-                  {new Date(data.time).toLocaleTimeString()}
-                </dd>
-              </div>
-            </dl>
-          )}
-
-          {/* Nahi chal raha to error aur wajah batao */}
-          {status === 'offline' && (
-            <div className="mt-5 border-t border-slate-800 pt-4">
-              <p className="text-sm text-rose-300">{error}</p>
-              <p className="mt-2 text-xs text-slate-500">
-                Backend <code className="text-slate-400">{API_URL}</code> pe chal
-                raha hai? Check karo:{' '}
-                <code className="text-slate-400">docker compose ps</code>
-              </p>
+          {health && (
+            <div className="flex items-center gap-3 text-xs">
+              {user && <span className="text-slate-500">{user.email}</span>}
+              <span className="flex items-center gap-1.5 rounded-full border border-slate-800 bg-slate-900 px-3 py-1.5">
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    health.database === 'connected' ? 'bg-emerald-400' : 'bg-rose-500'
+                  }`}
+                />
+                <span className="text-slate-400">
+                  API {health.version} · DB {health.database}
+                </span>
+              </span>
             </div>
           )}
+        </header>
 
-          <button
-            onClick={checkBackend}
-            disabled={status === 'checking'}
-            className="mt-6 w-full rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium
-                       transition hover:bg-indigo-500 disabled:opacity-50
-                       disabled:cursor-not-allowed"
-          >
-            {status === 'checking' ? 'Checking…' : 'Recheck'}
-          </button>
-        </div>
+        {children}
 
-        <p className="mt-6 text-center text-xs text-slate-600">
-          API docs:{' '}
+        <footer className="mt-8 text-center text-xs text-slate-600">
           <a
             href={`${API_URL}/docs`}
             target="_blank"
             rel="noreferrer"
             className="text-indigo-400 hover:text-indigo-300"
           >
-            {API_URL}/docs
+            API docs
           </a>
-        </p>
+        </footer>
       </div>
     </div>
   )

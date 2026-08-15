@@ -77,6 +77,21 @@ seatpulse-event-engine/
 └── README.md
 ```
 
+## 🔌 API
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/events` | List all events |
+| `GET` | `/api/events/{id}` | Event detail with seat counts by status |
+| `GET` | `/api/events/{id}/seats` | All seats for an event (powers the grid) |
+| `GET` | `/api/seats/{id}` | Single seat |
+| `POST` | `/api/bookings` | Book a seat — returns `409` if already taken |
+| `GET` | `/api/bookings?user_id=` | A user's bookings |
+| `DELETE` | `/api/bookings/{id}` | Cancel a booking, releasing the seat |
+| `GET` | `/api/health` | Service + database status |
+
+Interactive docs at [`/docs`](http://localhost:8000/docs).
+
 ## 🗄️ Data Model
 
 | Table | Purpose |
@@ -93,7 +108,8 @@ seatpulse-event-engine/
 - [x] Frontend ↔ backend integration (live status, Tailwind v4)
 - [x] PostgreSQL + SQLAlchemy models (User, Event, Seat, Booking)
 - [x] Alembic migrations + seed data
-- [ ] Pydantic schemas + CRUD APIs + interactive seat grid
+- [x] Pydantic schemas + CRUD APIs + interactive seat grid
+- [x] Optimistic locking — verified with 20 concurrent requests on one seat
 - [ ] Redis distributed seat locking
 - [ ] WebSocket real-time seat state broadcasting
 - [ ] JWT authentication
