@@ -1,14 +1,58 @@
-"""Seats ke routes. Locking Phase 4 me yahin add hogi."""
+"""
+Seats ke routes + Redis distributed locking.
+
+Flow: seat select karo -> lock milta hai (5 min) -> pay karo -> book.
+Lock na chhoda? Redis TTL khud release kar dega.
+"""
+
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from config import settings
 from database import get_db
-from models import Event, Seat
-from schemas import SeatOut
+from models import SEAT_AVAILABLE, SEAT_LOCKED, Event, Seat, User, utcnow
+from redis_client import (
+    acquire_seat_lock,
+    get_lock_owner,
+    get_lock_ttl,
+    release_seat_lock,
+)
+from schemas import SeatLockOut, SeatLockRequest, SeatOut
 
 router = APIRouter(prefix="/api", tags=["seats"])
+
+
+def release_expired_locks(db: Session, event_id: int) -> None:
+    """
+    DB me pade purane 'locked' seats ko wapas 'available' karo.
+
+    Zaroorat kyu:
+      Lock ka asli maalik Redis hai, aur Redis key TTL par CHUPCHAP delete ho
+      jaati hai — wo Postgres ko batane nahi aata. To DB me seat 'locked' hi
+      padi reh jati hai jabki asal me free ho chuki hai.
+
+    Isliye seats padhne se pehle ek sasta UPDATE chala dete hain.
+    Ye "lazy cleanup" hai — background job/cron ki zaroorat nahi.
+    """
+    db.execute(
+        update(Seat)
+        .where(
+            Seat.event_id == event_id,
+            Seat.status == SEAT_LOCKED,
+            Seat.locked_until < utcnow(),
+        )
+        .values(
+            status=SEAT_AVAILABLE,
+            locked_by=None,
+            locked_until=None,
+            version=Seat.version + 1,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    db.commit()
 
 
 @router.get("/events/{event_id}/seats", response_model=list[SeatOut])
@@ -16,10 +60,12 @@ def list_event_seats(event_id: int, db: Session = Depends(get_db)):
     """
     Ek event ki saari seats — seat grid isi se banta hai.
 
-    Row aur number se sort kar rahe hain taki frontend ko sort na karna pade.
+    Row aur number se sorted, taki frontend ko sort na karna pade.
     """
     if db.get(Event, event_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event nahi mila")
+
+    release_expired_locks(db, event_id)
 
     return db.scalars(
         select(Seat)
@@ -34,3 +80,117 @@ def get_seat(seat_id: int, db: Session = Depends(get_db)):
     if seat is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Seat nahi mili")
     return seat
+
+
+@router.post("/seats/{seat_id}/lock", response_model=SeatLockOut)
+def lock_seat(seat_id: int, payload: SeatLockRequest, db: Session = Depends(get_db)):
+    """
+    ⭐ Seat ko apne naam hold karo.
+
+    Ye flash sale ka sabse garam endpoint hai — 5000 log ek saath yahi hit
+    karte hain. Isliye poora faisla Redis ke ek atomic command me hota hai,
+    database tak baat pahunchne se pehle.
+    """
+    seat = db.get(Seat, seat_id)
+    if seat is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Seat nahi mili")
+    if db.get(User, payload.user_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User nahi mila")
+
+    # Pehle se booked seat pe lock ka koi matlab nahi
+    if seat.status not in (SEAT_AVAILABLE, SEAT_LOCKED):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"Seat available nahi hai (status: {seat.status})"
+        )
+
+    # ---- LAYER 1: REDIS ATOMIC LOCK ----
+    # SET seat:42:lock <user_id> NX EX 300
+    # 5000 requests me se theek EK ko True milega.
+    if not acquire_seat_lock(seat_id, payload.user_id):
+        owner = get_lock_owner(seat_id)
+
+        # Apna hi lock dubara maanga? Theek hai, TTL bata do.
+        if owner == payload.user_id:
+            return SeatLockOut(
+                seat_id=seat_id,
+                locked_by=owner,
+                expires_in=get_lock_ttl(seat_id),
+                already_owned=True,
+            )
+
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Ye seat abhi kisi aur ne hold ki hui hai"
+        )
+
+    # Lock mil gaya. Ab DB me bhi likh do — sirf isliye taki DUSRE users ko
+    # grid me ye seat peeli dikhe. Asli lock Redis me hi hai.
+    ttl = settings.SEAT_LOCK_TTL
+    db.execute(
+        update(Seat)
+        .where(Seat.id == seat_id)
+        .values(
+            status=SEAT_LOCKED,
+            locked_by=payload.user_id,
+            locked_until=utcnow() + timedelta(seconds=ttl),
+            version=Seat.version + 1,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    db.commit()
+
+    return SeatLockOut(
+        seat_id=seat_id,
+        locked_by=payload.user_id,
+        expires_in=ttl,
+        already_owned=False,
+    )
+
+
+@router.delete("/seats/{seat_id}/lock", response_model=SeatLockOut)
+def unlock_seat(seat_id: int, user_id: int, db: Session = Depends(get_db)):
+    """
+    Apna lock chhodo (user ne dusri seat chun li, ya cancel kar diya).
+
+    Lua script check karta hai ki lock hamara hi hai. Kisi aur ka lock
+    galti se delete nahi hoga.
+    """
+    if db.get(Seat, seat_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Seat nahi mili")
+
+    released = release_seat_lock(seat_id, user_id)
+
+    if released:
+        db.execute(
+            update(Seat)
+            .where(Seat.id == seat_id, Seat.status == SEAT_LOCKED)
+            .values(
+                status=SEAT_AVAILABLE,
+                locked_by=None,
+                locked_until=None,
+                version=Seat.version + 1,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        db.commit()
+
+    # released=False bhi normal hai — lock TTL pe khud expire ho chuka hoga.
+    # Isliye error nahi de rahe.
+    return SeatLockOut(
+        seat_id=seat_id,
+        locked_by=None,
+        expires_in=0,
+        already_owned=False,
+        released=released,
+    )
+
+
+@router.get("/seats/{seat_id}/lock", response_model=SeatLockOut)
+def get_seat_lock(seat_id: int):
+    """Lock kiske paas hai aur kitna time bacha hai. Debugging me kaam aata hai."""
+    owner = get_lock_owner(seat_id)
+    return SeatLockOut(
+        seat_id=seat_id,
+        locked_by=owner,
+        expires_in=get_lock_ttl(seat_id),
+        already_owned=False,
+    )

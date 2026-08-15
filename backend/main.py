@@ -8,13 +8,14 @@ from sqlalchemy.orm import Session
 from config import settings
 from database import get_db
 from models import Event, Seat, User
+from redis_client import ping as redis_ping
 from routers import bookings, events, seats
 from schemas import UserOut
 
 app = FastAPI(
     title=settings.APP_NAME,
     description="High-concurrency event ticketing engine",
-    version="0.3.0",
+    version="0.4.0",
 )
 
 # CORS: frontend 5173 pe hai, backend 8000 pe. Browser inhe alag websites
@@ -51,11 +52,15 @@ def health_check(db: Session = Depends(get_db)):
     except Exception as exc:
         db_status = f"error: {type(exc).__name__}"
 
+    redis_status = "connected" if redis_ping() else "unreachable"
+    healthy = db_status == "connected" and redis_status == "connected"
+
     return {
-        "status": "healthy" if db_status == "connected" else "degraded",
+        "status": "healthy" if healthy else "degraded",
         "service": settings.APP_NAME,
-        "version": "0.3.0",
+        "version": "0.4.0",
         "database": db_status,
+        "redis": redis_status,
         "time": datetime.now(timezone.utc).isoformat(),
     }
 

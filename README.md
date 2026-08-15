@@ -85,6 +85,9 @@ seatpulse-event-engine/
 | `GET` | `/api/events/{id}` | Event detail with seat counts by status |
 | `GET` | `/api/events/{id}/seats` | All seats for an event (powers the grid) |
 | `GET` | `/api/seats/{id}` | Single seat |
+| `POST` | `/api/seats/{id}/lock` | Hold a seat for 5 minutes — `409` if held by someone else |
+| `DELETE` | `/api/seats/{id}/lock` | Release your hold (safe: only your own lock) |
+| `GET` | `/api/seats/{id}/lock` | Who holds the seat and for how long |
 | `POST` | `/api/bookings` | Book a seat — returns `409` if already taken |
 | `GET` | `/api/bookings?user_id=` | A user's bookings |
 | `DELETE` | `/api/bookings/{id}` | Cancel a booking, releasing the seat |
@@ -110,7 +113,7 @@ Interactive docs at [`/docs`](http://localhost:8000/docs).
 - [x] Alembic migrations + seed data
 - [x] Pydantic schemas + CRUD APIs + interactive seat grid
 - [x] Optimistic locking — verified with 20 concurrent requests on one seat
-- [ ] Redis distributed seat locking
+- [x] Redis distributed seat locking (`SET NX EX` + Lua-based safe release)
 - [ ] WebSocket real-time seat state broadcasting
 - [ ] JWT authentication
 - [ ] Load testing (Locust) to prove zero overselling

@@ -44,6 +44,21 @@ export const getEvents = () => request("/api/events");
 export const getEvent = (eventId) => request(`/api/events/${eventId}`);
 export const getEventSeats = (eventId) => request(`/api/events/${eventId}/seats`);
 
+// ---- Seat locking (Phase 4) ----
+
+/** Seat ko apne naam hold karo. 409 = kisi aur ke paas hai. */
+export const lockSeat = (seatId, userId) =>
+  request(`/api/seats/${seatId}/lock`, {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId }),
+  });
+
+/** Apna lock chhodo. Na bhi chhodo to Redis TTL khud kar dega. */
+export const unlockSeat = (seatId, userId) =>
+  request(`/api/seats/${seatId}/lock?user_id=${userId}`, { method: "DELETE" });
+
+export const getSeatLock = (seatId) => request(`/api/seats/${seatId}/lock`);
+
 export const getMyBookings = (userId) => request(`/api/bookings?user_id=${userId}`);
 
 export const createBooking = (seatId, userId) =>

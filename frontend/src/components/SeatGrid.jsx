@@ -1,8 +1,8 @@
 /**
  * Seat grid — event ki saari seats rows me.
  *
- * Phase 5 me isme WebSocket updates aayenge: dusra user seat lega to
- * yahan turant color badal jayega, bina refresh ke.
+ * Phase 5 me isme WebSocket updates aayenge: dusra user seat lock kare to
+ * yahan turant peela ho jayega, bina refresh ke.
  */
 
 // Har status ka apna look. Ek jagah rakha hai taki grid aur legend
@@ -11,26 +11,33 @@ const SEAT_STYLES = {
   available: 'bg-emerald-600/80 hover:bg-emerald-500 text-white cursor-pointer',
   locked: 'bg-amber-500/80 text-white cursor-not-allowed',
   booked: 'bg-rose-900/60 text-rose-300/60 cursor-not-allowed line-through',
+  // Meri hold ki hui seat — dusre ke lock (peela) se alag dikhni chahiye
   selected: 'bg-indigo-500 text-white ring-2 ring-indigo-300 cursor-pointer',
 }
 
-function Seat({ seat, isSelected, onSelect }) {
-  const clickable = seat.status === 'available'
-  const style = isSelected ? SEAT_STYLES.selected : SEAT_STYLES[seat.status]
+function Seat({ seat, isSelected, isMine, onSelect, busy }) {
+  // Available seat click kar sakte ho. Apni hold ki hui seat bhi (deselect ke liye).
+  const clickable = !busy && (seat.status === 'available' || isMine)
+
+  const style = isSelected
+    ? SEAT_STYLES.selected
+    : SEAT_STYLES[seat.status] || SEAT_STYLES.available
 
   return (
     <button
       onClick={() => clickable && onSelect(seat)}
       disabled={!clickable}
       title={`${seat.row_label}-${seat.seat_number} · ₹${seat.price} · ${seat.status}`}
-      className={`h-8 w-8 rounded text-[11px] font-medium transition ${style}`}
+      className={`h-8 w-8 rounded text-[11px] font-medium transition ${style} ${
+        busy ? 'opacity-60' : ''
+      }`}
     >
       {seat.seat_number}
     </button>
   )
 }
 
-export default function SeatGrid({ seats, selectedSeat, onSelect }) {
+export default function SeatGrid({ seats, selectedSeat, onSelect, currentUserId, busy }) {
   // Flat list ko rows me todo: { A: [...], B: [...] }
   // Backend already sorted bhej raha hai, isliye order sahi rahega.
   const rows = seats.reduce((acc, seat) => {
@@ -56,7 +63,9 @@ export default function SeatGrid({ seats, selectedSeat, onSelect }) {
                 key={seat.id}
                 seat={seat}
                 isSelected={selectedSeat?.id === seat.id}
+                isMine={seat.status === 'locked' && seat.locked_by === currentUserId}
                 onSelect={onSelect}
+                busy={busy}
               />
             ))}
           </div>
@@ -65,8 +74,8 @@ export default function SeatGrid({ seats, selectedSeat, onSelect }) {
 
       <div className="mt-6 flex flex-wrap gap-4 border-t border-slate-800 pt-4 text-xs text-slate-400">
         <Legend className="bg-emerald-600/80" label="Available" />
-        <Legend className="bg-indigo-500" label="Selected" />
-        <Legend className="bg-amber-500/80" label="Locked" />
+        <Legend className="bg-indigo-500" label="Your hold" />
+        <Legend className="bg-amber-500/80" label="Held by someone else" />
         <Legend className="bg-rose-900/60" label="Booked" />
       </div>
     </div>

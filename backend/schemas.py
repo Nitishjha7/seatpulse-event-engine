@@ -47,9 +47,30 @@ class SeatOut(ORMModel):
     seat_number: int
     price: float
     status: str
-    # version client ko bhi bhej rahe hain — Phase 4 me booking request ke saath
-    # wapas aayega, taki hum check kar sakein ki uske paas purana data to nahi tha.
+    # version client ko bhi bhejte hain — isse UI me dikhta hai ki optimistic
+    # locking actually kaam kar rahi hai (har change pe number badhta hai).
     version: int
+    # Lock kiske paas hai. Frontend isse decide karta hai ki seat "meri hold"
+    # (neeli) dikhani hai ya "kisi aur ki hold" (peeli).
+    locked_by: int | None = None
+    locked_until: datetime | None = None
+
+
+# ---------- Seat Lock (Phase 4) ----------
+
+class SeatLockRequest(BaseModel):
+    user_id: int = Field(..., gt=0, description="Kaun lock le raha hai")
+
+
+class SeatLockOut(BaseModel):
+    seat_id: int
+    locked_by: int | None
+    # Kitne second me lock apne aap chhut jayega. Frontend isse countdown chalata hai.
+    expires_in: int
+    # True = lock pehle se isi user ke paas tha (double-click waqerah)
+    already_owned: bool = False
+    # unlock call ke liye — False matlab lock TTL pe pehle hi expire ho chuka tha
+    released: bool | None = None
 
 
 # ---------- Booking ----------

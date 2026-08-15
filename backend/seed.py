@@ -25,19 +25,29 @@ DEFAULT_PRICE = 800
 def seed():
     db = SessionLocal()
     try:
-        # ---- User ----
-        user = db.scalar(select(User).where(User.email == "demo@seatpulse.dev"))
-        if user is None:
-            user = User(
-                email="demo@seatpulse.dev",
-                # Phase 5 me asli hashing (bcrypt) aayegi. Abhi placeholder.
-                hashed_password="not-a-real-hash-yet",
-                full_name="Demo User",
-            )
-            db.add(user)
-            print("✅ Demo user banaya")
-        else:
-            print("ℹ️  Demo user pehle se hai")
+        # ---- Users ----
+        # Demo user (frontend isi ko use karta hai) + kuch test users.
+        # Test users concurrency check ke liye chahiye: ek hi seat pe alag-alag
+        # users se lock maar ke dekhna ki sirf ek ko milta hai.
+        wanted_users = [("demo@seatpulse.dev", "Demo User")] + [
+            (f"user{i}@seatpulse.dev", f"Test User {i}") for i in range(1, 6)
+        ]
+
+        created = 0
+        for email, name in wanted_users:
+            if db.scalar(select(User).where(User.email == email)) is None:
+                db.add(
+                    User(
+                        email=email,
+                        # Phase 5 me asli hashing (bcrypt) aayegi. Abhi placeholder.
+                        hashed_password="not-a-real-hash-yet",
+                        full_name=name,
+                    )
+                )
+                created += 1
+
+        db.flush()
+        print(f"✅ {created} naye users banaye ({len(wanted_users)} total chahiye the)")
 
         # ---- Event ----
         event = db.scalar(select(Event).where(Event.name == "Arijit Singh Live"))

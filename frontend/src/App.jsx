@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   API_URL,
@@ -10,6 +10,8 @@ import {
   getHealth,
   getMe,
   getMyBookings,
+  lockSeat,
+  unlockSeat,
 } from './api'
 import BookingPanel from './components/BookingPanel'
 import SeatGrid from './components/SeatGrid'
@@ -23,31 +25,32 @@ function App() {
   const [bookings, setBookings] = useState([])
 
   const [selectedSeat, setSelectedSeat] = useState(null)
+  // Lock kitne second aur chalega. Countdown isi se chalta hai.
+  const [lockSecondsLeft, setLockSecondsLeft] = useState(0)
+
+  const [locking, setLocking] = useState(false)
   const [booking, setBooking] = useState(false)
   const [message, setMessage] = useState(null)
   const [loading, setLoading] = useState(true)
   const [fatalError, setFatalError] = useState(null)
 
-  /**
-   * Event + seats + bookings ek saath refresh karo.
-   *
-   * Abhi har booking ke baad poora data dubara maang rahe hain.
-   * Phase 5 me WebSocket ye replace kar dega — sirf badli hui seat ka
-   * update aayega, poori list nahi.
-   */
-  const refresh = useCallback(
-    async (eventId, userId) => {
-      const [eventData, seatData, bookingData] = await Promise.all([
-        getEvent(eventId),
-        getEventSeats(eventId),
-        getMyBookings(userId),
-      ])
-      setEvent(eventData)
-      setSeats(seatData)
-      setBookings(bookingData)
-    },
-    [],
-  )
+  // Cleanup ke liye latest values chahiye, par unpe effect dobara nahi chalana.
+  // Isliye ref me rakhte hain.
+  const selectedRef = useRef(null)
+  const userRef = useRef(null)
+  selectedRef.current = selectedSeat
+  userRef.current = user
+
+  const refresh = useCallback(async (eventId, userId) => {
+    const [eventData, seatData, bookingData] = await Promise.all([
+      getEvent(eventId),
+      getEventSeats(eventId),
+      getMyBookings(userId),
+    ])
+    setEvent(eventData)
+    setSeats(seatData)
+    setBookings(bookingData)
+  }, [])
 
   // Pehli baar sab load karo
   useEffect(() => {
@@ -65,7 +68,6 @@ function App() {
           setFatalError("Koi event nahi mila — 'docker compose exec backend python seed.py' chalao")
           return
         }
-
         await refresh(events[0].id, me.id)
       } catch (err) {
         setFatalError(err.message)
@@ -76,6 +78,102 @@ function App() {
     init()
   }, [refresh])
 
+  /**
+   * Lock ka countdown.
+   *
+   * Ye sirf DIKHANE ke liye hai. Asli expiry Redis me hoti hai (TTL) —
+   * browser band kar do ya tab crash ho jaye, seat phir bhi 5 min me
+   * apne aap free ho jayegi. Ye timer sirf user ko batata hai kitna time hai.
+   */
+  useEffect(() => {
+    if (lockSecondsLeft <= 0) return
+
+    const id = setInterval(() => {
+      setLockSecondsLeft((s) => {
+        if (s <= 1) {
+          // Time khatam — selection hata do aur seats refresh karo
+          setSelectedSeat(null)
+          setMessage({ type: 'error', text: '⏱️ Hold time khatam, seat wapas available hai' })
+          if (event && user) refresh(event.id, user.id)
+          return 0
+        }
+        return s - 1
+      })
+    }, 1000)
+
+    return () => clearInterval(id)
+  }, [lockSecondsLeft, event, user, refresh])
+
+  // Tab band karte waqt lock chhod do — TTL ka wait na karna pade
+  useEffect(() => {
+    const handler = () => {
+      const seat = selectedRef.current
+      const u = userRef.current
+      if (seat && u) {
+        // keepalive: page band hote waqt bhi request nikal jati hai
+        fetch(`${API_URL}/api/seats/${seat.id}/lock?user_id=${u.id}`, {
+          method: 'DELETE',
+          keepalive: true,
+        })
+      }
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [])
+
+  /**
+   * Seat pe click.
+   *
+   * Phase 3 me ye sirf local state set karta tha. Ab ye server se
+   * actually lock maangta hai — 409 mile to matlab koi aur pehle le gaya.
+   */
+  async function handleSelect(seat) {
+    if (!user || locking) return
+
+    // Wahi seat dubara click = deselect + lock release
+    if (selectedSeat?.id === seat.id) {
+      await releaseCurrentLock()
+      return
+    }
+
+    setLocking(true)
+    setMessage(null)
+    try {
+      // Purani seat ka lock pehle chhodo, warna do seats hold rahengi
+      if (selectedSeat) {
+        await unlockSeat(selectedSeat.id, user.id).catch(() => {})
+      }
+
+      const lock = await lockSeat(seat.id, user.id)
+      setSelectedSeat(seat)
+      setLockSecondsLeft(lock.expires_in)
+      setMessage({
+        type: 'success',
+        text: `Seat ${seat.row_label}-${seat.seat_number} hold ho gayi`,
+      })
+    } catch (err) {
+      setSelectedSeat(null)
+      setLockSecondsLeft(0)
+      setMessage({ type: 'error', text: err.status === 409 ? `⚠️ ${err.message}` : err.message })
+    } finally {
+      setLocking(false)
+      await refresh(event.id, user.id)
+    }
+  }
+
+  async function releaseCurrentLock() {
+    if (!selectedSeat || !user) return
+    try {
+      await unlockSeat(selectedSeat.id, user.id)
+    } catch {
+      // lock TTL pe expire ho chuka hoga — koi baat nahi
+    }
+    setSelectedSeat(null)
+    setLockSecondsLeft(0)
+    setMessage(null)
+    await refresh(event.id, user.id)
+  }
+
   async function handleBook() {
     if (!selectedSeat || !user) return
 
@@ -83,18 +181,17 @@ function App() {
     setMessage(null)
     try {
       await createBooking(selectedSeat.id, user.id)
-      setMessage({ type: 'success', text: `Seat ${selectedSeat.row_label}-${selectedSeat.seat_number} book ho gayi!` })
+      setMessage({
+        type: 'success',
+        text: `Seat ${selectedSeat.row_label}-${selectedSeat.seat_number} book ho gayi!`,
+      })
       setSelectedSeat(null)
-      await refresh(event.id, user.id)
+      setLockSecondsLeft(0)
     } catch (err) {
-      // 409 = koi aur pehle le gaya. Ye "error" nahi, expected behaviour hai —
-      // isi ko rokne ke liye poora locking system bana hai.
-      const text = err.status === 409 ? `⚠️ ${err.message}` : err.message
-      setMessage({ type: 'error', text })
-      // Seat ki asli haalat dikhane ke liye refresh
-      await refresh(event.id, user.id)
+      setMessage({ type: 'error', text: err.status === 409 ? `⚠️ ${err.message}` : err.message })
     } finally {
       setBooking(false)
+      await refresh(event.id, user.id)
     }
   }
 
@@ -136,12 +233,16 @@ function App() {
         <SeatGrid
           seats={seats}
           selectedSeat={selectedSeat}
-          onSelect={setSelectedSeat}
+          onSelect={handleSelect}
+          currentUserId={user?.id}
+          busy={locking}
         />
         <BookingPanel
           event={event}
           selectedSeat={selectedSeat}
+          lockSecondsLeft={lockSecondsLeft}
           onBook={handleBook}
+          onRelease={releaseCurrentLock}
           onCancel={handleCancel}
           booking={booking}
           message={message}
@@ -152,7 +253,6 @@ function App() {
   )
 }
 
-/** Page ka frame — header, status badge, footer. */
 function Shell({ children, health, user }) {
   return (
     <div className="min-h-screen bg-slate-950 p-6 text-slate-100">
@@ -168,15 +268,12 @@ function Shell({ children, health, user }) {
           {health && (
             <div className="flex items-center gap-3 text-xs">
               {user && <span className="text-slate-500">{user.email}</span>}
-              <span className="flex items-center gap-1.5 rounded-full border border-slate-800 bg-slate-900 px-3 py-1.5">
-                <span
-                  className={`h-2 w-2 rounded-full ${
-                    health.database === 'connected' ? 'bg-emerald-400' : 'bg-rose-500'
-                  }`}
-                />
-                <span className="text-slate-400">
-                  API {health.version} · DB {health.database}
-                </span>
+              <span className="flex items-center gap-2 rounded-full border border-slate-800 bg-slate-900 px-3 py-1.5">
+                <Dot ok={health.database === 'connected'} />
+                <span className="text-slate-400">DB</span>
+                <Dot ok={health.redis === 'connected'} />
+                <span className="text-slate-400">Redis</span>
+                <span className="text-slate-600">· v{health.version}</span>
               </span>
             </div>
           )}
@@ -197,6 +294,10 @@ function Shell({ children, health, user }) {
       </div>
     </div>
   )
+}
+
+function Dot({ ok }) {
+  return <span className={`h-2 w-2 rounded-full ${ok ? 'bg-emerald-400' : 'bg-rose-500'}`} />
 }
 
 export default App

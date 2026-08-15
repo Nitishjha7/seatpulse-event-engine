@@ -1,15 +1,15 @@
 """
 Bookings ke routes.
 
-⭐ Yahan pehli baar concurrency handling actually chal rahi hai.
+⭐ Teeno defence layers yahan ek saath chal rahi hain:
 
-Teen layer me se do abhi active hain:
+  layer 1 — Redis lock         (fast rejection, DB tak load hi nahi aata)
   layer 2 — optimistic locking (version column)
-  layer 3 — database constraints (partial unique index)
+  layer 3 — database constraint (partial unique index)
 
-Layer 1 (Redis fast-rejection) Phase 4 me iske upar aayegi. Notice karna:
-Redis aane par bhi ye code waisa hi rahega — Redis sirf ek fast filter hai
-jo zyadatar requests ko yahan tak pahunchne hi nahi deta.
+Notice karna: Phase 3 ka code layer 2 aur 3 ke saath bhi SAHI tha.
+Redis ne correctness nahi badli — usne sirf speed di. Isi baat par
+interview me sabse zyada baat hoti hai.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -23,11 +23,13 @@ from models import (
     BOOKING_CONFIRMED,
     SEAT_AVAILABLE,
     SEAT_BOOKED,
+    SEAT_LOCKED,
     Booking,
     Event,
     Seat,
     User,
 )
+from redis_client import acquire_seat_lock, get_lock_owner, release_seat_lock
 from schemas import BookingCreate, BookingDetail, BookingOut
 
 router = APIRouter(prefix="/api/bookings", tags=["bookings"])
@@ -48,10 +50,36 @@ def create_booking(payload: BookingCreate, db: Session = Depends(get_db)):
     if db.get(User, payload.user_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User nahi mila")
 
-    # Pehla check — sasta hai, saaf error message deta hai.
-    # Par ye kaafi NAHI hai: is line aur neeche wale UPDATE ke beech me
-    # koi dusra request seat le sakta hai. Asli guarantee UPDATE me hai.
-    if seat.status != SEAT_AVAILABLE:
+    if seat.status == SEAT_BOOKED:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Seat pehle se booked hai")
+
+    # ---- LAYER 1: REDIS LOCK ----
+    # Do raaste yahan aate hain:
+    #   a) User ne pehle seat select ki thi -> lock uske paas hai (normal UI flow)
+    #   b) Koi seedha POST /api/bookings maar raha hai -> yahin lock lete hain
+    #
+    # Dono case me booking Redis lock ke bina aage nahi badhti. Isliye
+    # 5000 parallel requests me se 4999 yahin ruk jaati hain — unka
+    # database se koi wasta hi nahi padta.
+    lock_owner = get_lock_owner(payload.seat_id)
+    lock_taken_here = False
+
+    if lock_owner is None:
+        if not acquire_seat_lock(payload.seat_id, payload.user_id):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "Seat abhi kisi aur ne hold kar li"
+            )
+        lock_taken_here = True
+    elif lock_owner != payload.user_id:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Ye seat kisi aur ke paas hold hai"
+        )
+
+    # Seat locked hai par lock kisi aur ka — upar handle ho chuka.
+    # Yahan tak aaye matlab seat available hai ya HAMARE lock me hai.
+    if seat.status not in (SEAT_AVAILABLE, SEAT_LOCKED):
+        if lock_taken_here:
+            release_seat_lock(payload.seat_id, payload.user_id)
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"Seat available nahi hai (status: {seat.status})"
         )
@@ -69,15 +97,22 @@ def create_booking(payload: BookingCreate, db: Session = Depends(get_db)):
         .where(
             Seat.id == payload.seat_id,
             Seat.version == expected_version,
-            Seat.status == SEAT_AVAILABLE,
+            Seat.status.in_((SEAT_AVAILABLE, SEAT_LOCKED)),
         )
-        .values(status=SEAT_BOOKED, version=Seat.version + 1)
+        .values(
+            status=SEAT_BOOKED,
+            version=Seat.version + 1,
+            locked_by=None,
+            locked_until=None,
+        )
         .execution_options(synchronize_session=False)
     )
 
     if result.rowcount == 0:
         # Koi aur jeet gaya. Hamara version purana ho chuka hai.
         db.rollback()
+        if lock_taken_here:
+            release_seat_lock(payload.seat_id, payload.user_id)
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Seat abhi abhi kisi aur ne book kar li"
         )
@@ -99,9 +134,15 @@ def create_booking(payload: BookingCreate, db: Session = Depends(get_db)):
         db.commit()
     except IntegrityError:
         db.rollback()
+        if lock_taken_here:
+            release_seat_lock(payload.seat_id, payload.user_id)
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Is seat ki booking pehle se maujood hai"
         )
+
+    # Booking ho gayi — ab lock ki zaroorat nahi. Seat permanently 'booked' hai,
+    # Redis me key pade rehne ka koi faayda nahi.
+    release_seat_lock(payload.seat_id, payload.user_id)
 
     db.refresh(booking)
     return booking

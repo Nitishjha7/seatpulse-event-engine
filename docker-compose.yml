@@ -20,6 +20,21 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: seatpulse_redis
+    ports:
+      - "${REDIS_PORT}:6379"
+    # Koi volume nahi — jaan-boojh ke.
+    # Redis me sirf temporary seat locks hain (5 min TTL wale). Restart pe wo
+    # chale bhi jayein to koi nuksan nahi: seats DB me available ho jaayengi.
+    # Paisa/booking ka data hamesha Postgres me hi rehta hai.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   backend:
     build: ./backend
     container_name: fastapi_backend
@@ -28,12 +43,16 @@ services:
     volumes:
       - ./backend:/app
     environment:
-      # "db" = compose service ka naam. Container network me yahi hostname hai.
-      # localhost yahan kaam NAHI karega — wo backend container ko khud ko point karega.
+      # "db" aur "redis" = compose services ke naam. Container network me yahi
+      # hostnames hain. localhost yahan kaam NAHI karega — wo backend container
+      # ko khud ko point karega.
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
     depends_on:
       db:
         # Sirf "started" nahi — DB ready hone tak wait karo.
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   frontend:

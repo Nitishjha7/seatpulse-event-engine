@@ -1,16 +1,29 @@
 /**
- * Right side ka panel — selected seat, book button, aur meri bookings.
+ * Right side ka panel — event summary, hold ki hui seat + countdown,
+ * book button, aur meri bookings.
  */
+
+/** 125 -> "2:05" */
+function formatTime(seconds) {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}:${String(s).padStart(2, '0')}`
+}
 
 export default function BookingPanel({
   event,
   selectedSeat,
+  lockSecondsLeft,
   onBook,
+  onRelease,
   onCancel,
   booking,
   message,
   bookings,
 }) {
+  // Aakhri 60 second me countdown laal ho jata hai — user ko jaldi karni chahiye
+  const urgent = lockSecondsLeft > 0 && lockSecondsLeft <= 60
+
   return (
     <div className="space-y-4">
       {/* Event summary */}
@@ -24,28 +37,48 @@ export default function BookingPanel({
 
           <div className="mt-4 grid grid-cols-3 gap-2 border-t border-slate-800 pt-4 text-center">
             <Stat value={event.available_seats} label="Available" className="text-emerald-300" />
-            <Stat value={event.locked_seats} label="Locked" className="text-amber-300" />
+            <Stat value={event.locked_seats} label="Held" className="text-amber-300" />
             <Stat value={event.booked_seats} label="Booked" className="text-rose-300" />
           </div>
         </div>
       )}
 
-      {/* Selected seat + book */}
+      {/* Hold ki hui seat */}
       <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
-        <h3 className="text-sm font-medium text-slate-400">Selected Seat</h3>
+        <h3 className="text-sm font-medium text-slate-400">Your Hold</h3>
 
         {selectedSeat ? (
           <>
-            <p className="mt-2 text-2xl font-bold text-slate-100">
-              {selectedSeat.row_label}-{selectedSeat.seat_number}
-            </p>
+            <div className="mt-2 flex items-baseline justify-between">
+              <p className="text-2xl font-bold text-slate-100">
+                {selectedSeat.row_label}-{selectedSeat.seat_number}
+              </p>
+              {/* Countdown — Redis TTL ka live reflection */}
+              <span
+                className={`rounded-md px-2 py-1 font-mono text-sm ${
+                  urgent
+                    ? 'bg-rose-950/60 text-rose-300'
+                    : 'bg-slate-950/60 text-amber-300'
+                }`}
+              >
+                {formatTime(lockSecondsLeft)}
+              </span>
+            </div>
+
             <p className="text-sm text-slate-400">₹{selectedSeat.price}</p>
-            {/* version dikha rahe hain kyunki optimistic locking isi par chalti hai —
-                booking ke baad ye badalta hua dikhega */}
-            <p className="mt-1 text-xs text-slate-600">version {selectedSeat.version}</p>
+            <p className="mt-1 text-xs text-slate-600">
+              seat version {selectedSeat.version}
+            </p>
+
+            <p className="mt-3 text-xs text-slate-500">
+              Ye seat tumhare naam hold hai. Time khatam hone par apne aap
+              wapas available ho jayegi.
+            </p>
           </>
         ) : (
-          <p className="mt-2 text-sm text-slate-500">Grid me se koi seat chuno</p>
+          <p className="mt-2 text-sm text-slate-500">
+            Grid me se koi hari seat chuno — wo turant tumhare naam hold ho jayegi
+          </p>
         )}
 
         <button
@@ -55,8 +88,18 @@ export default function BookingPanel({
                      transition hover:bg-indigo-500 disabled:cursor-not-allowed
                      disabled:opacity-40"
         >
-          {booking ? 'Booking…' : 'Book Seat'}
+          {booking ? 'Booking…' : 'Confirm Booking'}
         </button>
+
+        {selectedSeat && (
+          <button
+            onClick={onRelease}
+            className="mt-2 w-full rounded-lg border border-slate-800 px-4 py-2 text-sm
+                       text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
+          >
+            Release Hold
+          </button>
+        )}
 
         {message && (
           <p
