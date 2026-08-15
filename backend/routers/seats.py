@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from auth import get_current_user
 from config import settings
 from database import get_db
 from events_broadcast import broadcast_seat_update
@@ -21,7 +22,7 @@ from redis_client import (
     get_lock_ttl,
     release_seat_lock,
 )
-from schemas import SeatLockOut, SeatLockRequest, SeatOut
+from schemas import SeatLockOut, SeatOut
 
 router = APIRouter(prefix="/api", tags=["seats"])
 
@@ -95,19 +96,23 @@ def get_seat(seat_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/seats/{seat_id}/lock", response_model=SeatLockOut)
-def lock_seat(seat_id: int, payload: SeatLockRequest, db: Session = Depends(get_db)):
+def lock_seat(
+    seat_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """
     ⭐ Seat ko apne naam hold karo.
 
     Ye flash sale ka sabse garam endpoint hai — 5000 log ek saath yahi hit
     karte hain. Isliye poora faisla Redis ke ek atomic command me hota hai,
     database tak baat pahunchne se pehle.
+
+    User token se aata hai — request body me user_id nahi bheja ja sakta.
     """
     seat = db.get(Seat, seat_id)
     if seat is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Seat nahi mili")
-    if db.get(User, payload.user_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "User nahi mila")
 
     # Pehle se booked seat pe lock ka koi matlab nahi
     if seat.status not in (SEAT_AVAILABLE, SEAT_LOCKED):
@@ -118,11 +123,11 @@ def lock_seat(seat_id: int, payload: SeatLockRequest, db: Session = Depends(get_
     # ---- LAYER 1: REDIS ATOMIC LOCK ----
     # SET seat:42:lock <user_id> NX EX 300
     # 5000 requests me se theek EK ko True milega.
-    if not acquire_seat_lock(seat_id, payload.user_id):
+    if not acquire_seat_lock(seat_id, user.id):
         owner = get_lock_owner(seat_id)
 
         # Apna hi lock dubara maanga? Theek hai, TTL bata do.
-        if owner == payload.user_id:
+        if owner == user.id:
             return SeatLockOut(
                 seat_id=seat_id,
                 locked_by=owner,
@@ -156,7 +161,7 @@ def lock_seat(seat_id: int, payload: SeatLockRequest, db: Session = Depends(get_
         )
         .values(
             status=SEAT_LOCKED,
-            locked_by=payload.user_id,
+            locked_by=user.id,
             locked_until=utcnow() + timedelta(seconds=ttl),
             version=Seat.version + 1,
         )
@@ -165,7 +170,7 @@ def lock_seat(seat_id: int, payload: SeatLockRequest, db: Session = Depends(get_
 
     if result.rowcount == 0:
         db.rollback()
-        release_seat_lock(seat_id, payload.user_id)
+        release_seat_lock(seat_id, user.id)
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Seat abhi abhi book ho gayi"
         )
@@ -177,14 +182,18 @@ def lock_seat(seat_id: int, payload: SeatLockRequest, db: Session = Depends(get_
 
     return SeatLockOut(
         seat_id=seat_id,
-        locked_by=payload.user_id,
+        locked_by=user.id,
         expires_in=ttl,
         already_owned=False,
     )
 
 
 @router.delete("/seats/{seat_id}/lock", response_model=SeatLockOut)
-def unlock_seat(seat_id: int, user_id: int, db: Session = Depends(get_db)):
+def unlock_seat(
+    seat_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """
     Apna lock chhodo (user ne dusri seat chun li, ya cancel kar diya).
 
@@ -194,7 +203,7 @@ def unlock_seat(seat_id: int, user_id: int, db: Session = Depends(get_db)):
     if db.get(Seat, seat_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Seat nahi mili")
 
-    released = release_seat_lock(seat_id, user_id)
+    released = release_seat_lock(seat_id, user.id)
 
     if released:
         db.execute(

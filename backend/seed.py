@@ -12,8 +12,13 @@ from datetime import timedelta
 
 from sqlalchemy import func, select
 
+from auth import hash_password
 from database import SessionLocal
 from models import Event, Seat, User, utcnow
+
+# Demo login — README aur docs me yahi likha hai
+DEMO_EMAIL = "demo@seatpulse.dev"
+DEMO_PASSWORD = "demo1234"
 
 # Kitne test users banane hain.
 # Load test me har concurrent user ka apna user_id hona chahiye — warna
@@ -37,12 +42,16 @@ def seed():
         # Baaki load testing ke liye.
         existing = db.scalar(select(func.count(User.id)))
 
+        # Sab test users ka password ek hi hai. bcrypt slow hai (~100ms),
+        # 500 baar hash karte to seed ek minute leta. Ek baar hash karke
+        # sabko wahi de rahe hain — ye SIRF test data ke liye theek hai.
+        shared_hash = hash_password(DEMO_PASSWORD)
+
         if existing == 0:
             db.add(
                 User(
-                    email="demo@seatpulse.dev",
-                    # Asli hashing (bcrypt) auth phase me aayegi. Abhi placeholder.
-                    hashed_password="not-a-real-hash-yet",
+                    email=DEMO_EMAIL,
+                    hashed_password=shared_hash,
                     full_name="Demo User",
                 )
             )
@@ -55,7 +64,7 @@ def seed():
                 [
                     User(
                         email=f"user{i}@seatpulse.dev",
-                        hashed_password="not-a-real-hash-yet",
+                        hashed_password=shared_hash,
                         full_name=f"Test User {i}",
                     )
                     for i in range(existing, existing + to_create)
@@ -63,6 +72,7 @@ def seed():
             )
         db.flush()
         print(f"✅ Users: {to_create} naye banaye, total {SEED_USERS}")
+        print(f"   Login: {DEMO_EMAIL} / {DEMO_PASSWORD}")
 
         # ---- Event ----
         event = db.scalar(select(Event).where(Event.name == "Arijit Singh Live"))

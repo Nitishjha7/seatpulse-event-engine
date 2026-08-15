@@ -24,6 +24,7 @@ import os
 import random
 
 from locust import HttpUser, between, events, task
+from locust.exception import RescheduleTask
 
 # Kis event pe test karna hai
 EVENT_ID = int(os.getenv("EVENT_ID", "1"))
@@ -36,12 +37,49 @@ TARGET_SEAT_ID = int(os.getenv("TARGET_SEAT_ID", "1"))
 # Ye zaroori kyu: agar do Locust users same user_id bhejein, to dusre ko
 # "already_owned" wala 200 mil jayega aur success count galat ho jayega.
 # Alag-alag user_id se hi asli contention test hoti hai.
-USER_POOL_SIZE = int(os.getenv("USER_POOL_SIZE", "500"))
+USER_POOL_SIZE = int(os.getenv("USER_POOL_SIZE", "499"))
 
-_user_ids = itertools.cycle(range(1, USER_POOL_SIZE + 1))
+# seed.py sab test users ko yahi password deta hai
+PASSWORD = os.getenv("SEED_PASSWORD", "demo1234")
+
+_user_nums = itertools.cycle(range(1, USER_POOL_SIZE + 1))
 
 
-class FlashSaleUser(HttpUser):
+class AuthedUser(HttpUser):
+    """
+    Base class — har Locust user apna account login karke token le leta hai.
+
+    ⭐ Login `on_start` me hota hai, task me nahi. Warna har request se
+    pehle ek login bhi jata aur load test asal me login ka test ban jata.
+    Bcrypt jaan-boojh ke slow hai (~100ms), wo numbers kharab kar deta.
+
+    abstract = True -> Locust isko khud se run nahi karega, sirf inherit
+    karne ke liye hai.
+    """
+
+    abstract = True
+
+    def on_start(self):
+        n = next(_user_nums)
+        self.user_email = f"user{n}@seatpulse.dev"
+
+        res = self.client.post(
+            "/api/auth/login",
+            json={"email": self.user_email, "password": PASSWORD},
+            name="POST /auth/login",
+        )
+        if res.status_code != 200:
+            # Users seed nahi hue — is user ko rok do, warna 401 ka
+            # dher lag jayega aur report bekaar ho jayegi
+            self.environment.runner.quit()
+            raise RescheduleTask(f"Login fail ({res.status_code}) — seed.py chalao")
+
+        token = res.json()["access_token"]
+        # Ab se is user ke saare requests me ye header apne aap jayega
+        self.client.headers["Authorization"] = f"Bearer {token}"
+
+
+class FlashSaleUser(AuthedUser):
     """
     Sabse kathin scenario: har user EK hi seat chahta hai.
 
@@ -56,15 +94,12 @@ class FlashSaleUser(HttpUser):
     # Flash sale me koi soch ke click nahi karta — turant, bar bar
     wait_time = between(0.1, 0.5)
 
-    def on_start(self):
-        self.user_id = next(_user_ids)
-
     @task
     def grab_the_seat(self):
         # Step 1 — seat hold karne ki koshish (Redis lock)
+        # user_id body me nahi jata — token se aata hai (AuthedUser.on_start)
         with self.client.post(
             f"/api/seats/{TARGET_SEAT_ID}/lock",
-            json={"user_id": self.user_id},
             name="POST /seats/{id}/lock",
             catch_response=True,
         ) as res:
@@ -85,7 +120,7 @@ class FlashSaleUser(HttpUser):
         # Step 2 — lock mila to turant book karo
         with self.client.post(
             "/api/bookings",
-            json={"seat_id": TARGET_SEAT_ID, "user_id": self.user_id},
+            json={"seat_id": TARGET_SEAT_ID},
             name="POST /bookings",
             catch_response=True,
         ) as res:
@@ -95,7 +130,7 @@ class FlashSaleUser(HttpUser):
                 res.failure(f"Unexpected {res.status_code}: {res.text[:100]}")
 
 
-class BrowsingUser(HttpUser):
+class BrowsingUser(AuthedUser):
     """
     Normal traffic — response times measure karne ke liye.
 
@@ -106,7 +141,7 @@ class BrowsingUser(HttpUser):
     wait_time = between(1, 3)
 
     def on_start(self):
-        self.user_id = next(_user_ids)
+        super().on_start()      # pehle login (token set hota hai)
         self.seat_ids = []
 
         res = self.client.get(f"/api/events/{EVENT_ID}/seats", name="GET /events/{id}/seats")
@@ -130,7 +165,6 @@ class BrowsingUser(HttpUser):
 
         with self.client.post(
             f"/api/seats/{seat_id}/lock",
-            json={"user_id": self.user_id},
             name="POST /seats/{id}/lock",
             catch_response=True,
         ) as res:
@@ -144,7 +178,7 @@ class BrowsingUser(HttpUser):
 
         with self.client.post(
             "/api/bookings",
-            json={"seat_id": seat_id, "user_id": self.user_id},
+            json={"seat_id": seat_id},
             name="POST /bookings",
             catch_response=True,
         ) as res:

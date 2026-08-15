@@ -20,10 +20,30 @@ engine = create_engine(
     # Bina iske: DB restart hua to app "stale connection" errors dega.
     pool_pre_ping=True,
 
-    # Kitne connections khule rakhne hain.
-    # Phase 6 me 500 concurrent users aayenge — tab ye numbers matter karenge.
-    pool_size=10,
+    # ⚠️ Ye numbers thread pool se JUDE hue hain — random nahi hain.
+    #
+    # Hamare routes sync hain (`def`, `async def` nahi), isliye FastAPI unhe
+    # ek threadpool me chalata hai (anyio ka default: 40 threads). Har chalti
+    # hui request `get_db()` se EK connection pakadti hai aur poori request
+    # tak pakde rehti hai.
+    #
+    # Matlab: pool_size + max_overflow  >  threadpool size
+    #
+    # Pehle 10 + 20 = 30 tha, jo 40 se kam hai. Load test me exactly wahi
+    # phata:
+    #     QueuePool limit of size 10 overflow 20 reached, connection timed out
+    # Aur users ko 500 milne lage.
+    #
+    # Login me ye aur bura hota hai: bcrypt jaan-boojh ke ~100ms leta hai,
+    # aur us poore time connection bandha rehta hai.
+    #
+    # Ab threadpool main.py me 32 pe fix hai, aur pool 20 + 20 = 40 > 32.
+    # Postgres ka default max_connections 100 hai, to ye safe hai.
+    pool_size=20,
     max_overflow=20,
+    # 30 sec chupchap wait karne se behtar hai jaldi fail hona — tab pata to
+    # chale ki pool chhota pad raha hai.
+    pool_timeout=10,
 )
 
 SessionLocal = sessionmaker(

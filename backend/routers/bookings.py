@@ -17,6 +17,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from auth import get_current_user
 from database import get_db
 from events_broadcast import broadcast_seat_update
 from models import (
@@ -37,19 +38,23 @@ router = APIRouter(prefix="/api/bookings", tags=["bookings"])
 
 
 @router.post("", response_model=BookingOut, status_code=status.HTTP_201_CREATED)
-def create_booking(payload: BookingCreate, db: Session = Depends(get_db)):
+def create_booking(
+    payload: BookingCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """
     Seat book karo.
 
     409 Conflict tab milta hai jab koi aur pehle book kar chuka ho.
     Ye error normal hai — flash sale me yahi sabse zyada return hoga.
+
+    User token se aata hai. Pehle body me `user_id` jata tha — koi bhi
+    kisi aur ke naam booking kar sakta tha.
     """
     seat = db.get(Seat, payload.seat_id)
     if seat is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Seat nahi mili")
-
-    if db.get(User, payload.user_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "User nahi mila")
 
     if seat.status == SEAT_BOOKED:
         raise HTTPException(status.HTTP_409_CONFLICT, "Seat pehle se booked hai")
@@ -66,12 +71,12 @@ def create_booking(payload: BookingCreate, db: Session = Depends(get_db)):
     lock_taken_here = False
 
     if lock_owner is None:
-        if not acquire_seat_lock(payload.seat_id, payload.user_id):
+        if not acquire_seat_lock(payload.seat_id, user.id):
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Seat abhi kisi aur ne hold kar li"
             )
         lock_taken_here = True
-    elif lock_owner != payload.user_id:
+    elif lock_owner != user.id:
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Ye seat kisi aur ke paas hold hai"
         )
@@ -80,7 +85,7 @@ def create_booking(payload: BookingCreate, db: Session = Depends(get_db)):
     # Yahan tak aaye matlab seat available hai ya HAMARE lock me hai.
     if seat.status not in (SEAT_AVAILABLE, SEAT_LOCKED):
         if lock_taken_here:
-            release_seat_lock(payload.seat_id, payload.user_id)
+            release_seat_lock(payload.seat_id, user.id)
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"Seat available nahi hai (status: {seat.status})"
         )
@@ -113,13 +118,13 @@ def create_booking(payload: BookingCreate, db: Session = Depends(get_db)):
         # Koi aur jeet gaya. Hamara version purana ho chuka hai.
         db.rollback()
         if lock_taken_here:
-            release_seat_lock(payload.seat_id, payload.user_id)
+            release_seat_lock(payload.seat_id, user.id)
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Seat abhi abhi kisi aur ne book kar li"
         )
 
     booking = Booking(
-        user_id=payload.user_id,
+        user_id=user.id,
         seat_id=payload.seat_id,
         event_id=event_id,
         status=BOOKING_CONFIRMED,
@@ -136,14 +141,14 @@ def create_booking(payload: BookingCreate, db: Session = Depends(get_db)):
     except IntegrityError:
         db.rollback()
         if lock_taken_here:
-            release_seat_lock(payload.seat_id, payload.user_id)
+            release_seat_lock(payload.seat_id, user.id)
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Is seat ki booking pehle se maujood hai"
         )
 
     # Booking ho gayi — ab lock ki zaroorat nahi. Seat permanently 'booked' hai,
     # Redis me key pade rehne ka koi faayda nahi.
-    release_seat_lock(payload.seat_id, payload.user_id)
+    release_seat_lock(payload.seat_id, user.id)
 
     # Sab clients ko batao — unke grid me seat turant laal ho jayegi
     broadcast_seat_update(db, payload.seat_id, "booked")
@@ -153,13 +158,21 @@ def create_booking(payload: BookingCreate, db: Session = Depends(get_db)):
 
 
 @router.get("", response_model=list[BookingDetail])
-def list_bookings(user_id: int, db: Session = Depends(get_db)):
-    """Ek user ki saari bookings, nayi pehle."""
+def list_bookings(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    MERI bookings, nayi pehle.
+
+    Pehle `?user_id=` query param leta tha — matlab koi bhi kisi ki
+    bookings dekh sakta tha. Ab sirf apni.
+    """
     rows = db.execute(
         select(Booking, Seat, Event)
         .join(Seat, Seat.id == Booking.seat_id)
         .join(Event, Event.id == Booking.event_id)
-        .where(Booking.user_id == user_id)
+        .where(Booking.user_id == user.id)
         .order_by(Booking.created_at.desc())
     ).all()
 
@@ -180,9 +193,13 @@ def list_bookings(user_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/{booking_id}", response_model=BookingOut)
-def cancel_booking(booking_id: int, db: Session = Depends(get_db)):
+def cancel_booking(
+    booking_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """
-    Booking cancel karo aur seat wapas available karo.
+    Apni booking cancel karo aur seat wapas available karo.
 
     Note: booking row delete nahi kar rahe, sirf status badal rahe hain.
     Partial unique index sirf 'confirmed' par lagta hai, isliye cancelled
@@ -190,6 +207,14 @@ def cancel_booking(booking_id: int, db: Session = Depends(get_db)):
     """
     booking = db.get(Booking, booking_id)
     if booking is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking nahi mili")
+
+    # ⚠️ Ownership check. Bina iske koi bhi /api/bookings/1, /2, /3 chala ke
+    # dusron ki bookings cancel kar deta (IDOR — sabse common API bug).
+    #
+    # 404 de rahe hain, 403 nahi: 403 se attacker ko pata chal jata ki wo
+    # booking exist karti hai. 404 kuch nahi batata.
+    if booking.user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking nahi mili")
 
     if booking.status == BOOKING_CANCELLED:

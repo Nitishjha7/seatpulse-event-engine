@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { API_URL } from '../api'
+import { API_URL, getAccessToken } from '../api'
 
 /**
  * Ek event ke live seat updates ke liye WebSocket.
@@ -31,8 +31,17 @@ export function useWebSocket(eventId, onSeatUpdate) {
   const connect = useCallback(() => {
     if (!eventId) return
 
+    // Token na ho to connect hi mat karo — server 1008 se band kar dega
+    const token = getAccessToken()
+    if (!token) return
+
     // http:// -> ws://  aur  https:// -> wss://
-    const wsUrl = `${API_URL.replace(/^http/, 'ws')}/ws/events/${eventId}`
+    //
+    // Token QUERY PARAM me kyu: browser ka WebSocket API custom headers
+    // bhejne hi nahi deta. Isliye sirf short-lived ACCESS token bhejte hain
+    // (30 min), refresh token kabhi nahi.
+    const base = API_URL.replace(/^http/, 'ws')
+    const wsUrl = `${base}/ws/events/${eventId}?token=${encodeURIComponent(token)}`
     const socket = new WebSocket(wsUrl)
     socketRef.current = socket
     setStatus('connecting')

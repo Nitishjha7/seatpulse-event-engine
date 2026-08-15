@@ -28,8 +28,50 @@ class Settings(BaseSettings):
     # par logs bahut bhar jaate hain — default off.
     DB_ECHO: bool = False
 
+    # Ek waqt me kitni requests andar aane dena hai (admission control).
+    #
+    # ⚠️ Ye DB pool se CHHOTA hona chahiye. Har chalti hui request ek DB
+    # connection pakadti hai aur request khatam hone tak pakde rehti hai —
+    # to agar in-flight requests pool se zyada ho gayin, to pool khatam
+    # aur users ko 500.
+    #
+    # Invariant:  MAX_CONCURRENT_REQUESTS  <  pool_size + max_overflow
+    #             (30 < 40)
+    MAX_CONCURRENT_REQUESTS: int = 30
+
     # "redis" host bhi compose service ka naam hai, "db" ki tarah.
     REDIS_URL: str = "redis://redis:6379/0"
+
+    # ---------- Auth ----------
+    # ⚠️ Production me ye MUST badalna hai. Isi se tokens sign hote hain —
+    # leak ho gaya to koi bhi kisi ka bhi token bana sakta hai.
+    # Naya banao: python -c "import secrets; print(secrets.token_urlsafe(48))"
+    JWT_SECRET: str = "dev-only-secret-CHANGE-IN-PRODUCTION"
+    JWT_ALGORITHM: str = "HS256"
+
+    # Access token chhota rakhte hain — chori ho bhi jaye to 30 min me bekaar.
+    ACCESS_TOKEN_MINUTES: int = 30
+    # Refresh token lamba — user ko roz login na karna pade.
+    REFRESH_TOKEN_DAYS: int = 7
+
+    # Cookie sirf HTTPS par bheji jaye? Dev me http hai isliye False.
+    # Production me hamesha True.
+    COOKIE_SECURE: bool = False
+
+    # ---------- Google OAuth ----------
+    # Khali chhod do to Google login apne aap band rehta hai (frontend me
+    # button hi nahi dikhega). Email/password phir bhi chalta rahega.
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    # Ye Google Console me EXACTLY yahi register honi chahiye
+    GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/auth/google/callback"
+
+    # Google login ke baad user ko kahan wapas bhejna hai
+    FRONTEND_URL: str = "http://localhost:5173"
+
+    @property
+    def google_enabled(self) -> bool:
+        return bool(self.GOOGLE_CLIENT_ID and self.GOOGLE_CLIENT_SECRET)
 
     # Seat lock kitni der chalega (seconds).
     # 300 = 5 minute — itna time user ko payment ke liye milta hai.

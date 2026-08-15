@@ -12,7 +12,7 @@ Alag kyu rakhte hain:
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 # from_attributes=True -> SQLAlchemy object ko seedha schema me badal sakte hain.
@@ -58,10 +58,6 @@ class SeatOut(ORMModel):
 
 # ---------- Seat Lock (Phase 4) ----------
 
-class SeatLockRequest(BaseModel):
-    user_id: int = Field(..., gt=0, description="Kaun lock le raha hai")
-
-
 class SeatLockOut(BaseModel):
     seat_id: int
     locked_by: int | None
@@ -76,9 +72,14 @@ class SeatLockOut(BaseModel):
 # ---------- Booking ----------
 
 class BookingCreate(BaseModel):
-    """Client jo bhejta hai."""
+    """
+    Client jo bhejta hai.
+
+    ⭐ Note: `user_id` yahan NAHI hai. Pehle tha, aur wo ek security hole tha —
+    koi bhi {"user_id": 7} bhej ke kisi aur ke naam booking kar sakta tha.
+    Ab user JWT token se aata hai.
+    """
     seat_id: int = Field(..., gt=0, description="Kaunsi seat book karni hai")
-    user_id: int = Field(..., gt=0, description="Kaun book kar raha hai (auth aane tak)")
 
 
 class BookingOut(ORMModel):
@@ -104,3 +105,39 @@ class UserOut(ORMModel):
     id: int
     email: str
     full_name: str | None
+    avatar_url: str | None = None
+    # Frontend isse decide karta hai ki "password badlo" option dikhana hai ya nahi
+    is_google_user: bool = False
+
+
+# ---------- Auth ----------
+
+class RegisterRequest(BaseModel):
+    # EmailStr galat format wala email pehle hi reject kar deta hai
+    email: EmailStr
+    # min_length=8 — Pydantic validation, route me check likhne ki zaroorat nahi
+    password: str = Field(..., min_length=8, max_length=128)
+    full_name: str | None = Field(None, max_length=120)
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class TokenResponse(BaseModel):
+    """
+    Sirf ACCESS token JSON me jata hai.
+
+    Refresh token response body me kabhi nahi bhejte — wo httpOnly cookie
+    me jata hai, jise JavaScript padh hi nahi sakti.
+    """
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int          # seconds — frontend isse silent refresh schedule karta hai
+    user: UserOut
+
+
+class AuthConfigOut(BaseModel):
+    """Frontend poochta hai: Google login dikhana hai ya nahi?"""
+    google_enabled: bool

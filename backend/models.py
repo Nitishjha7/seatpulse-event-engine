@@ -13,6 +13,7 @@ Teen layer ki safety (sabse upar sabse tez, sabse neeche sabse pakka):
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -49,10 +50,21 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    # Phase 5 me JWT auth aayega. Abhi column bana rahe hain taki baad me
-    # migration me poori table na badalni pade.
-    hashed_password: Mapped[str] = mapped_column(String(255))
+
+    # nullable=True kyunki Google se aane wale users ka koi password hota hi nahi.
+    # Unke liye ye NULL rehta hai aur login sirf Google se hota hai.
+    hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     full_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+
+    # Google ka "sub" claim — permanent unique id.
+    # Email par match nahi karte kyunki user Google me email badal sakta hai.
+    google_id: Mapped[str | None] = mapped_column(
+        String(64), unique=True, index=True, nullable=True
+    )
+    avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     bookings: Mapped[list["Booking"]] = relationship(back_populates="user")

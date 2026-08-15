@@ -4,29 +4,50 @@ import {
   API_URL,
   cancelBooking,
   createBooking,
+  getAccessToken,
   getEvent,
   getEventSeats,
   getEvents,
   getHealth,
-  getMe,
   getMyBookings,
   lockSeat,
   unlockSeat,
 } from './api'
+import AuthPage from './auth/AuthPage'
+import { useAuth } from './auth/AuthContext'
 import BookingPanel from './components/BookingPanel'
 import SeatGrid from './components/SeatGrid'
 import { useWebSocket } from './hooks/useWebSocket'
 
-function App() {
-  const [health, setHealth] = useState(null)
-  const [user, setUser] = useState(null)
+export default function App() {
+  const { user, loading: authLoading, isAuthenticated } = useAuth()
 
+  // Session restore hone tak kuch mat dikhao — warna ek pal ko login page
+  // flash hota hai aur phir gayab ho jata hai.
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-500">
+        Loading…
+      </div>
+    )
+  }
+
+  if (!isAuthenticated) return <AuthPage />
+
+  // key={user.id} — user badalne par poora state fresh. Warna pichhle user
+  // ki bookings/selection nayi login me dikh jaati.
+  return <BookingApp key={user.id} />
+}
+
+function BookingApp() {
+  const { user, logout } = useAuth()
+
+  const [health, setHealth] = useState(null)
   const [event, setEvent] = useState(null)
   const [seats, setSeats] = useState([])
   const [bookings, setBookings] = useState([])
 
   const [selectedSeat, setSelectedSeat] = useState(null)
-  // Lock kitne second aur chalega. Countdown isi se chalta hai.
   const [lockSecondsLeft, setLockSecondsLeft] = useState(0)
 
   const [locking, setLocking] = useState(false)
@@ -35,41 +56,32 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [fatalError, setFatalError] = useState(null)
 
-  // Cleanup ke liye latest values chahiye, par unpe effect dobara nahi chalana.
-  // Isliye ref me rakhte hain.
+  // Cleanup ke liye latest values chahiye, par unpe effect dobara nahi chalana
   const selectedRef = useRef(null)
-  const userRef = useRef(null)
   selectedRef.current = selectedSeat
-  userRef.current = user
 
-  const refresh = useCallback(async (eventId, userId) => {
+  const refresh = useCallback(async (eventId) => {
     const [eventData, seatData, bookingData] = await Promise.all([
       getEvent(eventId),
       getEventSeats(eventId),
-      getMyBookings(userId),
+      getMyBookings(),
     ])
     setEvent(eventData)
     setSeats(seatData)
     setBookings(bookingData)
   }, [])
 
-  // Pehli baar sab load karo
   useEffect(() => {
     async function init() {
       try {
-        const [healthData, me, events] = await Promise.all([
-          getHealth(),
-          getMe(),
-          getEvents(),
-        ])
+        const [healthData, events] = await Promise.all([getHealth(), getEvents()])
         setHealth(healthData)
-        setUser(me)
 
         if (events.length === 0) {
           setFatalError("Koi event nahi mila — 'docker compose exec backend python seed.py' chalao")
           return
         }
-        await refresh(events[0].id, me.id)
+        await refresh(events[0].id)
       } catch (err) {
         setFatalError(err.message)
       } finally {
@@ -80,41 +92,32 @@ function App() {
   }, [refresh])
 
   /**
-   * ⭐ WebSocket se live seat updates.
-   *
-   * Pehle har booking ke baad poora data dubara maangte the (refresh).
-   * Ab sirf badli hui seat ka update aata hai — aur wo bhi bina maange,
+   * WebSocket se live seat updates — sirf badli hui seat ka update aata hai,
    * chahe change kisi DUSRE user ne kiya ho.
    */
-  const handleSeatUpdate = useCallback((updatedSeat) => {
-    // Sirf wo ek seat replace karo, poori list nahi
-    setSeats((prev) =>
-      prev.map((s) => (s.id === updatedSeat.id ? updatedSeat : s)),
-    )
+  const handleSeatUpdate = useCallback(
+    (updatedSeat) => {
+      setSeats((prev) => prev.map((s) => (s.id === updatedSeat.id ? updatedSeat : s)))
 
-    // Counts ke liye kuch karne ki zaroorat nahi — wo `seats` se derive
-    // hote hain (neeche `counts`), isliye apne aap sahi ho jaate hain.
-
-    // Meri hold ki hui seat kisi aur ke paas chali gayi? (TTL expire hone ke
-    // baad dusre ne le li) — to selection saaf kar do
-    setSelectedSeat((prev) => {
-      if (!prev || prev.id !== updatedSeat.id) return prev
-      const stillMine =
-        updatedSeat.status === 'locked' && updatedSeat.locked_by === userRef.current?.id
-      if (stillMine) return updatedSeat      // fresh version number mil gaya
-      setLockSecondsLeft(0)
-      return null
-    })
-  }, [])
+      // Meri hold kisi aur ke paas chali gayi? Selection saaf karo
+      setSelectedSeat((prev) => {
+        if (!prev || prev.id !== updatedSeat.id) return prev
+        const stillMine =
+          updatedSeat.status === 'locked' && updatedSeat.locked_by === user.id
+        if (stillMine) return updatedSeat
+        setLockSecondsLeft(0)
+        return null
+      })
+    },
+    [user.id],
+  )
 
   const { status: wsStatus } = useWebSocket(event?.id ?? null, handleSeatUpdate)
 
   /**
-   * Lock ka countdown.
-   *
-   * Ye sirf DIKHANE ke liye hai. Asli expiry Redis me hoti hai (TTL) —
-   * browser band kar do ya tab crash ho jaye, seat phir bhi 5 min me
-   * apne aap free ho jayegi. Ye timer sirf user ko batata hai kitna time hai.
+   * Lock ka countdown — sirf DIKHANE ke liye.
+   * Asli expiry Redis TTL me hoti hai: browser band kar do ya tab crash ho
+   * jaye, seat phir bhi 5 min me apne aap free ho jayegi.
    */
   useEffect(() => {
     if (lockSecondsLeft <= 0) return
@@ -122,10 +125,9 @@ function App() {
     const id = setInterval(() => {
       setLockSecondsLeft((s) => {
         if (s <= 1) {
-          // Time khatam — selection hata do aur seats refresh karo
           setSelectedSeat(null)
           setMessage({ type: 'error', text: '⏱️ Hold time khatam, seat wapas available hai' })
-          if (event && user) refresh(event.id, user.id)
+          if (event) refresh(event.id)
           return 0
         }
         return s - 1
@@ -133,18 +135,18 @@ function App() {
     }, 1000)
 
     return () => clearInterval(id)
-  }, [lockSecondsLeft, event, user, refresh])
+  }, [lockSecondsLeft, event, refresh])
 
   // Tab band karte waqt lock chhod do — TTL ka wait na karna pade
   useEffect(() => {
     const handler = () => {
       const seat = selectedRef.current
-      const u = userRef.current
-      if (seat && u) {
-        // keepalive: page band hote waqt bhi request nikal jati hai
-        fetch(`${API_URL}/api/seats/${seat.id}/lock?user_id=${u.id}`, {
+      const token = getAccessToken()
+      if (seat && token) {
+        fetch(`${API_URL}/api/seats/${seat.id}/lock`, {
           method: 'DELETE',
-          keepalive: true,
+          headers: { Authorization: `Bearer ${token}` },
+          keepalive: true,      // page band hote waqt bhi request nikal jati hai
         })
       }
     }
@@ -152,14 +154,8 @@ function App() {
     return () => window.removeEventListener('beforeunload', handler)
   }, [])
 
-  /**
-   * Seat pe click.
-   *
-   * Phase 3 me ye sirf local state set karta tha. Ab ye server se
-   * actually lock maangta hai — 409 mile to matlab koi aur pehle le gaya.
-   */
   async function handleSelect(seat) {
-    if (!user || locking) return
+    if (locking) return
 
     // Wahi seat dubara click = deselect + lock release
     if (selectedSeat?.id === seat.id) {
@@ -172,10 +168,10 @@ function App() {
     try {
       // Purani seat ka lock pehle chhodo, warna do seats hold rahengi
       if (selectedSeat) {
-        await unlockSeat(selectedSeat.id, user.id).catch(() => {})
+        await unlockSeat(selectedSeat.id).catch(() => {})
       }
 
-      const lock = await lockSeat(seat.id, user.id)
+      const lock = await lockSeat(seat.id)
       setSelectedSeat(seat)
       setLockSecondsLeft(lock.expires_in)
       setMessage({
@@ -188,30 +184,30 @@ function App() {
       setMessage({ type: 'error', text: err.status === 409 ? `⚠️ ${err.message}` : err.message })
     } finally {
       setLocking(false)
-      await refresh(event.id, user.id)
+      await refresh(event.id)
     }
   }
 
   async function releaseCurrentLock() {
-    if (!selectedSeat || !user) return
+    if (!selectedSeat) return
     try {
-      await unlockSeat(selectedSeat.id, user.id)
+      await unlockSeat(selectedSeat.id)
     } catch {
-      // lock TTL pe expire ho chuka hoga — koi baat nahi
+      /* lock TTL pe expire ho chuka hoga — koi baat nahi */
     }
     setSelectedSeat(null)
     setLockSecondsLeft(0)
     setMessage(null)
-    await refresh(event.id, user.id)
+    await refresh(event.id)
   }
 
   async function handleBook() {
-    if (!selectedSeat || !user) return
+    if (!selectedSeat) return
 
     setBooking(true)
     setMessage(null)
     try {
-      await createBooking(selectedSeat.id, user.id)
+      await createBooking(selectedSeat.id)
       setMessage({
         type: 'success',
         text: `Seat ${selectedSeat.row_label}-${selectedSeat.seat_number} book ho gayi!`,
@@ -222,7 +218,7 @@ function App() {
       setMessage({ type: 'error', text: err.status === 409 ? `⚠️ ${err.message}` : err.message })
     } finally {
       setBooking(false)
-      await refresh(event.id, user.id)
+      await refresh(event.id)
     }
   }
 
@@ -231,7 +227,7 @@ function App() {
     try {
       await cancelBooking(bookingId)
       setMessage({ type: 'success', text: 'Booking cancel ho gayi, seat wapas available hai' })
-      await refresh(event.id, user.id)
+      await refresh(event.id)
     } catch (err) {
       setMessage({ type: 'error', text: err.message })
     }
@@ -239,7 +235,7 @@ function App() {
 
   if (loading) {
     return (
-      <Shell>
+      <Shell user={user} onLogout={logout}>
         <p className="text-center text-slate-500">Loading…</p>
       </Shell>
     )
@@ -247,7 +243,7 @@ function App() {
 
   if (fatalError) {
     return (
-      <Shell>
+      <Shell user={user} onLogout={logout}>
         <div className="mx-auto max-w-md rounded-xl border border-rose-900/50 bg-rose-950/30 p-6 text-center">
           <p className="text-rose-300">{fatalError}</p>
           <p className="mt-2 text-xs text-slate-500">
@@ -258,22 +254,20 @@ function App() {
     )
   }
 
-  // Counts hamesha seats se nikaalte hain, event object se nahi.
-  // Wajah: WebSocket update seat badalta hai — counts apne aap sahi ho jaate
-  // hain, server se dobara poochhna nahi padta.
+  // Counts hamesha seats se derive — WebSocket update aate hi apne aap sahi
   const counts = seats.reduce(
     (acc, s) => ({ ...acc, [s.status]: (acc[s.status] || 0) + 1 }),
     {},
   )
 
   return (
-    <Shell health={health} user={user} wsStatus={wsStatus}>
+    <Shell health={health} user={user} wsStatus={wsStatus} onLogout={logout}>
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
         <SeatGrid
           seats={seats}
           selectedSeat={selectedSeat}
           onSelect={handleSelect}
-          currentUserId={user?.id}
+          currentUserId={user.id}
           busy={locking}
         />
         <BookingPanel
@@ -293,7 +287,7 @@ function App() {
   )
 }
 
-function Shell({ children, health, user, wsStatus }) {
+function Shell({ children, health, user, wsStatus, onLogout }) {
   return (
     <div className="min-h-screen bg-slate-950 p-6 text-slate-100">
       <div className="mx-auto max-w-5xl">
@@ -305,15 +299,13 @@ function Shell({ children, health, user, wsStatus }) {
             </p>
           </div>
 
-          {health && (
-            <div className="flex items-center gap-3 text-xs">
-              {user && <span className="text-slate-500">{user.email}</span>}
+          <div className="flex items-center gap-3 text-xs">
+            {health && (
               <span className="flex items-center gap-2 rounded-full border border-slate-800 bg-slate-900 px-3 py-1.5">
                 <Dot ok={health.database === 'connected'} />
                 <span className="text-slate-400">DB</span>
                 <Dot ok={health.redis === 'connected'} />
                 <span className="text-slate-400">Redis</span>
-                {/* Live connection ka status — open hone par pulse karta hai */}
                 <span
                   className={`h-2 w-2 rounded-full ${
                     wsStatus === 'open'
@@ -326,10 +318,33 @@ function Shell({ children, health, user, wsStatus }) {
                 <span className="text-slate-400">
                   {wsStatus === 'open' ? 'Live' : wsStatus === 'connecting' ? 'Connecting' : 'Offline'}
                 </span>
-                <span className="text-slate-600">· v{health.version}</span>
               </span>
-            </div>
-          )}
+            )}
+
+            {user && (
+              <div className="flex items-center gap-2 rounded-full border border-slate-800 bg-slate-900 py-1 pl-1 pr-3">
+                {user.avatar_url ? (
+                  <img
+                    src={user.avatar_url}
+                    alt=""
+                    className="h-6 w-6 rounded-full"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-semibold uppercase">
+                    {(user.full_name || user.email)[0]}
+                  </span>
+                )}
+                <span className="text-slate-400">{user.full_name || user.email}</span>
+                <button
+                  onClick={onLogout}
+                  className="ml-1 text-slate-600 transition hover:text-rose-400"
+                >
+                  Logout
+                </button>
+              </div>
+            )}
+          </div>
         </header>
 
         {children}
@@ -352,5 +367,3 @@ function Shell({ children, health, user, wsStatus }) {
 function Dot({ ok }) {
   return <span className={`h-2 w-2 rounded-full ${ok ? 'bg-emerald-400' : 'bg-rose-500'}`} />
 }
-
-export default App
