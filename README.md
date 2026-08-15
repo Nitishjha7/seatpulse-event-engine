@@ -111,6 +111,45 @@ WebSocket messages are fanned out through a Redis pub/sub channel per event, so 
 | `seats` | Position, price, `status`, **`version`** (optimistic lock), lock holder + expiry |
 | `bookings` | Links user ↔ seat, with a **partial unique index** enforcing one confirmed booking per seat |
 
+## 📊 Load Test Results
+
+Measured with [Locust](loadtest/locustfile.py) against the Docker Compose stack (single uvicorn worker, dev mode — all services on one machine).
+
+**Flash sale — 500 concurrent users contending for a single seat:**
+
+| Metric | Value |
+|---|---|
+| Total requests | 4,446 |
+| Throughput | 150 req/s |
+| HTTP failures | 0 |
+| **Confirmed bookings in DB** | **1** |
+| Integrity violations | 0 |
+
+Every losing request received a clean `409 Conflict`. Verified with [`verify_integrity.py`](backend/verify_integrity.py), which asserts no seat has more than one confirmed booking and that seat status and bookings stay consistent.
+
+**Realistic browsing — 50 concurrent users:**
+
+| Endpoint | p50 | p75 | p95 | p99 |
+|---|---|---|---|---|
+| `GET /events/{id}/seats` | 13 ms | 19 ms | 93 ms | 180 ms |
+| `GET /events/{id}` | 10 ms | 13 ms | 74 ms | 160 ms |
+| `POST /seats/{id}/lock` | 19 ms | 23 ms | 46 ms | 83 ms |
+| `POST /bookings` | 26 ms | 33 ms | 42 ms | 47 ms |
+
+```bash
+docker compose exec backend python seed.py           # 500 test users
+docker compose exec backend python reset_state.py    # clean slate
+
+docker compose --profile loadtest run --rm locust \
+    -f locustfile.py FlashSaleUser --headless -u 500 -r 100 -t 30s \
+    --host http://backend:8000
+
+docker compose exec backend python verify_integrity.py
+docker compose exec backend pytest tests/ -v         # 6 concurrency tests
+```
+
+> The load test earned its keep: it surfaced a race where `lock_seat` could overwrite a seat that had just been booked, because its `UPDATE` had no status guard. A 20-request test never hit that window. Fixed with the same guarded-update pattern used elsewhere.
+
 ## 🗺️ Roadmap
 
 - [x] Dockerized FastAPI + React skeleton
@@ -122,8 +161,10 @@ WebSocket messages are fanned out through a Redis pub/sub channel per event, so 
 - [x] Optimistic locking — verified with 20 concurrent requests on one seat
 - [x] Redis distributed seat locking (`SET NX EX` + Lua-based safe release)
 - [x] WebSocket real-time seat broadcasting via Redis pub/sub (multi-worker safe)
+- [x] Locust load tests + integrity verification + concurrency test suite
 - [ ] JWT authentication
-- [ ] Load testing (Locust) to prove zero overselling
+- [ ] Rate limiting
+- [ ] Multi-worker deployment (`--workers`) and CI pipeline
 
 ## 🛠️ Common Commands
 

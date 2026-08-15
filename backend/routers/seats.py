@@ -136,10 +136,24 @@ def lock_seat(seat_id: int, payload: SeatLockRequest, db: Session = Depends(get_
 
     # Lock mil gaya. Ab DB me bhi likh do — sirf isliye taki DUSRE users ko
     # grid me ye seat peeli dikhe. Asli lock Redis me hi hai.
+    #
+    # ⚠️ WHERE me status ka check ZAROORI hai. Ye race load test me pakdi gayi thi:
+    #
+    #   B: seat padhi (locked by A)      -> upar wala check pass ho gaya
+    #   A: book kar li                    -> status=booked, Redis lock release
+    #   B: Redis lock mil gaya (free tha) -> aur DB me status=locked likh diya
+    #      ...matlab 'booked' seat wapas 'locked' ho gayi. Ek confirmed booking
+    #      thi, par seat booked nahi dikhti thi.
+    #
+    # Guard ke saath: seat beech me book ho gayi to rowcount 0 aata hai,
+    # hum lock wapas chhod dete hain aur 409 dete hain.
     ttl = settings.SEAT_LOCK_TTL
-    db.execute(
+    result = db.execute(
         update(Seat)
-        .where(Seat.id == seat_id)
+        .where(
+            Seat.id == seat_id,
+            Seat.status.in_((SEAT_AVAILABLE, SEAT_LOCKED)),
+        )
         .values(
             status=SEAT_LOCKED,
             locked_by=payload.user_id,
@@ -148,6 +162,14 @@ def lock_seat(seat_id: int, payload: SeatLockRequest, db: Session = Depends(get_
         )
         .execution_options(synchronize_session=False)
     )
+
+    if result.rowcount == 0:
+        db.rollback()
+        release_seat_lock(seat_id, payload.user_id)
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Seat abhi abhi book ho gayi"
+        )
+
     db.commit()
 
     # Sab connected clients ko batao — unke grid me ye seat turant peeli ho jayegi

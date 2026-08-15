@@ -1,0 +1,6 @@
+# Sirf development/testing ke liye. Production image me ye nahi jaana chahiye.
+-r requirements.txt
+
+pytest>=8.0.0
+httpx>=0.27.0
+websockets>=12.0

@@ -66,5 +66,23 @@ services:
     depends_on:
       - backend
 
+  # Load testing. Normally start NAHI hota — profile ki wajah se.
+  # Chalane ke liye:
+  #   docker compose --profile loadtest run --rm locust \
+  #       -f locustfile.py FlashSaleUser --headless -u 500 -r 100 -t 30s
+  locust:
+    build: ./loadtest
+    container_name: seatpulse_locust
+    profiles: ["loadtest"]
+    volumes:
+      - ./loadtest:/loadtest
+    ports:
+      - "8089:8089"
+    environment:
+      # Container network se — localhost yahan backend container ko nahi milega
+      LOCUST_HOST: http://backend:8000
+    depends_on:
+      - backend
+
 volumes:
   postgres_data:

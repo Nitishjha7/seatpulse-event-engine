@@ -7,12 +7,19 @@ Chalao:
 Ye script dubara chalane par duplicate nahi banayega — pehle check karta hai.
 """
 
+import os
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from database import SessionLocal
 from models import Event, Seat, User, utcnow
+
+# Kitne test users banane hain.
+# Load test me har concurrent user ka apna user_id hona chahiye — warna
+# same user dubara lock maange to "already_owned" wala 200 mil jata hai
+# aur contention ki asli tasveer nahi banti.
+SEED_USERS = int(os.getenv("SEED_USERS", "500"))
 
 ROWS = "ABCDEFGHIJ"      # 10 rows
 SEATS_PER_ROW = 10       # har row me 10 seats = 100 total
@@ -26,28 +33,36 @@ def seed():
     db = SessionLocal()
     try:
         # ---- Users ----
-        # Demo user (frontend isi ko use karta hai) + kuch test users.
-        # Test users concurrency check ke liye chahiye: ek hi seat pe alag-alag
-        # users se lock maar ke dekhna ki sirf ek ko milta hai.
-        wanted_users = [("demo@seatpulse.dev", "Demo User")] + [
-            (f"user{i}@seatpulse.dev", f"Test User {i}") for i in range(1, 6)
-        ]
+        # id=1 hamesha demo user (frontend isi ko use karta hai).
+        # Baaki load testing ke liye.
+        existing = db.scalar(select(func.count(User.id)))
 
-        created = 0
-        for email, name in wanted_users:
-            if db.scalar(select(User).where(User.email == email)) is None:
-                db.add(
-                    User(
-                        email=email,
-                        # Phase 5 me asli hashing (bcrypt) aayegi. Abhi placeholder.
-                        hashed_password="not-a-real-hash-yet",
-                        full_name=name,
-                    )
+        if existing == 0:
+            db.add(
+                User(
+                    email="demo@seatpulse.dev",
+                    # Asli hashing (bcrypt) auth phase me aayegi. Abhi placeholder.
+                    hashed_password="not-a-real-hash-yet",
+                    full_name="Demo User",
                 )
-                created += 1
+            )
+            existing = 1
 
+        # Ek hi bulk insert — 500 alag INSERT se bahut tez
+        to_create = max(0, SEED_USERS - existing)
+        if to_create:
+            db.bulk_save_objects(
+                [
+                    User(
+                        email=f"user{i}@seatpulse.dev",
+                        hashed_password="not-a-real-hash-yet",
+                        full_name=f"Test User {i}",
+                    )
+                    for i in range(existing, existing + to_create)
+                ]
+            )
         db.flush()
-        print(f"✅ {created} naye users banaye ({len(wanted_users)} total chahiye the)")
+        print(f"✅ Users: {to_create} naye banaye, total {SEED_USERS}")
 
         # ---- Event ----
         event = db.scalar(select(Event).where(Event.name == "Arijit Singh Live"))
