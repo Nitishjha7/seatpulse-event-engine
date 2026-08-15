@@ -208,21 +208,62 @@ Result on the same 200-user flash sale: **1,250 requests with 58 failures and a 
 
 ## 🗺️ Roadmap
 
+### Shipped
+
 - [x] Dockerized FastAPI + React skeleton
 - [x] CORS-enabled API with health check
 - [x] Frontend ↔ backend integration (live status, Tailwind v4)
 - [x] PostgreSQL + SQLAlchemy models (User, Event, Seat, Booking)
 - [x] Alembic migrations + seed data
 - [x] Pydantic schemas + CRUD APIs + interactive seat grid
-- [x] Optimistic locking — verified with 20 concurrent requests on one seat
+- [x] Optimistic locking — verified with concurrent requests on a single seat
 - [x] Redis distributed seat locking (`SET NX EX` + Lua-based safe release)
 - [x] WebSocket real-time seat broadcasting via Redis pub/sub (multi-worker safe)
 - [x] Locust load tests + integrity verification + concurrency test suite
 - [x] JWT authentication — access token in memory, refresh token in an `httpOnly` cookie, revocable via Redis
 - [x] Google OAuth (Authorization Code flow)
 - [x] Admission control — bounded concurrency so the connection pool cannot be exhausted
-- [ ] Rate limiting
+
+### Planned
+
+Ordered by dependency — each item leans on the ones above it. None of these are built yet.
+
+- [ ] **Rate limiting** — Redis token bucket per IP and per user, so flash-sale bots cannot outrun real people
+- [ ] **Idempotency keys** — a replayed booking or payment returns the original result instead of executing twice
+- [ ] **RBAC** — organizer / attendee / admin roles behind a `require_role(...)` dependency
+- [ ] **Organizer portal** — create events, define seat pricing, view sales
+- [ ] **Background task queue** (ARQ + Redis) — QR code, PDF ticket and email generated outside the request, so checkout stays instant
+- [ ] **Payment gateway** — Razorpay/Stripe with signature-verified webhooks as the source of truth; the seat stays held until the webhook confirms
+- [ ] **QR check-in portal** — mobile scanner with an atomic `valid → checked_in` flip, so one ticket cannot pass two gates
+- [ ] **Dynamic pricing** — demand-based surge recomputed on booking events and pushed over the existing WebSocket channel
+- [ ] **Visual seat layout builder** — organizer draws rows, sections and price bands; saved as JSON and expanded into seats server-side
+- [ ] **Group booking + split payment** — shareable payment link with a deadline; every share paid or the whole group's seats are released
+- [ ] **Natural-language seat finder** — an LLM turns *"3 seats together under ₹1500, centred on the stage"* into structured filters that run as an ordinary query
+- [ ] **AI event copy + poster generator** — draft title, description and banner from a short prompt, always editable before publishing
+- [ ] **Pessimistic locking benchmark** — `SELECT … FOR UPDATE` measured against the current optimistic approach with the existing Locust suite
 - [ ] Multi-worker deployment (`--workers`) and CI pipeline
+- [ ] Screenshots / demo GIF, and a deployed live demo
+- [ ] **Demand forecasting** — base price and sell-out prediction from booking velocity. Last on purpose: without real historical data this produces a plausible-looking number rather than a useful one
+
+---
+
+**Target architecture once the roadmap lands:**
+
+```
+[ Organizer Portal ] ──> Layout builder · Pricing · AI-assisted event copy
+                                  │
+                                  ▼
+[ Customer Portal ]  ──> Live seat grid · Redis holds · Dynamic pricing · NL seat search
+                                  │
+                                  ▼
+[ Checkout ]         ──> Payment webhooks · Idempotency · Split-bill links
+                                  │
+                                  ▼
+[ Async Workers ]    ──> QR code · PDF ticket · Email
+                                  │
+                                  ▼
+[ Venue Gate ]       ──> QR scanner · Atomic check-in validation
+```
 
 ## 🛠️ Common Commands
 
