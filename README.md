@@ -72,7 +72,7 @@ seatpulse-event-engine/
 │   ├── rate_limit.py       # Token bucket in Lua
 │   ├── idempotency.py      # Replay-safe POST handling
 │   ├── websocket.py        # Connection manager + Redis pub/sub fan-out
-│   ├── routers/            # auth, events, seats, bookings
+│   ├── routers/            # auth, events, seats, bookings, organizer, admin
 │   ├── tests/              # Concurrency + auth test suite
 │   ├── seed.py             # Demo event, 100 seats, test users
 │   ├── verify_integrity.py # Post-load-test invariant checks
@@ -83,7 +83,7 @@ seatpulse-event-engine/
 │   │   ├── auth/           # AuthContext (token in memory) + login page
 │   │   ├── booking/        # Shared booking state + the single WebSocket
 │   │   ├── layout/         # AppShell, Sidebar, Topbar, icons
-│   │   ├── pages/          # Dashboard, Events, EventDetail, MyBookings, Profile
+│   │   ├── pages/          # Dashboard, Events, MyBookings, Profile, organizer/, admin/
 │   │   ├── components/     # SeatGrid, HoldCard, EventHero, BookingConfirmedModal, …
 │   │   ├── hooks/          # useWebSocket (reconnect with backoff)
 │   │   ├── App.jsx         # Routes + auth gate
@@ -106,6 +106,20 @@ seatpulse-event-engine/
 - **Refresh tokens are revocable.** Each carries a `jti` whitelisted in Redis with a matching TTL; logout deletes the key, so the token dies immediately instead of living out its 7 days. `/refresh` rotates — using a stolen token invalidates the real user's session, which surfaces the theft.
 - **Passwords** are hashed with bcrypt (deliberately slow, salt included).
 - **Google OAuth** uses the Authorization Code flow — the code is exchanged for user info server-to-server, so `client_secret` never reaches the browser and no token ever appears in a URL. Leave `GOOGLE_CLIENT_ID` empty and the button simply disappears; email/password keeps working.
+
+### Authorization
+
+Three flat roles — `attendee`, `organizer`, `admin` — enforced by a `require_role(...)` dependency and backed by a check constraint on the column, so a typo can never become a role.
+
+**Role and ownership are separate checks.** Holding the organizer role does not mean every event is yours: each organizer endpoint re-fetches the event and confirms `organizer_id` matches (admins bypass this). The two failures also return different codes on purpose — a missing *capability* is `403`, because the endpoint is public knowledge and only permission is absent; a resource that isn't yours returns `404`, so its existence stays hidden.
+
+The frontend hides organizer and admin navigation by role, but that is **UX only** — it is trivially bypassed in DevTools, and the server is the real gate.
+
+| Email | Password | Role |
+|---|---|---|
+| `demo@seatpulse.dev` | `demo1234` | attendee |
+| `organizer@seatpulse.dev` | `demo1234` | organizer |
+| `admin@seatpulse.dev` | `demo1234` | admin |
 
 ## 🔌 API
 
@@ -135,6 +149,16 @@ seatpulse-event-engine/
 | `POST` | `/api/auth/logout-all` | Revoke every refresh token for the user |
 | `GET` | `/api/auth/me` | Current user |
 | `GET` | `/api/auth/google/login` | Start Google OAuth |
+
+**Organizer & admin**
+
+| Method | Endpoint | Role | Description |
+|---|---|---|---|
+| `POST` | `/api/organizer/events` | organizer, admin | Create an event; seats are generated from price tiers |
+| `GET` | `/api/organizer/events` | organizer, admin | Your events with sales and revenue (admin sees all) |
+| `PATCH` | `/api/organizer/events/{id}` | owner, admin | Edit details — never the layout or pricing |
+| `DELETE` | `/api/organizer/events/{id}` | owner, admin | Blocked with `409` while confirmed bookings exist |
+| `GET` | `/api/admin/stats` | admin | Platform totals, active Redis locks, live sockets |
 
 Everything that acts on a user's behalf — locking, booking, cancelling — takes the user from the token, never from the request body.
 
@@ -194,7 +218,7 @@ docker compose --profile loadtest run --rm locust \
     --host http://backend:8000
 
 docker compose exec backend python verify_integrity.py
-docker compose exec backend pytest tests/ -v         # 20 auth + concurrency tests
+docker compose exec backend pytest tests/ -v         # 29 auth + RBAC + concurrency tests
 ```
 
 ### What load testing actually caught
