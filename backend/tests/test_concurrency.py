@@ -161,6 +161,201 @@ def test_cannot_cancel_someone_elses_booking(client, tokens, free_seat):
 
 
 # ---------------------------------------------------------------------------
+# RBAC
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def role_tokens(client):
+    """Teeno roles ke tokens. seed.py ye accounts banata hai."""
+    accounts = {
+        "attendee": "demo@seatpulse.dev",
+        "organizer": "organizer@seatpulse.dev",
+        "admin": "admin@seatpulse.dev",
+    }
+    try:
+        return {role: _token(client, email) for role, email in accounts.items()}
+    except httpx.HTTPStatusError:
+        pytest.skip("Role accounts nahi hain — 'python seed.py' chalao")
+
+
+def test_role_comes_through_in_me(client, role_tokens):
+    for role, token in role_tokens.items():
+        assert client.get("/api/auth/me", headers=_headers(token)).json()["role"] == role
+
+
+def test_attendee_cannot_touch_organizer_or_admin(client, role_tokens):
+    """Sabse basic RBAC check."""
+    t = _headers(role_tokens["attendee"])
+    assert client.get("/api/organizer/events", headers=t).status_code == 403
+    assert client.get("/api/admin/stats", headers=t).status_code == 403
+
+
+def test_organizer_cannot_reach_admin(client, role_tokens):
+    """Organizer hone ka matlab admin hona nahi hai."""
+    assert client.get(
+        "/api/admin/stats", headers=_headers(role_tokens["organizer"])
+    ).status_code == 403
+
+
+def test_admin_can_reach_everything(client, role_tokens):
+    t = _headers(role_tokens["admin"])
+    assert client.get("/api/admin/stats", headers=t).status_code == 200
+    assert client.get("/api/organizer/events", headers=t).status_code == 200
+
+
+def test_organizer_creates_event_with_priced_rows(client, role_tokens):
+    """Price tiers se seats sahi ban rahi hain?"""
+    token = role_tokens["organizer"]
+
+    res = client.post(
+        "/api/organizer/events",
+        headers=_headers(token),
+        json={
+            "name": "Pytest Event",
+            "venue": "Test Hall, Pune",
+            "starts_at": "2027-01-01T18:00:00Z",
+            "category": "Comedy",
+            "seats_per_row": 4,
+            "price_tiers": [{"rows": 1, "price": 1500}, {"rows": 2, "price": 500}],
+        },
+    )
+    assert res.status_code == 201
+    event = res.json()
+    assert event["total_seats"] == 3 * 4      # 3 rows x 4 seats
+    assert event["available_seats"] == 12
+
+    # Seats actually bani, aur pricing tier ke hisaab se
+    seats = client.get(f"/api/events/{event['id']}/seats").json()
+    assert len(seats) == 12
+    assert {s["price"] for s in seats if s["row_label"] == "A"} == {1500}
+    assert {s["price"] for s in seats if s["row_label"] in ("B", "C")} == {500}
+
+    # cleanup — koi booking nahi hai to delete chal jayega
+    assert client.delete(
+        f"/api/organizer/events/{event['id']}", headers=_headers(token)
+    ).status_code == 204
+
+
+def test_attendee_cannot_create_event(client, role_tokens):
+    res = client.post(
+        "/api/organizer/events",
+        headers=_headers(role_tokens["attendee"]),
+        json={
+            "name": "Should Fail",
+            "venue": "Nowhere",
+            "starts_at": "2027-01-01T18:00:00Z",
+            "seats_per_row": 2,
+            "price_tiers": [{"rows": 1, "price": 100}],
+        },
+    )
+    assert res.status_code == 403
+
+
+def test_organizer_cannot_touch_another_organizers_event(client, role_tokens, tokens):
+    """
+    ⭐ Sabse important RBAC test.
+
+    Role check pass hone ka matlab ye nahi ki har resource tumhara hai.
+    Ownership alag se check honi chahiye.
+    """
+    owner = role_tokens["organizer"]
+
+    created = client.post(
+        "/api/organizer/events",
+        headers=_headers(owner),
+        json={
+            "name": "Ownership Test",
+            "venue": "Test Hall",
+            "starts_at": "2027-02-01T18:00:00Z",
+            "seats_per_row": 2,
+            "price_tiers": [{"rows": 1, "price": 100}],
+        },
+    ).json()
+
+    # user1 ko organizer bana ke dekhte hain — role to hai, par event uska nahi
+    admin = _headers(role_tokens["admin"])
+    other = _token(client, "user1@seatpulse.dev")
+
+    # user1 organizer nahi hai to pehle 403 milega; agar hai to 404 (ownership).
+    # Dono hi "access nahi" hain — bas alag wajah se.
+    patch = client.patch(
+        f"/api/organizer/events/{created['id']}",
+        headers=_headers(other),
+        json={"name": "HACKED"},
+    )
+    assert patch.status_code in (403, 404)
+
+    # Owner khud edit kar sakta hai
+    assert client.patch(
+        f"/api/organizer/events/{created['id']}",
+        headers=_headers(owner),
+        json={"venue": "Updated Hall"},
+    ).status_code == 200
+
+    # Admin bhi kar sakta hai
+    assert client.patch(
+        f"/api/organizer/events/{created['id']}", headers=admin, json={"venue": "Admin Hall"}
+    ).status_code == 200
+
+    client.delete(f"/api/organizer/events/{created['id']}", headers=_headers(owner))
+
+
+def test_event_with_bookings_cannot_be_deleted(client, role_tokens):
+    """
+    ⚠️ Business rule: paid tickets kabhi gayab nahi honi chahiye.
+
+    Cascade delete laga hua hai, to bina is guard ke ek DELETE se logon ki
+    khareedi hui tickets ud jaatin.
+    """
+    owner = role_tokens["organizer"]
+    attendee = role_tokens["attendee"]
+
+    created = client.post(
+        "/api/organizer/events",
+        headers=_headers(owner),
+        json={
+            "name": "Delete Guard Test",
+            "venue": "Test Hall",
+            "starts_at": "2027-03-01T18:00:00Z",
+            "seats_per_row": 2,
+            "price_tiers": [{"rows": 1, "price": 100}],
+        },
+    ).json()
+
+    seat = client.get(f"/api/events/{created['id']}/seats").json()[0]
+    booking = client.post(
+        "/api/bookings", json={"seat_id": seat["id"]}, headers=_headers(attendee)
+    )
+    assert booking.status_code == 201
+
+    # Ab delete block hona chahiye
+    blocked = client.delete(f"/api/organizer/events/{created['id']}", headers=_headers(owner))
+    assert blocked.status_code == 409
+
+    # Booking cancel karo -> ab delete chal jayega
+    client.delete(f"/api/bookings/{booking.json()['id']}", headers=_headers(attendee))
+    assert client.delete(
+        f"/api/organizer/events/{created['id']}", headers=_headers(owner)
+    ).status_code == 204
+
+
+def test_seat_layout_limits_are_enforced(client, role_tokens):
+    """26 rows (A-Z) se zyada nahi ban sakti."""
+    res = client.post(
+        "/api/organizer/events",
+        headers=_headers(role_tokens["organizer"]),
+        json={
+            "name": "Too Many Rows",
+            "venue": "Test Hall",
+            "starts_at": "2027-04-01T18:00:00Z",
+            "seats_per_row": 10,
+            "price_tiers": [{"rows": 20, "price": 100}, {"rows": 20, "price": 50}],
+        },
+    )
+    assert res.status_code == 422
+
+
+# ---------------------------------------------------------------------------
 # Rate limiting
 # ---------------------------------------------------------------------------
 

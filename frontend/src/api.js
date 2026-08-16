@@ -134,6 +134,29 @@ export const lockSeat = (seatId) =>
 export const unlockSeat = (seatId) =>
   request(`/api/seats/${seatId}/lock`, { method: "DELETE" });
 
+// ---- Organizer ----
+
+export const getMyEvents = () => request("/api/organizer/events");
+
+export const createEvent = (payload) =>
+  request("/api/organizer/events", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const updateEvent = (eventId, payload) =>
+  request(`/api/organizer/events/${eventId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+
+export const deleteEvent = (eventId) =>
+  request(`/api/organizer/events/${eventId}`, { method: "DELETE" });
+
+// ---- Admin ----
+
+export const getAdminStats = () => request("/api/admin/stats");
+
 // ---- Bookings ----
 
 export const getMyBookings = () => request("/api/bookings");

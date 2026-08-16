@@ -236,13 +236,13 @@ Result on the same 200-user flash sale: **1,250 requests with 58 failures and a 
 - [x] Event detail page, booking confirmation modal, and motion-safe animations (`prefers-reduced-motion`, `:focus-visible`)
 - [x] Rate limiting — Redis token bucket in Lua, scoped to the user or email rather than the IP
 - [x] Idempotency keys — a replayed booking returns the original result instead of creating a second one
+- [x] RBAC — attendee / organizer / admin, with ownership checked separately from role
+- [x] Organizer portal — create events with price-tier seat generation, track sales; admin platform stats
 
 ### Planned
 
 Ordered by dependency — each item leans on the ones above it. None of these are built yet.
 
-- [ ] **RBAC** — organizer / attendee / admin roles behind a `require_role(...)` dependency
-- [ ] **Organizer portal** — create events, define seat pricing, view sales
 - [ ] **Background task queue** (ARQ + Redis) — QR code, PDF ticket and email generated outside the request, so checkout stays instant
 - [ ] **Payment gateway** — Razorpay/Stripe with signature-verified webhooks as the source of truth; the seat stays held until the webhook confirms
 - [ ] **QR check-in portal** — mobile scanner with an atomic `valid → checked_in` flip, so one ticket cannot pass two gates

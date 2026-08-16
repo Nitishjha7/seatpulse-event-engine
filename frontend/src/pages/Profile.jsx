@@ -23,11 +23,12 @@ export default function Profile() {
               {user.full_name || 'No name set'}
             </p>
             <p className="truncate text-sm text-slate-400">{user.email}</p>
-            <span
-              className="mt-1.5 inline-block rounded bg-white/5 px-2 py-0.5 text-[11px] text-slate-400"
-            >
-              {user.is_google_user ? 'Google account' : 'Email + password'}
-            </span>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              <span className="rounded bg-white/5 px-2 py-0.5 text-[11px] text-slate-400">
+                {user.is_google_user ? 'Google account' : 'Email + password'}
+              </span>
+              <RoleBadge role={user.role} />
+            </div>
           </div>
         </div>
 
@@ -64,6 +65,21 @@ export default function Profile() {
         </dl>
       </section>
     </div>
+  )
+}
+
+/** Role ka rang — admin sabse alag dikhna chahiye */
+function RoleBadge({ role }) {
+  const style =
+    {
+      admin: 'bg-rose-500/15 text-rose-300 ring-rose-500/25',
+      organizer: 'bg-violet-500/15 text-violet-300 ring-violet-500/25',
+    }[role] || 'bg-white/5 text-slate-400 ring-white/10'
+
+  return (
+    <span className={`rounded px-2 py-0.5 text-[11px] capitalize ring-1 ${style}`}>
+      {role}
+    </span>
   )
 }
 

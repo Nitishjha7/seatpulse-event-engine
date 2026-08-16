@@ -4,11 +4,27 @@ import { useAuth } from './auth/AuthContext'
 import AuthPage from './auth/AuthPage'
 import { BookingProvider } from './booking/BookingContext'
 import AppShell from './layout/AppShell'
+import AdminStats from './pages/admin/AdminStats'
 import Dashboard from './pages/Dashboard'
 import EventDetail from './pages/EventDetail'
 import Events from './pages/Events'
 import MyBookings from './pages/MyBookings'
+import CreateEvent from './pages/organizer/CreateEvent'
+import MyEvents from './pages/organizer/MyEvents'
 import Profile from './pages/Profile'
+
+/**
+ * Role-gated route.
+ *
+ * ⚠️ Ye sirf UX ke liye hai — asli security backend me hai (`require_role`).
+ * Frontend check bypass karna trivial hai (React DevTools se state badal do),
+ * isliye client-side gate ko kabhi security mat maanna. Ye bas user ko wo
+ * page dikhne se rokta hai jo waise bhi 403 dega.
+ */
+function RequireRole({ roles, children }) {
+  const { user } = useAuth()
+  return roles.includes(user.role) ? children : <Navigate to="/" replace />
+}
 
 export default function App() {
   const { loading, isAuthenticated, user } = useAuth()
@@ -39,6 +55,31 @@ export default function App() {
           <Route path="events/:id" element={<EventDetail />} />
           <Route path="bookings" element={<MyBookings />} />
           <Route path="profile" element={<Profile />} />
+
+          <Route
+            path="organizer/events"
+            element={
+              <RequireRole roles={['organizer', 'admin']}>
+                <MyEvents />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="organizer/events/new"
+            element={
+              <RequireRole roles={['organizer', 'admin']}>
+                <CreateEvent />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="admin"
+            element={
+              <RequireRole roles={['admin']}>
+                <AdminStats />
+              </RequireRole>
+            }
+          />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

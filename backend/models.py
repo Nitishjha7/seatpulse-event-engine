@@ -85,7 +85,9 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    bookings: Mapped[list["Booking"]] = relationship(back_populates="user")
+    bookings: Mapped[list["Booking"]] = relationship(
+        back_populates="user", passive_deletes=True
+    )
 
     __table_args__ = (
         # Typo se koi "Organizer" ya "orgnizer" na ban jaye — DB hi rok dega
@@ -128,9 +130,17 @@ class Event(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    # cascade: event delete hua to uski seats bhi jaayengi
+    # cascade: event delete hua to uski seats bhi jaayengi.
+    #
+    # ⚠️ passive_deletes=True zaroori hai. Bina iske SQLAlchemy khud
+    # "helpful" banne ki koshish karta hai: children ko memory me load
+    # karke unke foreign keys NULL kar deta hai — jabki DB me pehle se
+    # ON DELETE CASCADE laga hua hai.
+    #
+    # Nateeja tha: `NotNullViolation: null value in column "seat_id"`.
+    # passive_deletes DB ko uska kaam karne deta hai.
     seats: Mapped[list["Seat"]] = relationship(
-        back_populates="event", cascade="all, delete-orphan"
+        back_populates="event", cascade="all, delete-orphan", passive_deletes=True
     )
 
     def __repr__(self) -> str:
@@ -183,7 +193,10 @@ class Seat(Base):
     )
 
     event: Mapped["Event"] = relationship(back_populates="seats")
-    bookings: Mapped[list["Booking"]] = relationship(back_populates="seat")
+    # passive_deletes — DB ka ON DELETE CASCADE hi sambhalega
+    bookings: Mapped[list["Booking"]] = relationship(
+        back_populates="seat", passive_deletes=True
+    )
 
     __table_args__ = (
         # Ek event me ek hi "A-12" ho sakti hai.

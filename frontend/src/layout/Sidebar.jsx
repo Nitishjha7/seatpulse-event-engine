@@ -1,11 +1,14 @@
 import { NavLink } from 'react-router-dom'
 
 import { API_URL } from '../api'
+import { useAuth } from '../auth/AuthContext'
 import {
+  IconActivity,
   IconCalendar,
   IconClose,
   IconCode,
   IconHome,
+  IconPlus,
   IconTicket,
   IconUser,
 } from './icons'
@@ -14,8 +17,11 @@ import {
  * Left navigation.
  *
  * Sirf wo pages hain jo ACTUALLY bane hue hain. Jo abhi nahi bane
- * (Reports, Settings) wo `soon: true` ke saath disabled dikhte hain —
- * taki shell ready dikhe par koi tootа hua link na ho.
+ * (Settings) wo disabled dikhte hain — taki shell ready dikhe par koi
+ * tootа hua link na ho.
+ *
+ * Organizer/Admin sections role ke hisaab se dikhte hain. ⚠️ Ye sirf UX
+ * hai — asli gate backend ka `require_role` hai.
  */
 const NAV = [
   { to: '/', label: 'Dashboard', Icon: IconHome, end: true },
@@ -24,12 +30,21 @@ const NAV = [
   { to: '/profile', label: 'Profile', Icon: IconUser },
 ]
 
-const SOON = [
-  { label: 'Reports', Icon: IconCalendar },
-  { label: 'Settings', Icon: IconUser },
+const ORGANIZER_NAV = [
+  { to: '/organizer/events', label: 'My Events', Icon: IconCalendar },
+  { to: '/organizer/events/new', label: 'Create Event', Icon: IconPlus },
 ]
 
+const ADMIN_NAV = [{ to: '/admin', label: 'Platform Stats', Icon: IconActivity }]
+
+const SOON = [{ label: 'Settings', Icon: IconUser }]
+
 export default function Sidebar({ open, onClose }) {
+  const { user } = useAuth()
+
+  const isOrganizer = user?.role === 'organizer' || user?.role === 'admin'
+  const isAdmin = user?.role === 'admin'
+
   return (
     <>
       {/* Mobile pe sidebar khulne par background dim */}
@@ -66,25 +81,29 @@ export default function Sidebar({ open, onClose }) {
         </div>
 
         <nav className="flex-1 space-y-1 overflow-y-auto px-3">
-          {NAV.map(({ to, label, Icon, end }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={end}
-              onClick={onClose}
-              className={({ isActive }) =>
-                `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition ${
-                  isActive
-                    ? 'bg-violet-600/15 font-medium text-violet-200 ring-1 ring-violet-500/30'
-                    : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
-                }`
-              }
-            >
-              <Icon />
-              {label}
-            </NavLink>
+          {NAV.map((item) => (
+            <NavItem key={item.to} {...item} onClose={onClose} />
           ))}
 
+          {isOrganizer && (
+            <>
+              <SectionLabel>Organizer</SectionLabel>
+              {ORGANIZER_NAV.map((item) => (
+                <NavItem key={item.to} {...item} onClose={onClose} end />
+              ))}
+            </>
+          )}
+
+          {isAdmin && (
+            <>
+              <SectionLabel>Admin</SectionLabel>
+              {ADMIN_NAV.map((item) => (
+                <NavItem key={item.to} {...item} onClose={onClose} />
+              ))}
+            </>
+          )}
+
+          <SectionLabel>More</SectionLabel>
           <a
             href={`${API_URL}/docs`}
             target="_blank"
@@ -96,9 +115,6 @@ export default function Sidebar({ open, onClose }) {
             API Docs
           </a>
 
-          <p className="px-3 pb-1 pt-5 text-[10px] font-medium uppercase tracking-wider text-slate-600">
-            Coming soon
-          </p>
           {SOON.map(({ label, Icon }) => (
             <span
               key={label}
@@ -126,6 +142,34 @@ export default function Sidebar({ open, onClose }) {
         </div>
       </aside>
     </>
+  )
+}
+
+function NavItem({ to, label, Icon, end, onClose }) {
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      onClick={onClose}
+      className={({ isActive }) =>
+        `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition ${
+          isActive
+            ? 'bg-violet-600/15 font-medium text-violet-200 ring-1 ring-violet-500/30'
+            : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
+        }`
+      }
+    >
+      <Icon />
+      {label}
+    </NavLink>
+  )
+}
+
+function SectionLabel({ children }) {
+  return (
+    <p className="px-3 pb-1 pt-5 text-[10px] font-medium uppercase tracking-wider text-slate-600">
+      {children}
+    </p>
   )
 }
 
