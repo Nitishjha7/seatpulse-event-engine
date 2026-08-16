@@ -14,7 +14,15 @@ from sqlalchemy import func, select
 
 from auth import hash_password
 from database import SessionLocal
-from models import Event, Seat, User, utcnow
+from models import (
+    ROLE_ADMIN,
+    ROLE_ATTENDEE,
+    ROLE_ORGANIZER,
+    Event,
+    Seat,
+    User,
+    utcnow,
+)
 
 # Demo login — README aur docs me yahi likha hai
 DEMO_EMAIL = "demo@seatpulse.dev"
@@ -48,14 +56,31 @@ def seed():
         shared_hash = hash_password(DEMO_PASSWORD)
 
         if existing == 0:
-            db.add(
-                User(
-                    email=DEMO_EMAIL,
-                    hashed_password=shared_hash,
-                    full_name="Demo User",
-                )
+            # Teeno roles ka ek-ek demo account — RBAC test karne ke liye
+            db.add_all(
+                [
+                    User(
+                        email=DEMO_EMAIL,
+                        hashed_password=shared_hash,
+                        full_name="Demo User",
+                        role=ROLE_ATTENDEE,
+                    ),
+                    User(
+                        email="organizer@seatpulse.dev",
+                        hashed_password=shared_hash,
+                        full_name="Demo Organizer",
+                        role=ROLE_ORGANIZER,
+                    ),
+                    User(
+                        email="admin@seatpulse.dev",
+                        hashed_password=shared_hash,
+                        full_name="Demo Admin",
+                        role=ROLE_ADMIN,
+                    ),
+                ]
             )
-            existing = 1
+            db.flush()
+            existing = 3
 
         # Ek hi bulk insert — 500 alag INSERT se bahut tez
         to_create = max(0, SEED_USERS - existing)
@@ -73,6 +98,8 @@ def seed():
         db.flush()
         print(f"✅ Users: {to_create} naye banaye, total {SEED_USERS}")
         print(f"   Login: {DEMO_EMAIL} / {DEMO_PASSWORD}")
+        print(f"          organizer@seatpulse.dev / {DEMO_PASSWORD}  (organizer)")
+        print(f"          admin@seatpulse.dev     / {DEMO_PASSWORD}  (admin)")
 
         # ---- Event ----
         event = db.scalar(select(Event).where(Event.name == "Arijit Singh Live"))

@@ -187,6 +187,33 @@ def get_current_user(
     return user
 
 
+def require_role(*roles: str):
+    """
+    Sirf in roles wale users ko andar aane do.
+
+    Use:
+        @router.post("", dependencies=[Depends(require_role(ROLE_ORGANIZER, ROLE_ADMIN))])
+        # ya user object chahiye to:
+        user: User = Depends(require_role(ROLE_ORGANIZER))
+
+    ⚠️ 403 dete hain, 404 nahi.
+    Booking wale IDOR case me 404 dete hain — wahan chhupana hai ki wo
+    booking exist karti hai. Yahan chhupane ko kuch hai hi nahi: endpoint
+    public knowledge hai (`/docs` me dikh raha hai), bas is user ke paas
+    permission nahi. 403 hi sahi jawab hai.
+    """
+
+    def dependency(user: User = Depends(get_current_user)) -> User:
+        if user.role not in roles:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                f"Is kaam ke liye {' ya '.join(roles)} role chahiye",
+            )
+        return user
+
+    return dependency
+
+
 def get_current_user_optional(
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: Session = Depends(get_db),

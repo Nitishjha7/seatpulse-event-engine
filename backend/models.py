@@ -45,6 +45,18 @@ BOOKING_PENDING = "pending"
 BOOKING_CONFIRMED = "confirmed"
 BOOKING_CANCELLED = "cancelled"
 
+# User roles.
+#
+# Sirf teen hain aur jaan-boojh ke flat hain — koi permission matrix nahi.
+# Ek chhote system me granular permissions (event.create, event.delete...)
+# over-engineering hoti hai. Zaroorat padne par flat role se granular pe
+# jaana aasan hai; ulta bahut mushkil.
+ROLE_ATTENDEE = "attendee"     # seats dekho aur book karo
+ROLE_ORGANIZER = "organizer"   # apne events banao aur manage karo
+ROLE_ADMIN = "admin"           # poore platform ka access
+
+ALL_ROLES = (ROLE_ATTENDEE, ROLE_ORGANIZER, ROLE_ADMIN)
+
 
 class User(Base):
     __tablename__ = "users"
@@ -65,13 +77,26 @@ class User(Base):
     )
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
+    # attendee | organizer | admin
+    role: Mapped[str] = mapped_column(
+        String(16), default=ROLE_ATTENDEE, nullable=False, index=True
+    )
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     bookings: Mapped[list["Booking"]] = relationship(back_populates="user")
 
+    __table_args__ = (
+        # Typo se koi "Organizer" ya "orgnizer" na ban jaye — DB hi rok dega
+        CheckConstraint(
+            f"role IN ({', '.join(repr(r) for r in ALL_ROLES)})",
+            name="ck_user_role",
+        ),
+    )
+
     def __repr__(self) -> str:
-        return f"<User {self.email}>"
+        return f"<User {self.email} ({self.role})>"
 
 
 class Event(Base):
@@ -88,6 +113,18 @@ class Event(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     # "Music", "Comedy", "Sports" — UI me tag ki tarah dikhta hai
     category: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+    # Kis organizer ka event hai.
+    #
+    # nullable=True do wajah se:
+    #   1. Purane events (migration se pehle wale) ka koi owner nahi tha
+    #   2. Admin bina organizer ke bhi event bana sakta hai
+    #
+    # ondelete="SET NULL" — organizer ka account delete ho to event aur
+    # uski bookings nahi udni chahiye. Log ne paise diye hain.
+    organizer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

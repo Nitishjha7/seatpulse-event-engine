@@ -79,6 +79,10 @@ class ConnectionManager:
     def count(self, event_id: int) -> int:
         return len(self._rooms.get(event_id, ()))
 
+    def rooms(self) -> list[int]:
+        """Kaunse events ke rooms abhi khule hain (admin stats ke liye)."""
+        return list(self._rooms.keys())
+
     async def broadcast_local(self, event_id: int, message: dict) -> None:
         """
         Is worker ke sockets ko message bhejo.
