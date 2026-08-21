@@ -97,16 +97,6 @@ def _issue_tokens(response: Response, user: User) -> TokenResponse:
     )
 
 
-# ---------------------------------------------------------------------------
-# Email + password
-# ---------------------------------------------------------------------------
-
-@router.get("/config", response_model=AuthConfigOut)
-def auth_config():
-    """Frontend poochta hai: Google button dikhana hai ya nahi?"""
-    return AuthConfigOut(google_enabled=settings.google_enabled)
-
-
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 def register(
     payload: RegisterRequest,
