@@ -197,6 +197,20 @@ export const payShare = (shareToken, shareId) =>
 export const cancelGroup = (shareToken) =>
   request(`/api/groups/${shareToken}`, { method: "DELETE" });
 
+// ---- Seat search (Phase 19) ----
+
+/**
+ * Seats dhoondo — natural language se ya seedhe filters se.
+ *
+ * `query` tabhi kaam karti hai jab server pe GEMINI_API_KEY ho.
+ * `filters` hamesha chalte hain, AI on ho ya na ho.
+ */
+export const searchSeats = (eventId, body) =>
+  request(`/api/events/${eventId}/seats/search`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
 // ---- Admin ----
 
 export const getAdminStats = () => request("/api/admin/stats");

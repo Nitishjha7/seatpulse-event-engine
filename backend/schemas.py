@@ -335,8 +335,64 @@ class TokenResponse(BaseModel):
 
 
 class AuthConfigOut(BaseModel):
-    """Frontend poochta hai: Google login dikhana hai ya nahi?"""
+    """Frontend poochta hai: kaunse optional features on hain?"""
     google_enabled: bool
+    # AI search box dikhana hai ya nahi. Key na ho to frontend wo box
+    # render hi nahi karta — normal filters phir bhi chalte hain.
+    ai_search_enabled: bool = False
+
+
+# ---------- Seat search (Phase 19) ----------
+
+class SeatFilters(BaseModel):
+    """
+    Search ke filters.
+
+    ⚠️ Ye LLM aur search ke BEECH ka contract hai, aur yahi is feature ki
+    security boundary bhi hai.
+
+    Model jo bhi bake, wo pehle YAHAN se guzarta hai. Ranges clamp hoti
+    hain, unknown fields gir jaate hain, aur galat types reject ho jaate
+    hain. Uske baad hi wo `seat_search.find()` tak pahunchta hai — jahan
+    se ek parameterised query banti hai.
+
+    Isliye prompt injection zyada se zyada ajeeb FILTERS bana sakti hai
+    (jo user ko turant dikh jaate hain), SQL nahi.
+    """
+    quantity: int = Field(1, ge=1, le=10)
+    together: bool = True
+    min_price: float | None = Field(None, ge=0, le=1_000_000)
+    max_price: float | None = Field(None, ge=0, le=1_000_000)
+    section: str | None = Field(None, max_length=40)
+    row_preference: Literal["front", "middle", "back"] | None = None
+
+
+class SeatSearchRequest(BaseModel):
+    # Natural language. AI off ho to ye ignore hota hai.
+    query: str | None = Field(None, max_length=200)
+    # Seedhe filters — inhe AI ki zaroorat nahi. UI in dono ko saath
+    # bhejta hai: query se filters bante hain, aur user unhe haath se
+    # badal bhi sakta hai.
+    filters: SeatFilters | None = None
+
+
+class SeatMatch(BaseModel):
+    seat_ids: list[int]
+    label: str
+    row_label: str
+    section: str | None = None
+    seat_numbers: list[int]
+    total_price: float
+
+
+class SeatSearchOut(BaseModel):
+    matches: list[SeatMatch]
+    # Jo filters ACTUALLY lage. Ye dikhana zaroori hai — user ko pata
+    # chalna chahiye ki uski baat ka kya matlab nikala gaya, warna khali
+    # result dekh ke wo samajh hi nahi payega ki kya galat hua.
+    filters: SeatFilters
+    # AI ne query samjhi ya nahi. False = filters default hain.
+    interpreted: bool = False
 
 
 # ---------- Payments (Phase 11) ----------

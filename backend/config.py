@@ -119,6 +119,20 @@ class Settings(BaseSettings):
 
     CURRENCY: str = "INR"
 
+    # ---- Natural language seat search (Phase 19) ----
+    #
+    # Khali chhod do to search box dikhta hi nahi — wahi graceful
+    # degradation jo Google OAuth (Phase 7) aur Stripe (Phase 11) me hai.
+    # Feature na ho to wo gayab ho, toota hua na dikhe.
+    #
+    # ⚠️ Ye sirf natural language wale input ko band karta hai. Normal
+    # price/section filters bina key ke bhi chalte hain.
+    GEMINI_API_KEY: str = ""
+
+    @property
+    def ai_search_enabled(self) -> bool:
+        return bool(self.GEMINI_API_KEY)
+
     @property
     def payment_provider(self) -> str:
         """Keys hain to stripe, warna mock. Config me flag rakhne se behtar —

@@ -11,6 +11,7 @@ import FeatureStrip from '../components/FeatureStrip'
 import HoldCard from '../components/HoldCard'
 import PricingBanner from '../components/PricingBanner'
 import SeatGrid from '../components/SeatGrid'
+import SeatSearch from '../components/SeatSearch'
 
 export default function Dashboard() {
   const { user } = useAuth()
@@ -53,6 +54,18 @@ export default function Dashboard() {
         </div>
 
         <div className="space-y-5">
+          {/* AI search — key na ho to ye component khud ko render hi
+              nahi karta, isliye yahan koi condition nahi chahiye */}
+          <SeatSearch
+            eventId={event?.id}
+            onPick={(match) => {
+              // Pehli seat select kar do — baaki grid me highlight ho
+              // jaati hain aur user chahe to group bana sakta hai.
+              const seat = seats.find((s) => s.id === match.seat_ids[0])
+              if (seat) selectSeat(seat)
+            }}
+          />
+
           <EventSummary event={event} counts={counts} />
           {/* HoldCard ke UPAR — user ko pehle pata chale ki price demand se
               chal raha hai, tabhi 'price locked' badge ka matlab banta hai */}

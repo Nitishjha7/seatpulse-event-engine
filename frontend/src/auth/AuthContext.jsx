@@ -25,6 +25,9 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
   const [googleEnabled, setGoogleEnabled] = useState(false)
+  // AI search box dikhana hai ya nahi — server batata hai (key hai ya nahi).
+  // Frontend khud nahi jaan sakta, aur jaanna bhi nahi chahiye.
+  const [aiSearchEnabled, setAiSearchEnabled] = useState(false)
 
   // Silent refresh ka timer
   const refreshTimer = useRef(null)
@@ -67,7 +70,10 @@ export function AuthProvider({ children }) {
     async function boot() {
       try {
         const config = await api.getAuthConfig()
-        if (!cancelled) setGoogleEnabled(config.google_enabled)
+        if (!cancelled) {
+          setGoogleEnabled(config.google_enabled)
+          setAiSearchEnabled(config.ai_search_enabled)
+        }
       } catch {
         /* backend down hai — health card error dikha dega */
       }
@@ -101,6 +107,7 @@ export function AuthProvider({ children }) {
     user,
     loading,
     googleEnabled,
+    aiSearchEnabled,
     isAuthenticated: !!user,
 
     async login(email, password) {

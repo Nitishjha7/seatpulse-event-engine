@@ -2075,3 +2075,237 @@ def test_old_events_without_a_layout_still_work(client):
     assert all(s["section"] is None for s in seats)
     # Baaki sab fields waise hi hain
     assert all("price" in s and "status" in s and "version" in s for s in seats)
+
+
+# ---------------------------------------------------------------------------
+# Phase 19 — Seat search
+#
+# ⭐ In tests me se EK BHI ko Gemini ki zaroorat nahi.
+#
+# Wo jaan-boojh ke hai. LLM sirf "text -> filters" karta hai; uske baad ka
+# poora search normal code hai. Agar search ko test karne ke liye API key
+# chahiye hoti, to CI me ye tests skip ho jaate — aur skipped tests green
+# dikhte hain (Phase 16 me yahi galti pakdi thi).
+# ---------------------------------------------------------------------------
+
+import seat_search
+
+
+class _FakeSeat:
+    """Test ke liye ek chhota seat — poora ORM object banane ki zaroorat nahi."""
+
+    def __init__(self, id, row, num, price=1000, status="available", section=None):
+        self.id = id
+        self.row_label = row
+        self.seat_number = num
+        self.price = price
+        self.status = status
+        self.section = section
+
+
+def _row(label, count, *, taken=(), price=1000, section=None, start_id=1):
+    return [
+        _FakeSeat(
+            start_id + i,
+            label,
+            i + 1,
+            price=price,
+            status="booked" if (i + 1) in taken else "available",
+            section=section,
+        )
+        for i in range(count)
+    ]
+
+
+def test_single_seat_search_returns_cheapest_first():
+    seats = _row("A", 3, price=2000, start_id=1) + _row("B", 3, price=500, start_id=10)
+    found = seat_search.find(seats, quantity=1)
+
+    assert found[0].total_price == 500
+    assert found[0].row_label == "B"
+
+
+def test_together_needs_consecutive_seats():
+    """Beech me ek booked seat ho to wo 'saath' nahi hai."""
+    # A: seats 1,2,[3 booked],4,5  -> 3 saath wali seats nahi milengi
+    seats = _row("A", 5, taken=(3,))
+
+    assert seat_search.find(seats, quantity=3, together=True) == []
+    # 2 saath wali mil jaayengi (1-2 aur 4-5)
+    assert len(seat_search.find(seats, quantity=2, together=True)) == 2
+
+
+def test_together_false_returns_individual_seats():
+    """
+    "3 seats chahiye, saath nahi" ka matlab hai "koi bhi 3 dikha do".
+
+    Unhe artificially group karke dikhana jhooth hoga.
+    """
+    seats = _row("A", 5, taken=(3,))
+    found = seat_search.find(seats, quantity=3, together=False)
+
+    assert len(found) == 4                        # 4 available seats
+    assert all(len(m.seat_ids) == 1 for m in found)
+
+
+def test_aisle_breaks_togetherness():
+    """
+    ⭐⭐ Phase 18 ka layout data yahan kaam aata hai.
+
+    Seat 2 aur 3 ke beech aisle hai. Numbers lagatar hain, par wo seats
+    saath NAHI hain — beech me log guzar rahe honge.
+
+    Bina is check ke search "saath wali seats" bata deta jo asal me saath
+    hoti hi nahi, aur wo galti user ko venue pahunch kar pata chalti.
+    """
+    seats = _row("A", 6)
+    layout = {
+        "sections": [
+            {"name": "X", "price": 1000, "rows": [{"label": "A", "seats": 6, "aisles_after": [2]}]}
+        ]
+    }
+
+    # Bina layout ke: 1-2-3, 2-3-4, 3-4-5, 4-5-6 = 4 groups
+    assert len(seat_search.find(seats, quantity=3, together=True)) == 4
+
+    # Layout ke saath: aisle 2 ke baad hai, to sirf 3-4-5 aur 4-5-6 bachte hain
+    with_layout = seat_search.find(seats, quantity=3, together=True, layout=layout)
+    assert len(with_layout) == 2
+    assert all(m.seat_numbers[0] >= 3 for m in with_layout)
+
+
+def test_price_filters():
+    seats = _row("A", 2, price=500, start_id=1) + _row("B", 2, price=3000, start_id=10)
+
+    cheap = seat_search.find(seats, quantity=1, max_price=1000)
+    assert {m.row_label for m in cheap} == {"A"}
+
+    dear = seat_search.find(seats, quantity=1, min_price=1000)
+    assert {m.row_label for m in dear} == {"B"}
+
+
+def test_section_filter_is_case_insensitive():
+    seats = (
+        _row("A", 2, section="Ground", start_id=1)
+        + _row("B", 2, section="Balcony", start_id=10)
+    )
+    found = seat_search.find(seats, quantity=1, section="ground")
+
+    assert {m.section for m in found} == {"Ground"}
+
+
+def test_row_preference_beats_price():
+    """
+    "stage ke paas" bola hai to sasti seat ke chakkar me peeche mat bhejo.
+
+    Row A stage ke sabse paas hai — wahi convention Phase 3 se hai.
+    """
+    seats = _row("A", 2, price=3000, start_id=1) + _row("Z", 2, price=100, start_id=10)
+
+    front = seat_search.find(seats, quantity=1, row_preference="front")
+    assert front[0].row_label == "A"
+
+    back = seat_search.find(seats, quantity=1, row_preference="back")
+    assert back[0].row_label == "Z"
+
+    # Bina preference ke sasti pehle
+    default = seat_search.find(seats, quantity=1)
+    assert default[0].row_label == "Z"
+
+
+def test_booked_seats_never_appear():
+    seats = _row("A", 3, taken=(1, 2, 3))
+    assert seat_search.find(seats, quantity=1) == []
+
+
+def test_quantity_is_clamped():
+    """Model ya user kuch bhi bhej de — 10 se zyada nahi."""
+    seats = _row("A", 40)
+    assert seat_search.find(seats, quantity=999, together=True) != []
+
+
+# ---- HTTP flow (AI ke bina) ----
+
+def test_search_endpoint_works_without_ai(client, tokens):
+    """
+    ⭐ Filters se search AI ke bina chalna chahiye.
+
+    Ye poore feature ka sabse zaroori invariant hai: AI ek addition hai,
+    dependency nahi. Key na ho, model down ho, quota khatam ho — search
+    phir bhi kaam kare.
+    """
+    res = client.post(
+        "/api/events/1/seats/search",
+        headers=_headers(tokens[0]),
+        json={"filters": {"quantity": 2, "together": True, "max_price": 999999}},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+
+    assert body["filters"]["quantity"] == 2
+    assert body["interpreted"] is False        # AI use hi nahi hui
+    assert len(body["matches"]) > 0
+    assert all(len(m["seat_ids"]) == 2 for m in body["matches"])
+
+
+def test_search_respects_max_price(client, tokens):
+    seats = client.get("/api/events/1/seats").json()
+    cheapest = min(s["current_price"] or s["price"] for s in seats)
+
+    res = client.post(
+        "/api/events/1/seats/search",
+        headers=_headers(tokens[0]),
+        json={"filters": {"quantity": 1, "max_price": cheapest}},
+    )
+    assert res.status_code == 200
+    for match in res.json()["matches"]:
+        assert match["total_price"] <= cheapest
+
+
+def test_search_needs_auth(client):
+    """
+    Login zaroori hai — data private isliye nahi (seats public hain),
+    balki isliye ki rate limit per-user lagti hai aur AI calls ka kharcha
+    kisi ke naam hona chahiye.
+    """
+    res = client.post("/api/events/1/seats/search", json={"filters": {"quantity": 1}})
+    assert res.status_code == 401
+
+
+def test_search_on_unknown_event_is_404(client, tokens):
+    res = client.post(
+        "/api/events/999999/seats/search",
+        headers=_headers(tokens[0]),
+        json={"filters": {"quantity": 1}},
+    )
+    assert res.status_code == 404
+
+
+def test_absurd_filters_are_rejected(client, tokens):
+    """
+    ⭐ Ye security boundary ka test hai.
+
+    `SeatFilters` wo jagah hai jahan LLM ka output validate hota hai.
+    Agar wo kachra values pass hone de, to model (ya koi bhi caller)
+    unbounded query bana sakta hai.
+    """
+    res = client.post(
+        "/api/events/1/seats/search",
+        headers=_headers(tokens[0]),
+        json={"filters": {"quantity": 9999}},
+    )
+    assert res.status_code == 422
+
+    res = client.post(
+        "/api/events/1/seats/search",
+        headers=_headers(tokens[0]),
+        json={"filters": {"quantity": 1, "row_preference": "sideways"}},
+    )
+    assert res.status_code == 422
+
+
+def test_config_exposes_ai_flag(client):
+    """Frontend isse decide karta hai ki search box dikhana hai ya nahi."""
+    body = client.get("/api/auth/config").json()
+    assert "ai_search_enabled" in body
+    assert isinstance(body["ai_search_enabled"], bool)
