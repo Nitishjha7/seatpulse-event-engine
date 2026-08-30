@@ -434,6 +434,18 @@ class Payment(Base):
     # Gateway ne fail hone par kya kaha — debugging aur user ko dikhane ke liye
     failure_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
+    # ---- Group booking (Phase 17) ----
+    #
+    # Set ho to ye payment ek GROUP SHARE ka hai, akeli seat ka nahi.
+    #
+    # Farak bada hai: normal payment succeed hote hi booking ban jati hai.
+    # Group payment succeed hone par sirf "ek hissa aa gaya" hota hai —
+    # booking tabhi banti hai jab SAB hisse aa jaayein. Isliye `_fulfil()`
+    # is field ko dekh kar do bilkul alag raaste leta hai.
+    group_share_id: Mapped[int | None] = mapped_column(
+        ForeignKey("group_shares.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     # Is waqt tak payment complete hona chahiye. Nikal gaya to seat wapas.
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 

@@ -1310,3 +1310,310 @@ def test_both_strategies_write_identical_seat_state(client, tokens, role_tokens)
     assert states[0] == states[1], f"strategies ne alag state chhoda: {states}"
     assert states[0]["status"] == "booked"
     assert states[0]["version_delta"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 17 — Group booking (split payment)
+#
+# Yahan ka core sawaal single-seat booking se alag hai. Wahan "exactly once"
+# ka matlab tha: ek seat, ek booking. Yahan matlab hai: **sab ya koi nahi**,
+# N alag payments ke paar.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def group_seats(client, tokens):
+    """3 available seats — test ke baad jo bache use saaf kar do."""
+    seats = client.get("/api/events/1/seats").json()
+    available = [s["id"] for s in seats if s["status"] == "available"]
+    if len(available) < 3:
+        pytest.skip("3 available seats nahi hain — reset_state.py chalao")
+
+    picked = available[:3]
+    yield picked
+
+    # Cleanup: bachi hui bookings hatao. Group cancel karna kaafi nahi —
+    # confirm ho chuka group cancel nahi hota.
+    for token in tokens[:6]:
+        for b in client.get("/api/bookings", headers=_headers(token)).json():
+            if b["seat_id"] in picked and b["status"] == "confirmed":
+                client.delete(f"/api/bookings/{b['id']}", headers=_headers(token))
+
+
+def _make_group(client, token, seat_ids, minutes=30):
+    res = client.post(
+        "/api/groups",
+        headers=_headers(token),
+        json={"seat_ids": seat_ids, "deadline_minutes": minutes},
+    )
+    assert res.status_code == 201, res.text
+    return res.json()
+
+
+def _pay_share(client, token, share_token, share_id):
+    """Share ka checkout banao aur mock provider se success simulate karo."""
+    res = client.post(
+        f"/api/groups/{share_token}/shares/{share_id}/pay", headers=_headers(token)
+    )
+    assert res.status_code == 200, res.text
+    pid = res.json()["payment_id"]
+    return client.post(
+        f"/api/payments/{pid}/simulate",
+        json={"outcome": "success"},
+        headers=_headers(token),
+    )
+
+
+def _seat(client, seat_id):
+    return client.get(f"/api/seats/{seat_id}").json()
+
+
+def test_group_holds_seats_without_booking_them(client, tokens, group_seats):
+    """
+    Group banane par seats hold hoti hain, book NAHI hoti.
+
+    Ye faraq poore feature ki neev hai: paisa aane se pehle kisi ki seat
+    pakki nahi hoti.
+    """
+    group = _make_group(client, tokens[0], group_seats)
+
+    assert group["status"] == "collecting"
+    assert group["total_shares"] == 3
+    assert group["paid_shares"] == 0
+
+    for seat_id in group_seats:
+        assert _seat(client, seat_id)["status"] == "group_held"
+
+    client.delete(f"/api/groups/{group['share_token']}", headers=_headers(tokens[0]))
+
+
+def test_partial_payment_confirms_nobody(client, tokens, group_seats):
+    """
+    ⭐ 2 me se 3 ne pay kiya — kisi ki bhi seat book nahi honi chahiye.
+
+    Ye "sab ya koi nahi" ka asli test hai.
+    """
+    group = _make_group(client, tokens[0], group_seats)
+    st = group["share_token"]
+
+    client.post(f"/api/groups/{st}/shares/{group['shares'][1]['id']}/claim",
+                headers=_headers(tokens[1]))
+
+    _pay_share(client, tokens[0], st, group["shares"][0]["id"])
+    _pay_share(client, tokens[1], st, group["shares"][1]["id"])
+
+    after = client.get(f"/api/groups/{st}", headers=_headers(tokens[0])).json()
+    assert after["paid_shares"] == 2
+    assert after["status"] == "collecting", "3 me se 2 pe confirm nahi hona chahiye"
+
+    # Ek bhi seat booked nahi
+    for seat_id in group_seats:
+        assert _seat(client, seat_id)["status"] == "group_held"
+
+    client.delete(f"/api/groups/{st}", headers=_headers(tokens[0]))
+
+
+def test_all_paid_confirms_everyone(client, tokens, group_seats):
+    """Aakhri payment aate hi sab ek saath confirm."""
+    group = _make_group(client, tokens[0], group_seats)
+    st = group["share_token"]
+
+    for i in (1, 2):
+        client.post(f"/api/groups/{st}/shares/{group['shares'][i]['id']}/claim",
+                    headers=_headers(tokens[i]))
+
+    for i in (0, 1, 2):
+        _pay_share(client, tokens[i], st, group["shares"][i]["id"])
+
+    final = client.get(f"/api/groups/{st}", headers=_headers(tokens[0])).json()
+    assert final["status"] == "confirmed"
+    assert final["paid_shares"] == 3
+
+    for seat_id in group_seats:
+        assert _seat(client, seat_id)["status"] == "booked"
+
+    # Teen alag users ki teen alag bookings — ek user ki 3 nahi
+    owners = set()
+    for i in (0, 1, 2):
+        for b in client.get("/api/bookings", headers=_headers(tokens[i])).json():
+            if b["seat_id"] in group_seats and b["status"] == "confirmed":
+                owners.add(i)
+    assert owners == {0, 1, 2}
+
+
+def test_expired_group_releases_seats_and_refunds(client, tokens, group_seats):
+    """
+    ⭐ Deadline nikal gayi — seats chhooti hain aur jo paisa aaya wo refund.
+
+    Deadline ko DB me peeche khiska dete hain; asli 30 minute ka wait
+    test me mumkin nahi.
+    """
+    from datetime import timedelta
+
+    from sqlalchemy import update as sa_update
+
+    from database import SessionLocal
+    from groups import expire_due_groups
+    from models import GroupBooking, utcnow
+
+    group = _make_group(client, tokens[0], group_seats, minutes=5)
+    st = group["share_token"]
+
+    _pay_share(client, tokens[0], st, group["shares"][0]["id"])
+
+    db = SessionLocal()
+    try:
+        db.execute(
+            sa_update(GroupBooking)
+            .where(GroupBooking.share_token == st)
+            .values(expires_at=utcnow() - timedelta(minutes=1))
+        )
+        db.commit()
+        # Job ko seedha call karte hain — cron ka 30 second wait nahi
+        expire_due_groups(db)
+    finally:
+        db.close()
+
+    after = client.get(f"/api/groups/{st}", headers=_headers(tokens[0])).json()
+    assert after["status"] == "expired"
+
+    # Jisne pay kiya tha uska refund, baaki unpaid hi rahe
+    statuses = [s["status"] for s in after["shares"]]
+    assert statuses.count("refunded") == 1
+    assert statuses.count("unpaid") == 2
+
+    for seat_id in group_seats:
+        assert _seat(client, seat_id)["status"] == "available"
+
+
+def test_payment_after_expiry_is_refunded_not_booked(client, tokens, group_seats):
+    """
+    ⭐⭐ Sabse mushkil case: group toot chuka hai, aur ab paisa aata hai.
+
+    Ye asli hai — user checkout page pe tha jab deadline nikli.
+
+    Usse seat NAHI mil sakti (wo chhoot chuki, shayad kisi aur ne le bhi
+    li). Par uska paisa bhi nahi rakh sakte. Isliye: refund.
+    """
+    from datetime import timedelta
+
+    from sqlalchemy import select as sa_select, update as sa_update
+
+    from database import SessionLocal
+    from groups import expire_due_groups
+    from models import GroupBooking, GroupShare, utcnow
+
+    group = _make_group(client, tokens[0], group_seats, minutes=5)
+    st = group["share_token"]
+    share_id = group["shares"][0]["id"]
+
+    # Checkout pehle bana lo — user gateway pe hai
+    res = client.post(f"/api/groups/{st}/shares/{share_id}/pay",
+                      headers=_headers(tokens[0]))
+    assert res.status_code == 200
+    payment_id = res.json()["payment_id"]
+
+    # ...aur ab deadline nikal jati hai
+    db = SessionLocal()
+    try:
+        db.execute(
+            sa_update(GroupBooking)
+            .where(GroupBooking.share_token == st)
+            .values(expires_at=utcnow() - timedelta(minutes=1))
+        )
+        db.commit()
+        expire_due_groups(db)
+    finally:
+        db.close()
+
+    # Ab jaake paisa aata hai
+    client.post(f"/api/payments/{payment_id}/simulate",
+                json={"outcome": "success"}, headers=_headers(tokens[0]))
+
+    db = SessionLocal()
+    try:
+        share = db.get(GroupShare, share_id)
+        assert share.status == "refunded", "expiry ke baad aaya paisa refund hona chahiye"
+        assert share.booking_id is None, "expired group me booking nahi banni chahiye"
+    finally:
+        db.close()
+
+    # Seat kisi ki nahi hui
+    assert _seat(client, group_seats[0])["status"] == "available"
+
+
+def test_only_one_person_can_claim_a_share(client, tokens, group_seats):
+    """Do log ek hi khaali seat par ek saath — ek hi ko milni chahiye."""
+    group = _make_group(client, tokens[0], group_seats)
+    st = group["share_token"]
+    open_share = group["shares"][1]["id"]
+
+    def claim(token):
+        return client.post(
+            f"/api/groups/{st}/shares/{open_share}/claim", headers=_headers(token)
+        ).status_code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        codes = list(pool.map(claim, [tokens[1], tokens[2]]))
+
+    assert codes.count(200) == 1, f"exactly ek claim chahiye tha: {codes}"
+    assert codes.count(409) == 1
+
+    client.delete(f"/api/groups/{st}", headers=_headers(tokens[0]))
+
+
+def test_cannot_pay_someone_elses_share(client, tokens, group_seats):
+    """Jo share tumne claim nahi kiya uska paisa nahi de sakte."""
+    group = _make_group(client, tokens[0], group_seats)
+    st = group["share_token"]
+
+    # share[0] creator (tokens[0]) ka hai
+    res = client.post(
+        f"/api/groups/{st}/shares/{group['shares'][0]['id']}/pay",
+        headers=_headers(tokens[1]),
+    )
+    assert res.status_code == 403
+
+    client.delete(f"/api/groups/{st}", headers=_headers(tokens[0]))
+
+
+def test_group_creation_is_all_or_nothing(client, tokens, group_seats):
+    """
+    ⭐ Ek seat bhi na mile to POORA group nahi banna chahiye.
+
+    Aadhi hold kisi kaam ki nahi — user 2 seats leke 3rd ka intezaar
+    karta rehta jo kabhi milegi hi nahi.
+    """
+    # Ek seat ko book kar do
+    taken = group_seats[2]
+    assert client.post("/api/bookings", json={"seat_id": taken},
+                       headers=_headers(tokens[5])).status_code == 201
+
+    res = client.post(
+        "/api/groups",
+        headers=_headers(tokens[0]),
+        json={"seat_ids": group_seats},
+    )
+    assert res.status_code == 409
+
+    # ⭐ Baaki do seats CHHOOTI honi chahiye — group_held me atki nahi
+    for seat_id in group_seats[:2]:
+        assert _seat(client, seat_id)["status"] == "available", \
+            "fail hui group creation ne seats hold me chhod di"
+
+
+def test_unknown_share_token_is_404(client, tokens):
+    """Token guess karke doosron ke group me nahi ghus sakte."""
+    res = client.get("/api/groups/definitely-not-a-real-token",
+                     headers=_headers(tokens[0]))
+    assert res.status_code == 404
+
+
+def test_only_creator_can_cancel(client, tokens, group_seats):
+    """Aur non-creator ko 404 milta hai, 403 nahi — existence bhi na pata chale."""
+    group = _make_group(client, tokens[0], group_seats)
+    st = group["share_token"]
+
+    assert client.delete(f"/api/groups/{st}",
+                         headers=_headers(tokens[1])).status_code == 404
+    assert client.delete(f"/api/groups/{st}",
+                         headers=_headers(tokens[0])).status_code == 200

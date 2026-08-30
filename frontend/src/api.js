@@ -170,6 +170,33 @@ export const checkIn = (token) =>
 export const getCheckinStats = (eventId) =>
   request(`/api/checkin/events/${eventId}/stats`);
 
+// ---- Group booking (split payment) ----
+
+/**
+ * N seats hold karke shareable link banao.
+ *
+ * Wapas `share_token` milta hai, `id` nahi — group hamesha token se
+ * address hota hai taki koi 1, 2, 3 chala ke doosron ke groups na dekh le.
+ */
+export const createGroup = (seatIds, deadlineMinutes) =>
+  request("/api/groups", {
+    method: "POST",
+    body: JSON.stringify({ seat_ids: seatIds, deadline_minutes: deadlineMinutes }),
+  });
+
+export const getGroup = (shareToken) => request(`/api/groups/${shareToken}`);
+
+export const getMyGroups = () => request("/api/groups");
+
+export const claimShare = (shareToken, shareId) =>
+  request(`/api/groups/${shareToken}/shares/${shareId}/claim`, { method: "POST" });
+
+export const payShare = (shareToken, shareId) =>
+  request(`/api/groups/${shareToken}/shares/${shareId}/pay`, { method: "POST" });
+
+export const cancelGroup = (shareToken) =>
+  request(`/api/groups/${shareToken}`, { method: "DELETE" });
+
 // ---- Admin ----
 
 export const getAdminStats = () => request("/api/admin/stats");

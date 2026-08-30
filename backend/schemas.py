@@ -35,6 +35,38 @@ class EventOut(ORMModel):
     category: str | None = None
 
 
+class GroupCreate(BaseModel):
+    seat_ids: list[int] = Field(..., min_length=1, max_length=10)
+    # None = default (30 min). Server apni limits khud lagata hai.
+    deadline_minutes: int | None = Field(None, ge=5, le=120)
+
+
+class GroupShareOut(BaseModel):
+    id: int
+    seat_id: int
+    seat_label: str
+    amount: float
+    status: str
+    claimed_by: int | None = None
+    # Naam dikhate hain, email nahi — link kisi ke paas bhi ja sakta hai
+    # aur usme sab members ke email dikhana privacy leak hai.
+    claimed_by_name: str | None = None
+
+
+class GroupOut(BaseModel):
+    # ⚠️ `id` yahan JAAN-BOOJH ke nahi hai. Group hamesha share_token se
+    # address hota hai. Sequential id bahar bhejne ka matlab hai ki koi
+    # bhi 1, 2, 3 chala ke doosron ke groups dhoondh le.
+    share_token: str
+    event_id: int
+    status: str
+    expires_at: datetime
+    seconds_left: int
+    total_shares: int
+    paid_shares: int
+    shares: list[GroupShareOut]
+
+
 class PricingOut(BaseModel):
     """Event ki abhi ki pricing state — UI ke surge badge ke liye."""
     enabled: bool

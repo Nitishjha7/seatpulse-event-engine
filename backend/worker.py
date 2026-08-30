@@ -22,11 +22,13 @@ complex workflows (chains/groups), ya team ko uska ecosystem chahiye ho.
 import asyncio
 import logging
 
+from arq import cron
 from arq.connections import RedisSettings
 from sqlalchemy import select
 
 from config import settings
 from database import SessionLocal
+from groups import expire_due_groups
 from models import (
     TICKET_FAILED,
     TICKET_READY,
@@ -152,8 +154,49 @@ async def generate_ticket(ctx: dict, booking_id: int) -> str:
         raise    # ARQ ko batao, wo retry karega
 
 
+async def expire_groups(ctx) -> int:
+    """
+    Jinki deadline nikal gayi un group bookings ko todo.
+
+    ---- Ye cron kyu hai, lazy cleanup kyu nahi ----
+
+    Baaki jagah hum expired holds ko "lazy" saaf karte hain: jab koi seats
+    padhta hai, tab purane locks release ho jaate hain. Wo sasta hai aur
+    kaafi hai, kyunki wahan kuch khoya nahi jata — seat wapas available
+    ho jati hai, bas.
+
+    Group me aisa nahi hai. Group todne ka matlab **refund** bhi hai.
+    Agar koi is event ka page hi na khole, to lazy cleanup kabhi chalta hi
+    nahi — aur log apne paise ka intezaar karte reh jaate hain.
+
+    Paisa wapas milna kisi ajnabi ke page kholne par nirbhar nahi ho sakta.
+    Isliye ye ek schedule par chalta hai.
+
+    ⚠️ Job idempotent hai: `break_group` ek atomic conditional UPDATE se
+    chalta hai, to do worker ek saath chalein to bhi ek hi todega.
+    """
+    db = SessionLocal()
+    try:
+        broken = expire_due_groups(db)
+        if broken:
+            logger.info("Expired %s group booking(s)", broken)
+        return broken
+    finally:
+        db.close()
+
+
 class WorkerSettings:
     functions = [generate_ticket]
+
+    # Har 30 second. Group deadline minutes me hoti hai, to 30 second ka
+    # delay chalega — aur is se tez chalane ka matlab sirf khaali queries.
+    #
+    # `run_at_startup` isliye ki worker restart hone par jo groups us beech
+    # expire ho gaye the wo turant nipat jaayein, agle tick ka wait na karein.
+    cron_jobs = [
+        cron(expire_groups, second={0, 30}, run_at_startup=True),
+    ]
+
     redis_settings = RedisSettings.from_dsn(settings.REDIS_URL)
 
     # 3 koshishein, beech me badhta hua gap. Transient failure (DB restart,

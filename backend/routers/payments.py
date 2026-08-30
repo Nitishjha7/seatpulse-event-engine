@@ -41,6 +41,7 @@ from sqlalchemy.orm import Session
 from auth import get_current_user
 from config import settings
 from database import get_db
+from groups import mark_share_paid
 from events_broadcast import broadcast_seat_update
 from pricing_state import price_now
 from models import (
@@ -241,9 +242,16 @@ def _checkout_url_for(payment: Payment) -> str:
 # ⭐ Fulfilment — dono raaste yahin milte hain
 # ---------------------------------------------------------------------------
 
-def _fulfil(db: Session, payment: Payment) -> Booking:
+def _fulfil(db: Session, payment: Payment) -> Booking | None:
     """
     Payment succeed hua — booking banao aur seat book karo.
+
+    ⚠️ Group share ka payment yahan se nahi guzarta.
+
+    Normal payment ka matlab hai "seat bik gayi" — booking turant ban
+    jati hai. Group share ka matlab sirf "ek hissa aa gaya" hai; booking
+    tab banti hai jab SAB hisse aa jaate hain. Isliye wo poori tarah alag
+    raaste par jata hai aur ye function `None` lauta deta hai.
 
     ⚠️ IDEMPOTENT hona zaroori hai. Webhooks at-least-once hote hain, aur
     reconciliation job bhi isi ko call karta hai. Do baar chale to dusri
@@ -252,6 +260,14 @@ def _fulfil(db: Session, payment: Payment) -> Booking:
     # Pehle se ho chuka? Wahi booking lauta do.
     if payment.status == PAYMENT_SUCCEEDED and payment.booking_id:
         return db.get(Booking, payment.booking_id)
+
+    if payment.group_share_id is not None:
+        payment.status = PAYMENT_SUCCEEDED
+        db.commit()
+        # Yahan se aage ka faisla groups.py karta hai — sab paid hue to
+        # confirm, group toot chuka to refund.
+        mark_share_paid(db, payment)
+        return None
 
     seat = db.get(Seat, payment.seat_id)
 
