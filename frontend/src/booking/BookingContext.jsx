@@ -11,6 +11,7 @@ import {
   API_URL,
   cancelBooking,
   createBooking,
+  createGroup,
   getAccessToken,
   startCheckout,
   getEvent,
@@ -305,6 +306,60 @@ export function BookingProvider({ children }) {
     }
   }
 
+  /**
+   * Group booking shuru karo — hold ki hui seat + uske aas-paas ki
+   * available seats.
+   *
+   * Seats YAHAN chunte hain, user se N clicks nahi karwate. Wajah: group
+   * ka poora point saath baithna hai, aur bikhri hui seats chunna aasan
+   * galti hai. Isliye hold ki hui seat se shuru karke usi row me aage
+   * badhte hain.
+   *
+   * ⚠️ Server phir bhi har seat ko atomically claim karta hai aur ek bhi
+   * na mile to poora group reject kar deta hai. Ye selection sirf ek
+   * suggestion hai — correctness server ke paas hai.
+   */
+  async function startGroup(size) {
+    if (!selectedSeat) return
+
+    const sameRow = seats
+      .filter((s) => s.row_label === selectedSeat.row_label)
+      .sort((a, b) => a.seat_number - b.seat_number)
+
+    const start = sameRow.findIndex((s) => s.id === selectedSeat.id)
+    const picked = [selectedSeat.id]
+
+    // Pehle right, phir left — jitni chahiye utni mil jayein
+    for (let i = start + 1; i < sameRow.length && picked.length < size; i++) {
+      if (sameRow[i].status === 'available') picked.push(sameRow[i].id)
+    }
+    for (let i = start - 1; i >= 0 && picked.length < size; i--) {
+      if (sameRow[i].status === 'available') picked.push(sameRow[i].id)
+    }
+
+    if (picked.length < size) {
+      setMessage({
+        type: 'error',
+        text: `Is row me ${size} seats saath me nahi mil rahi — kam log chuno ya dusri row try karo`,
+      })
+      return
+    }
+
+    setBooking(true)
+    setMessage(null)
+    try {
+      const group = await createGroup(picked, 30)
+      setSelectedSeat(null)
+      setLockSecondsLeft(0)
+      return group.share_token
+    } catch (err) {
+      setMessage({ type: 'error', text: errorText(err) })
+    } finally {
+      setBooking(false)
+      await refresh(event.id)
+    }
+  }
+
   async function confirmBooking() {
     if (!selectedSeat) return
 
@@ -368,6 +423,7 @@ export function BookingProvider({ children }) {
     releaseHold,
     confirmBooking,
     payForSeat,
+    startGroup,
     cancel,
     dismissLastBooking: () => setLastBooking(null),
     clearMessage: () => setMessage(null),

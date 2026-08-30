@@ -1320,9 +1320,32 @@ def test_both_strategies_write_identical_seat_state(client, tokens, role_tokens)
 # N alag payments ke paar.
 # ---------------------------------------------------------------------------
 
+def _clear_user_rate_limits():
+    """
+    Per-user rate limit buckets saaf karo (`rl:user:*`).
+
+    ⚠️ Ye zaroori hai, aur wajah test-specific hai.
+
+    BOOKING limit 5 burst / 1 per second hai. Ek group test ek hi user se
+    kai calls karta hai — group banao, phir har share ka checkout. Suite
+    me pehle chal chuke booking aur rate-limit tests wahi bucket already
+    khaali kar chuke hote hain, to group tests 429 khaane lagte hain.
+
+    Wo 429 group logic ka nateeja nahi, test order ka hai. Isliye sirf
+    per-user buckets saaf karte hain — `rl:login:*` ko haath nahi lagate,
+    kyunki brute-force wali test usi par tiki hai.
+    """
+    from redis_client import redis_client
+
+    for key in redis_client.scan_iter("rl:user:*", count=500):
+        redis_client.delete(key)
+
+
 @pytest.fixture
 def group_seats(client, tokens):
     """3 available seats — test ke baad jo bache use saaf kar do."""
+    _clear_user_rate_limits()
+
     seats = client.get("/api/events/1/seats").json()
     available = [s["id"] for s in seats if s["status"] == "available"]
     if len(available) < 3:
@@ -1485,34 +1508,31 @@ def test_expired_group_releases_seats_and_refunds(client, tokens, group_seats):
         assert _seat(client, seat_id)["status"] == "available"
 
 
-def test_payment_after_expiry_is_refunded_not_booked(client, tokens, group_seats):
+def test_pending_payment_dies_with_the_group(client, tokens, group_seats):
     """
-    ⭐⭐ Sabse mushkil case: group toot chuka hai, aur ab paisa aata hai.
+    Group toota to jo checkout khula pada tha wo bhi mar jata hai.
 
-    Ye asli hai — user checkout page pe tha jab deadline nikli.
-
-    Usse seat NAHI mil sakti (wo chhoot chuki, shayad kisi aur ne le bhi
-    li). Par uska paisa bhi nahi rakh sakte. Isliye: refund.
+    User gateway page pe tha jab deadline nikli. Sabse achha nateeja ye
+    hai ki uska paisa kate hi NA — refund se behtar hai charge hi na karna.
+    Isliye `break_group` share ke pending payments ko expire kar deta hai.
     """
     from datetime import timedelta
 
-    from sqlalchemy import select as sa_select, update as sa_update
+    from sqlalchemy import update as sa_update
 
     from database import SessionLocal
     from groups import expire_due_groups
-    from models import GroupBooking, GroupShare, utcnow
+    from models import GroupBooking, GroupShare, Payment, utcnow
 
     group = _make_group(client, tokens[0], group_seats, minutes=5)
     st = group["share_token"]
     share_id = group["shares"][0]["id"]
 
-    # Checkout pehle bana lo — user gateway pe hai
     res = client.post(f"/api/groups/{st}/shares/{share_id}/pay",
                       headers=_headers(tokens[0]))
     assert res.status_code == 200
     payment_id = res.json()["payment_id"]
 
-    # ...aur ab deadline nikal jati hai
     db = SessionLocal()
     try:
         db.execute(
@@ -1522,22 +1542,69 @@ def test_payment_after_expiry_is_refunded_not_booked(client, tokens, group_seats
         )
         db.commit()
         expire_due_groups(db)
+
+        assert db.get(Payment, payment_id).status == "expired"
+        share = db.get(GroupShare, share_id)
+        assert share.status == "unpaid", "paisa kata hi nahi to 'paid' nahi hona chahiye"
+        assert share.booking_id is None
     finally:
         db.close()
 
-    # Ab jaake paisa aata hai
-    client.post(f"/api/payments/{payment_id}/simulate",
-                json={"outcome": "success"}, headers=_headers(tokens[0]))
+    assert _seat(client, group_seats[0])["status"] == "available"
+
+
+def test_late_webhook_after_expiry_is_refunded_not_booked(client, tokens, group_seats):
+    """
+    ⭐⭐ Sabse mushkil case: group toot chuka hai, aur ab gateway kehta hai
+    "paisa aa gaya".
+
+    Upar wala test dikhata hai ki hum checkout ko band kar dete hain. Par
+    asli gateway hamare band karne se नहीं rukta — webhook der se aa
+    sakta hai, aur tab paisa sach me kat chuka hota hai.
+
+    Us haalat me seat wapas nahi mil sakti (chhoot chuki, shayad kisi aur
+    ne le li). To ek hi sahi jawab bachta hai: **refund**.
+
+    Yahan `_fulfil` seedha call karte hain, kyunki `/simulate` endpoint
+    expired payment ko chhoota hi nahi — aur asli webhook chhoota hai.
+    """
+    from datetime import timedelta
+
+    from sqlalchemy import update as sa_update
+
+    from database import SessionLocal
+    from groups import expire_due_groups
+    from models import GroupBooking, GroupShare, Payment, utcnow
+    from routers.payments import _fulfil
+
+    group = _make_group(client, tokens[0], group_seats, minutes=5)
+    st = group["share_token"]
+    share_id = group["shares"][0]["id"]
+
+    res = client.post(f"/api/groups/{st}/shares/{share_id}/pay",
+                      headers=_headers(tokens[0]))
+    payment_id = res.json()["payment_id"]
 
     db = SessionLocal()
     try:
+        db.execute(
+            sa_update(GroupBooking)
+            .where(GroupBooking.share_token == st)
+            .values(expires_at=utcnow() - timedelta(minutes=1))
+        )
+        db.commit()
+        expire_due_groups(db)
+
+        # Gateway ka der se aaya "succeeded"
+        _fulfil(db, db.get(Payment, payment_id))
+
         share = db.get(GroupShare, share_id)
-        assert share.status == "refunded", "expiry ke baad aaya paisa refund hona chahiye"
+        assert share.status == "refunded",             "der se aaya paisa refund hona chahiye"
         assert share.booking_id is None, "expired group me booking nahi banni chahiye"
+        assert db.get(Payment, payment_id).status == "refunded"
     finally:
         db.close()
 
-    # Seat kisi ki nahi hui
     assert _seat(client, group_seats[0])["status"] == "available"
 
 
@@ -1617,3 +1684,152 @@ def test_only_creator_can_cancel(client, tokens, group_seats):
                          headers=_headers(tokens[1])).status_code == 404
     assert client.delete(f"/api/groups/{st}",
                          headers=_headers(tokens[0])).status_code == 200
+
+
+def test_confirm_and_expiry_race_has_exactly_one_winner(client, tokens, group_seats):
+    """
+    ⭐⭐ Phase 17 ka sabse mushkil test.
+
+    Aakhri banda pay kar raha hai us waqt jab expiry job group todh raha
+    hai. Exactly ek ko jeetna chahiye, aur haarne wale ko sahi cleanup:
+
+      confirm jeeta -> saari seats booked, sabki bookings bani
+      expire jeeta  -> saari seats available, jo paisa aaya wo refunded
+
+    Kabhi bhi aadhi haalat nahi: na 'collecting' me atka group, na paid
+    share bina booking ke.
+
+    Ye race bina `FOR UPDATE` ke asal me TOOTI thi — payment thread group
+    ka status padh leta tha, expiry job usse expire kar deta tha, aur
+    share 'paid' hi reh jata tha bina refund ke.
+    """
+    import random
+    import threading
+    import time
+    from datetime import timedelta
+
+    from sqlalchemy import select as sa_select, update as sa_update
+
+    from database import SessionLocal
+    from groups import expire_due_groups
+    from models import GroupBooking, GroupShare, utcnow
+
+    group = _make_group(client, tokens[0], group_seats[:2], minutes=5)
+    st = group["share_token"]
+
+    client.post(f"/api/groups/{st}/shares/{group['shares'][1]['id']}/claim",
+                headers=_headers(tokens[1]))
+
+    _pay_share(client, tokens[0], st, group["shares"][0]["id"])
+
+    # Aakhri share ka checkout ban gaya, settle abhi baaki
+    res = client.post(f"/api/groups/{st}/shares/{group['shares'][1]['id']}/pay",
+                      headers=_headers(tokens[1]))
+    assert res.status_code == 200
+    payment_id = res.json()["payment_id"]
+
+    db = SessionLocal()
+    try:
+        db.execute(
+            sa_update(GroupBooking)
+            .where(GroupBooking.share_token == st)
+            .values(expires_at=utcnow() - timedelta(seconds=1))
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    barrier = threading.Barrier(2)
+
+    def settle():
+        barrier.wait()
+        client.post(f"/api/payments/{payment_id}/simulate",
+                    json={"outcome": "success"}, headers=_headers(tokens[1]))
+
+    def expire():
+        barrier.wait()
+        # Jitter — bina iske expiry hamesha jeet jati hai (seedha function
+        # call vs poora HTTP stack), aur doosra raasta test hi nahi hota
+        time.sleep(random.uniform(0, 0.12))
+        d = SessionLocal()
+        try:
+            expire_due_groups(d)
+        finally:
+            d.close()
+
+    t1, t2 = threading.Thread(target=settle), threading.Thread(target=expire)
+    t1.start(); t2.start(); t1.join(); t2.join()
+
+    db = SessionLocal()
+    try:
+        g = db.scalar(sa_select(GroupBooking).where(GroupBooking.share_token == st))
+        shares = db.scalars(
+            sa_select(GroupShare).where(GroupShare.group_id == g.id)
+        ).all()
+
+        assert g.status in ("confirmed", "expired"), \
+            f"group '{g.status}' me atka — koi jeeta hi nahi"
+
+        seat_states = [_seat(client, s.seat_id)["status"] for s in shares]
+
+        if g.status == "confirmed":
+            assert all(x == "booked" for x in seat_states), seat_states
+            assert all(s.booking_id is not None for s in shares)
+        else:
+            assert all(x == "available" for x in seat_states), seat_states
+            assert all(s.booking_id is None for s in shares)
+            # ⭐ Jiska paisa aa chuka tha uska refund hona hi chahiye
+            for s in shares:
+                assert s.status in ("refunded", "unpaid"), \
+                    f"expired group me share '{s.status}' — paisa phansa hua hai"
+    finally:
+        db.close()
+
+
+def test_broken_group_does_not_leave_pending_payments(client, tokens, group_seats):
+    """
+    Group toota to uske PENDING payments bhi band hone chahiye.
+
+    Warna do dikkatein:
+      1. `uq_one_pending_payment_per_seat` us seat par naya checkout banne
+         hi nahi deta — seat 'available' dikhti par khareedi nahi ja sakti
+      2. User purana checkout complete karke ek mare hue group ko paisa
+         de deta hai
+
+    Ye bug asal me tha aur race test likhte waqt pakda gaya.
+    """
+    from sqlalchemy import select as sa_select
+
+    from database import SessionLocal
+    from models import Payment
+
+    group = _make_group(client, tokens[0], group_seats)
+    st = group["share_token"]
+
+    res = client.post(f"/api/groups/{st}/shares/{group['shares'][0]['id']}/pay",
+                      headers=_headers(tokens[0]))
+    assert res.status_code == 200
+
+    client.delete(f"/api/groups/{st}", headers=_headers(tokens[0]))
+
+    db = SessionLocal()
+    try:
+        still_pending = db.scalars(
+            sa_select(Payment).where(
+                Payment.seat_id.in_(group_seats), Payment.status == "pending"
+            )
+        ).all()
+        assert not still_pending, f"{len(still_pending)} pending payments latke hain"
+    finally:
+        db.close()
+
+    # Aur ab wahi seat normally khareedi ja sakti hai — yahi asli check hai.
+    # Pehle ye 409 deta tha kyunki purana pending payment index rok raha tha.
+    res = client.post("/api/payments/checkout",
+                      json={"seat_id": group_seats[0]}, headers=_headers(tokens[3]))
+    assert res.status_code == 201, res.text
+
+    # Apne peeche pending payment mat chhodo — warna agla test isi index
+    # se takrayega. (Wahi galti jo abhi test kar rahe hain.)
+    client.post(f"/api/payments/{res.json()['payment_id']}/simulate",
+                json={"outcome": "fail"}, headers=_headers(tokens[3]))

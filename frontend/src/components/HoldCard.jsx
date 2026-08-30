@@ -21,6 +21,11 @@ export default function HoldCard({
   onRelease,
   booking,
   message,
+  // Group booking — optional, taki HoldCard un jagahon pe bhi chale jahan
+  // group ka koi matlab nahi (jaise sirf-view wale pages)
+  onStartGroup,
+  groupSize,
+  onGroupSizeChange,
 }) {
   // Aakhri minute me countdown laal — user ko jaldi karni chahiye
   const urgent = secondsLeft > 0 && secondsLeft <= 60
@@ -97,6 +102,35 @@ export default function HoldCard({
           >
             {booking ? 'Redirecting…' : `Pay ₹${price}`}
           </button>
+
+          {/* Group booking — hold ki hui seat isme shaamil ho jati hai,
+              baaki seats server available me se leta hai. Isliye user ko
+              pehle N seats select karne ki zaroorat nahi. */}
+          {onStartGroup && (
+            <div className="mt-2 flex items-center gap-2">
+              <select
+                value={groupSize}
+                onChange={(e) => onGroupSizeChange(Number(e.target.value))}
+                className="rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3
+                           py-2.5 text-sm text-slate-200 outline-none focus:border-violet-500"
+              >
+                {[2, 3, 4, 5, 6].map((n) => (
+                  <option key={n} value={n}>
+                    {n} log
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={onStartGroup}
+                disabled={booking}
+                className="flex-1 rounded-xl border border-violet-500/40 bg-violet-500/10
+                           px-4 py-2.5 text-sm font-medium text-violet-200 transition
+                           hover:bg-violet-500/20 disabled:opacity-40"
+              >
+                👥 Sabka alag-alag payment
+              </button>
+            </div>
+          )}
 
           <button
             onClick={onRelease}

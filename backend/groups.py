@@ -49,6 +49,8 @@ from models import (
     GROUP_COLLECTING,
     GROUP_CONFIRMED,
     GROUP_EXPIRED,
+    PAYMENT_EXPIRED,
+    PAYMENT_PENDING,
     PAYMENT_REFUNDED,
     SEAT_AVAILABLE,
     SEAT_BOOKED,
@@ -212,13 +214,37 @@ def mark_share_paid(db: Session, payment: Payment) -> None:
         logger.error("Payment %s ka group share hi nahi mila", payment.id)
         return
 
-    group = db.get(GroupBooking, share.group_id)
-
-    # ⭐ Group pehle hi toot chuka hai (deadline nikal gayi) aur paisa ab
-    # aaya. Ye race asli hai, sirf theory nahi.
+    # ⭐⭐ Yahan group ki row par PESSIMISTIC LOCK lete hain.
     #
-    # Is bande ko seat NAHI mil sakti — uski seat chhoot chuki hai aur
-    # shayad kisi aur ne le bhi li hogi. Isliye seedha refund.
+    # Poore project me hum optimistic locking use karte hain, aur Phase 15
+    # ke benchmark me dono barabar nikle the. Ye us niyam ka jaan-boojh ke
+    # liya gaya apwaad hai — aur wajah speed nahi, correctness hai.
+    #
+    # Bina lock ke ye race hoti hai (test me asal me hui thi):
+    #
+    #   payment thread          expiry job
+    #   --------------          ----------
+    #   group.status padha
+    #     -> 'collecting'
+    #                           group ko 'expired' kiya
+    #                           shares padhe -> ye share abhi 'unpaid' hai
+    #                           -> refund nahi kiya
+    #   share ko 'paid' kiya
+    #
+    #   Nateeja: expired group me ek 'paid' share. Us bande ka paisa kat
+    #   gaya, seat mili nahi, aur refund bhi nahi hua.
+    #
+    # Optimistic pattern yahan kaam nahi karta kyunki do transactions ALAG
+    # rows chhoo rahi hain (ek group, doosri share). Ek row ka conditional
+    # UPDATE doosri row ki race nahi rok sakta. Inhe serialize karna PADTA
+    # hai, aur `FOR UPDATE` bilkul wahi karta hai.
+    group = db.execute(
+        select(GroupBooking).where(GroupBooking.id == share.group_id).with_for_update()
+    ).scalar_one()
+
+    # Ab ye padhai bharosemand hai — expiry job ya to pehle commit kar
+    # chuka hai (aur hume 'expired' dikhega), ya wo hamare commit ka
+    # intezaar kar raha hai.
     if group.status != GROUP_COLLECTING:
         logger.warning(
             "Share %s ka paisa aaya par group %s ab '%s' hai — refund",
@@ -337,6 +363,27 @@ def break_group(db: Session, group: GroupBooking, reason: str) -> bool:
     for share in shares:
         if share.status == SHARE_PAID and share.payment_id:
             _refund_share(db, share, db.get(Payment, share.payment_id))
+
+        # ⚠️ Jo PENDING payments latke hue hain unhe bhi band karna zaroori hai.
+        #
+        # Ye test likhte waqt pakda gaya. Chhod dete to do dikkatein hoti:
+        #
+        #  1. `uq_one_pending_payment_per_seat` (Phase 11 ka partial unique
+        #     index) us seat par naya checkout banne hi nahi deta. Seat
+        #     'available' dikhti par khareedi nahi ja sakti — sabse bura
+        #     kism ka bug, kyunki UI me sab theek lagta hai.
+        #
+        #  2. User abhi bhi wo purana checkout page complete kar sakta hai
+        #     aur ek aise group ko paisa de deta jo mar chuka hai.
+        db.execute(
+            update(Payment)
+            .where(
+                Payment.group_share_id == share.id,
+                Payment.status == PAYMENT_PENDING,
+            )
+            .values(status=PAYMENT_EXPIRED, failure_reason="group_broken")
+            .execution_options(synchronize_session=False)
+        )
 
         # Seat sirf tab chhodo jab wo abhi bhi IS group ke hold me ho.
         # WHERE me status check zaroori hai — bina iske ek purani job

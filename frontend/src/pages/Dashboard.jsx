@@ -1,3 +1,6 @@
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+
 import { useAuth } from '../auth/AuthContext'
 import { useBooking } from '../booking/BookingContext'
 import BookingConfirmedModal from '../components/BookingConfirmedModal'
@@ -11,6 +14,8 @@ import SeatGrid from '../components/SeatGrid'
 
 export default function Dashboard() {
   const { user } = useAuth()
+  const navigate = useNavigate()
+  const [groupSize, setGroupSize] = useState(3)
   const {
     event,
     seats,
@@ -26,6 +31,7 @@ export default function Dashboard() {
     selectSeat,
     releaseHold,
     payForSeat,
+    startGroup,
     cancel,
     dismissLastBooking,
   } = useBooking()
@@ -57,6 +63,13 @@ export default function Dashboard() {
             onRelease={releaseHold}
             booking={booking}
             message={message}
+            groupSize={groupSize}
+            onGroupSizeChange={setGroupSize}
+            onStartGroup={async () => {
+              const token = await startGroup(groupSize)
+              // Token mila to seedha share page pe — wahi se link copy hota hai
+              if (token) navigate(`/groups/${token}`)
+            }}
           />
           <BookingsList bookings={bookings} onCancel={cancel} compact limit={3} />
         </div>

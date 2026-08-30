@@ -8,6 +8,7 @@ import AdminStats from './pages/admin/AdminStats'
 import Dashboard from './pages/Dashboard'
 import EventDetail from './pages/EventDetail'
 import Events from './pages/Events'
+import GroupBooking from './pages/GroupBooking'
 import MockCheckout from './pages/MockCheckout'
 import MyBookings from './pages/MyBookings'
 import PaymentReturn from './pages/PaymentReturn'
@@ -59,6 +60,8 @@ export default function App() {
           <Route path="bookings" element={<MyBookings />} />
           <Route path="profile" element={<Profile />} />
           <Route path="pay/:paymentId" element={<MockCheckout />} />
+          {/* Group link se aane wala seedha yahan land karta hai */}
+          <Route path="groups/:shareToken" element={<GroupBooking />} />
           <Route path="payment/return" element={<PaymentReturn />} />
 
           <Route

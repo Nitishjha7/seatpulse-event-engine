@@ -16,6 +16,10 @@ const SEAT_STYLES = {
   // ki ye seat bikne ke kagaar pe hai, sirf hold me nahi
   payment_pending: 'bg-orange-600/80 text-orange-50 cursor-not-allowed animate-pulse',
   booked: 'bg-rose-600/70 text-rose-100/70 cursor-not-allowed line-through',
+  // Group booking ne rok rakhi hai — abhi biki nahi, par kisi aur ke liye
+  // available bhi nahi. Alag rang isliye ki wait bahut lamba (30 min tak)
+  // ho sakta hai, aur user ko pata chalna chahiye ki ye jaldi nahi khulegi.
+  group_held: 'bg-sky-600/70 text-sky-50 cursor-not-allowed',
   // Meri hold — dusre ki hold (peeli) se साफ alag dikhni chahiye
   selected:
     'bg-violet-500 text-white ring-2 ring-violet-300 ring-offset-2 ring-offset-[var(--panel)] cursor-pointer',
@@ -88,6 +92,7 @@ export default function SeatGrid({ seats, selectedSeat, onSelect, currentUserId,
         <Legend className="bg-violet-500" label="Your hold" />
         <Legend className="bg-amber-400/80" label="Held by someone else" />
         <Legend className="bg-orange-600/80" label="Being purchased" />
+        <Legend className="bg-sky-600/70" label="Group hold" />
         <Legend className="bg-rose-600/70" label="Booked" />
       </div>
     </section>
