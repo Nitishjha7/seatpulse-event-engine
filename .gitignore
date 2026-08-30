@@ -59,3 +59,14 @@ tickets/
 # Benchmark ke CSV outputs — har run pe naye bante hain.
 # Asli numbers documents/phases/15-locking-benchmark.md me likhe hain.
 loadtest/results/
+
+# Git Bash Windows pe `/tmp/...` aur `/w` jaise paths ko project ke andar
+# translate kar deta hai, jisse `frontend/C:/...` ya `backend;W` jaisi
+# ajeeb directories ban jaati hain.
+#
+# Isliye: container ke andar build/temp files banao, host pe nahi.
+*;W
+*;C
+**/C:/
+_patch.py
+_proof.py
