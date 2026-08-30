@@ -11,6 +11,7 @@ Chalao:
 """
 
 import os
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
@@ -22,6 +23,18 @@ BASE_URL = os.getenv("TEST_BASE_URL", "http://backend:8000")
 # seed.py sab test users ko yahi password deta hai
 PASSWORD = "demo1234"
 CONCURRENCY = 40
+
+# Har pytest run ka apna suffix.
+#
+# ⚠️ Idempotency keys pehle fixed the (`test-100-once`). Wo Redis me TTL
+# tak zinda rehti hain, matlab AGLA test run usi key pe replay le aata
+# tha: 201 to milta tha, par nayi booking banti hi nahi thi — aur test
+# "0 bookings mili" pe fail hoti thi.
+#
+# Ye bug multi-worker stack pe pakda gaya aur pehle multi-worker ka bug
+# laga. Tha nahi — tests reset_state.py par nirbhar the, jo chhoot sakta
+# hai. Ab har run apni keys use karta hai aur ye nirbharta khatam.
+RUN_ID = uuid.uuid4().hex[:8]
 
 
 def _token(client: httpx.Client, email: str) -> str:
@@ -434,7 +447,7 @@ def test_same_idempotency_key_returns_same_booking(client, tokens, free_seat):
     """
     seat_id = free_seat['id']
     token = tokens[0]
-    headers = {**_headers(token), "Idempotency-Key": f"test-{seat_id}-once"}
+    headers = {**_headers(token), "Idempotency-Key": f"test-{seat_id}-once-{RUN_ID}"}
 
     first = client.post("/api/bookings", json={"seat_id": seat_id}, headers=headers)
     assert first.status_code == 201
@@ -453,7 +466,7 @@ def test_same_idempotency_key_returns_same_booking(client, tokens, free_seat):
 def test_same_key_different_body_is_rejected(client, tokens, free_seat):
     """Wahi key alag data ke saath = bug ya attack. Chupchap purana jawab mat do."""
     seat_id = free_seat['id']
-    headers = {**_headers(tokens[0]), "Idempotency-Key": f"test-{seat_id}-mismatch"}
+    headers = {**_headers(tokens[0]), "Idempotency-Key": f"test-{seat_id}-mismatch-{RUN_ID}"}
 
     assert client.post("/api/bookings", json={"seat_id": seat_id}, headers=headers).status_code == 201
 

@@ -1,0 +1,158 @@
+name: CI
+
+# Push aur PR dono par. PR par isliye ki toota hua code main me pahunche
+# hi nahi — merge ke baad pata chalna bahut der ho jati hai.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Ek hi branch pe naya push aaye to purana run cancel kar do. Warna 5
+# minute purane commit ka result aata rehta hai aur runner minutes barbaad.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Asli test — poora stack chalao aur 66 tests maaro.
+  #
+  # ⚠️ `services:` block use NAHI kiya, jaan-boojh ke.
+  #
+  # GitHub ka services block sirf DB/Redis containers deta hai, par app
+  # ko runner par alag se chalana padta — matlab CI wo cheez test karta
+  # jo deploy hoti hi nahi. Yahan hum wahi docker compose chalate hain jo
+  # laptop pe chalti hai. Agar compose file toot jaye, CI usse pakdega.
+  # ---------------------------------------------------------------------
+  test:
+    name: Tests (full stack)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Env file banao
+        # Compose ko root .env chahiye. Example hi kaafi hai — usme sab
+        # dev defaults hain aur koi asli secret nahi.
+        run: |
+          cp .env.example .env
+          cp backend/.env.example backend/.env
+
+      - name: Docker layer cache
+        uses: docker/setup-buildx-action@v3
+
+      - name: Stack chalu karo
+        run: docker compose up -d --build
+
+      - name: Backend ke ready hone ka wait
+        # Blind `sleep 30` se behtar hai poll karna: ready ho to turant
+        # aage badho, aur na ho to logs ke saath fail ho.
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8000/api/health > /dev/null; then
+              echo "Backend ready ($i sec)"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Backend 60s me ready nahi hua"
+          docker compose logs backend
+          exit 1
+
+      - name: Migrations
+        run: docker compose exec -T backend alembic upgrade head
+
+      - name: Seed data
+        # Tests ko 500 users aur ek event chahiye — fixtures skip ho jaate
+        # hain agar seed na ho, aur skipped tests green dikhte hain.
+        run: docker compose exec -T backend python seed.py
+
+      - name: Pytest
+        run: docker compose exec -T backend python -m pytest tests/ -v
+
+      - name: Integrity check
+        # Tests ke baad DB invariants — koi overselling to nahi hui
+        run: docker compose exec -T backend python verify_integrity.py
+
+      - name: Logs (sirf fail hone par)
+        if: failure()
+        run: docker compose logs --tail 200
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v
+
+  # ---------------------------------------------------------------------
+  # Production images build hoti hain kya.
+  #
+  # Ye alag job hai kyunki prod image me dev tools nahi hain — usme tests
+  # chal hi nahi sakte. Par build toot jaye to deploy ke waqt pata chalna
+  # bahut der hoti hai.
+  # ---------------------------------------------------------------------
+  build-prod:
+    name: Production images
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Env file
+        run: cp .env.example .env
+
+      - name: Prod images build karo
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+            build backend worker frontend
+
+      - name: Prod image me dev tools nahi hone chahiye
+        # Ye ek asli check hai, dikhawa nahi: prod image me pytest/locust
+        # aa gaye to image bhaari bhi hai aur attack surface bada bhi.
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+            run --rm --no-deps --entrypoint sh backend -c \
+            'if python -c "import pytest" 2>/dev/null; then
+               echo "FAIL: prod image me pytest hai"; exit 1
+             fi
+             echo "OK: dev tools nahi hain"'
+
+      - name: Prod image root se nahi chalni chahiye
+        run: |
+          # 2>/dev/null — compose apne "Container ... Created" messages stderr
+          # pe likhta hai; wo uid ke saath mix na ho. tail -1 se aakhri line.
+          USER_ID=$(docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+            run --rm --no-deps --entrypoint id backend -u 2>/dev/null | tail -1)
+          echo "uid = $USER_ID"
+          if [ "$USER_ID" = "0" ]; then
+            echo "FAIL: container root se chal raha hai"
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------
+  # Frontend ka build toot to nahi raha.
+  # ---------------------------------------------------------------------
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # npm ci — lockfile ko exactly follow karta hai. `npm install` CI me
+      # dependency versions chupchaap badal sakta hai, aur tab CI green
+      # hone ka matlab kam ho jata hai.
+      - run: npm ci
+        working-directory: frontend
+
+      - run: npm run build
+        working-directory: frontend
