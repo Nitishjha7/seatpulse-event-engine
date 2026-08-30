@@ -44,7 +44,8 @@ documents/
 │   ├── 08-dashboard-ui.md
 │   ├── 09-rate-limit-idempotency.md
 │   ├── 10-rbac-organizer.md
-│   └── 11-payments.md
+│   ├── 11-payments.md
+│   └── 12-background-tickets.md
 │
 └── reference/             ← command cheatsheets
     ├── docker-commands.md
@@ -82,6 +83,7 @@ Har phase ka format ek jaisa hai: **problem → approach → steps → ✅ proof
 | 09 | [Rate Limit + Idempotency](phases/09-rate-limit-idempotency.md) | Token bucket Lua me, per-user (per-IP nahi) |
 | 10 | [RBAC + Organizer](phases/10-rbac-organizer.md) | ⭐ Role ≠ ownership. 403 vs 404 ka farak |
 | 11 | [Payments](phases/11-payments.md) | ⭐ Webhook source of truth, redirect nahi. Idempotent fulfilment |
+| 12 | [Background Tickets](phases/12-background-tickets.md) | ARQ worker, QR + PDF, outbox email. Kya background me jaana chahiye |
 
 > **Interview ke liye sabse zaroori:** 04, 06, 07, 11. Wahan teeno defence layers aur load test se mile teen bug hain.
 

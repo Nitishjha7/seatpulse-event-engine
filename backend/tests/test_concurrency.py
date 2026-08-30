@@ -685,3 +685,118 @@ def test_webhook_rejects_bad_signature(client):
 def test_webhook_without_signature_is_rejected(client):
     res = client.post("/api/payments/webhook", content=b"{}")
     assert res.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Tickets (background worker)
+# ---------------------------------------------------------------------------
+
+def _wait_for_ticket(client, token, seat_id, timeout=15):
+    """
+    Worker background me chalta hai — poll karke ticket ka intezaar karo.
+
+    ⚠️ Fixed `sleep` nahi lagaya. Wo dheeme machine pe flaky hota hai aur
+    tez machine pe faltu time khaata hai.
+    """
+    import time
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        bookings = client.get("/api/bookings", headers=_headers(token)).json()
+        mine = [b for b in bookings if b["seat_id"] == seat_id and b["status"] == "confirmed"]
+        if mine and mine[0]["ticket_status"] != "pending":
+            return mine[0]
+        time.sleep(0.4)
+    return None
+
+
+def test_booking_starts_with_a_pending_ticket(client, tokens, free_seat):
+    """
+    Booking turant confirm hoti hai — ticket baad me banta hai.
+
+    ⭐ Yahi is phase ka poora point hai: API user ko 2-3 second wait nahi
+    karati.
+    """
+    seat_id = free_seat["id"]
+    res = client.post("/api/bookings", json={"seat_id": seat_id}, headers=_headers(tokens[0]))
+    assert res.status_code == 201
+
+    bookings = client.get("/api/bookings", headers=_headers(tokens[0])).json()
+    mine = [b for b in bookings if b["seat_id"] == seat_id][0]
+    assert mine["ticket_status"] in ("pending", "ready")
+
+
+def test_worker_generates_a_downloadable_ticket(client, tokens, free_seat):
+    """End-to-end: booking → worker → PDF download."""
+    seat_id = free_seat["id"]
+    token = tokens[0]
+
+    client.post("/api/bookings", json={"seat_id": seat_id}, headers=_headers(token))
+
+    booking = _wait_for_ticket(client, token, seat_id)
+    if booking is None:
+        pytest.skip("Worker chal raha hai? `docker compose up -d worker`")
+
+    assert booking["ticket_status"] == "ready"
+
+    res = client.get(f"/api/bookings/{booking['id']}/ticket", headers=_headers(token))
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "application/pdf"
+    # Asli PDF hai? Header check karo — status 200 kaafi nahi
+    assert res.content[:5] == b"%PDF-"
+    assert len(res.content) > 1000
+
+
+def test_cannot_download_someone_elses_ticket(client, tokens, free_seat):
+    """
+    ⚠️ Sabse zaroori ticket test.
+
+    Ticket me QR hai. Doosre ka ticket download kar lena = free entry.
+    """
+    seat_id = free_seat["id"]
+    owner, attacker = tokens[0], tokens[1]
+
+    client.post("/api/bookings", json={"seat_id": seat_id}, headers=_headers(owner))
+    booking = _wait_for_ticket(client, owner, seat_id)
+    if booking is None:
+        pytest.skip("Worker nahi chal raha")
+
+    res = client.get(f"/api/bookings/{booking['id']}/ticket", headers=_headers(attacker))
+    assert res.status_code == 404      # 403 nahi — existence bhi chhupa rahe hain
+
+
+def test_ticket_needs_authentication(client, tokens, free_seat):
+    seat_id = free_seat["id"]
+    client.post("/api/bookings", json={"seat_id": seat_id}, headers=_headers(tokens[0]))
+    booking = _wait_for_ticket(client, tokens[0], seat_id)
+    if booking is None:
+        pytest.skip("Worker nahi chal raha")
+
+    assert client.get(f"/api/bookings/{booking['id']}/ticket").status_code == 401
+
+
+def test_qr_token_is_not_the_booking_id(client, tokens, free_seat):
+    """
+    ⚠️ QR me sequential id nahi honi chahiye — koi bhi 1,2,3 ka QR bana ke
+    gate pe chala jata.
+    """
+    from sqlalchemy import select
+
+    seat_id = free_seat["id"]
+    client.post("/api/bookings", json={"seat_id": seat_id}, headers=_headers(tokens[0]))
+    booking = _wait_for_ticket(client, tokens[0], seat_id)
+    if booking is None:
+        pytest.skip("Worker nahi chal raha")
+
+    # Token DB me hai aur lamba/random hai
+    from database import SessionLocal
+    from models import Booking
+
+    db = SessionLocal()
+    try:
+        row = db.get(Booking, booking["id"])
+        assert row.qr_token
+        assert len(row.qr_token) >= 24
+        assert str(booking["id"]) != row.qr_token
+    finally:
+        db.close()

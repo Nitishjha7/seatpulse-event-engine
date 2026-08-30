@@ -1,4 +1,7 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
+
+import { downloadTicket, retryTicket } from '../api'
 
 import { bookingRef } from './BookingConfirmedModal'
 
@@ -82,6 +85,8 @@ export default function BookingsList({ bookings, onCancel, compact = false, limi
               </div>
 
               {b.status === 'confirmed' ? (
+                <div className="flex shrink-0 items-center gap-1">
+                  <TicketAction booking={b} />
                 <button
                   onClick={() => onCancel(b.id)}
                   className="shrink-0 rounded-lg px-2 py-1 text-xs text-rose-400
@@ -89,6 +94,7 @@ export default function BookingsList({ bookings, onCancel, compact = false, limi
                 >
                   Cancel
                 </button>
+                </div>
               ) : (
                 <span className="shrink-0 text-xs text-slate-600">cancelled</span>
               )}
@@ -97,5 +103,76 @@ export default function BookingsList({ bookings, onCancel, compact = false, limi
         </ul>
       )}
     </section>
+  )
+}
+
+/**
+ * Ticket ka download button / status.
+ *
+ * Teen states dikhte hain kyunki ticket background me banta hai:
+ *   pending — worker abhi bana raha hai
+ *   ready   — download karo
+ *   failed  — retry karo
+ *
+ * ⚠️ PDF download `window.open` se NAHI ho sakta — endpoint ko
+ * `Authorization` header chahiye, aur browser navigation me header nahi
+ * jata. Isliye fetch karke blob banate hain.
+ */
+function TicketAction({ booking }) {
+  const [busy, setBusy] = useState(false)
+
+  if (booking.ticket_status === 'pending') {
+    return (
+      <span
+        className="rounded-lg px-2 py-1 text-xs text-slate-500"
+        title="Ticket background me ban raha hai"
+      >
+        <span className="animate-pulse">Ticket…</span>
+      </span>
+    )
+  }
+
+  if (booking.ticket_status === 'failed') {
+    return (
+      <button
+        onClick={async () => {
+          setBusy(true)
+          try {
+            await retryTicket(booking.id)
+          } finally {
+            setBusy(false)
+          }
+        }}
+        disabled={busy}
+        className="rounded-lg px-2 py-1 text-xs text-amber-400 transition hover:bg-amber-500/10"
+      >
+        {busy ? '…' : 'Retry'}
+      </button>
+    )
+  }
+
+  return (
+    <button
+      onClick={async () => {
+        setBusy(true)
+        try {
+          const blob = await downloadTicket(booking.id)
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = `SeatPulse-${bookingRef(booking.id)}.pdf`
+          a.click()
+          // Blob URL memory me rehta hai jab tak revoke na karo
+          URL.revokeObjectURL(url)
+        } finally {
+          setBusy(false)
+        }
+      }}
+      disabled={busy}
+      className="rounded-lg px-2 py-1 text-xs text-violet-400 transition hover:bg-violet-500/10"
+      title="Ticket PDF download karo"
+    >
+      {busy ? '…' : '🎫 Ticket'}
+    </button>
   )
 }

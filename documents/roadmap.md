@@ -49,6 +49,7 @@ React ka kaam har phase me thoda-thoda hua hai, isliye ye index:
 | **Mock checkout page** (simulated gateway) | `pages/MockCheckout.jsx` | [Phase 11](phases/11-payments.md) Step 7 |
 | **Payment return page** — polls, decide nahi karta | `pages/PaymentReturn.jsx` | [Phase 11](phases/11-payments.md) Step 7 |
 | `payForSeat()` — redirect to gateway | `booking/BookingContext.jsx` | [Phase 11](phases/11-payments.md) Step 7 |
+| Ticket download via blob (header + navigation) | `api.js`, `components/BookingsList.jsx` | [Phase 12](phases/12-background-tickets.md) Step 8 |
 
 > **Phase 7 ke aage ka plan** — 13 naye features 4 tracks me — [../README.md](../README.md) ke "Roadmap → Planned" section me hai.
 > Wahan har feature ka problem + approach likha hai. Yahan wali table sirf jo **ban chuka** hai wo track karti hai.
@@ -70,6 +71,7 @@ React ka kaam har phase me thoda-thoda hua hai, isliye ye index:
 | 9 | Rate limiting + idempotency keys | ✅ Done — [Phase 9 — Rate Limit + Idempotency](phases/09-rate-limit-idempotency.md) |
 | 10 | RBAC + organizer portal | ✅ Done — [Phase 10 — RBAC + Organizer](phases/10-rbac-organizer.md) |
 | 11 | Payments + webhooks | ✅ Done — [Phase 11 — Payments](phases/11-payments.md) |
+| 12 | Background queue + QR + PDF ticket | ✅ Done — [Phase 12 — Background Tickets](phases/12-background-tickets.md) |
 
 ---
 

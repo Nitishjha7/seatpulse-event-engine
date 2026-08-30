@@ -197,6 +197,32 @@ export const createBooking = (seatId, idempotencyKey = crypto.randomUUID()) =>
     body: JSON.stringify({ seat_id: seatId }),
   });
 
+/**
+ * Ticket PDF download.
+ *
+ * ⚠️ `request()` use nahi kar sakte — wo `res.json()` karta hai, aur yahan
+ * binary blob chahiye.
+ *
+ * Aur `window.open` bhi kaam nahi karega: endpoint ko `Authorization`
+ * header chahiye, par browser navigation me custom headers nahi jaate.
+ * Isliye fetch karke blob banate hain aur ek chhupa hua <a> click karte hain.
+ */
+export async function downloadTicket(bookingId) {
+  const res = await fetch(`${API_URL}/api/bookings/${bookingId}/ticket`, {
+    headers: { Authorization: `Bearer ${getAccessToken()}` },
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || "Ticket download nahi hua");
+  }
+
+  return res.blob();
+}
+
+export const retryTicket = (bookingId) =>
+  request(`/api/bookings/${bookingId}/ticket/retry`, { method: "POST" });
+
 export const cancelBooking = (bookingId) =>
   request(`/api/bookings/${bookingId}`, { method: "DELETE" });
 

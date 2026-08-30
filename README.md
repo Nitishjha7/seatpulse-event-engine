@@ -73,6 +73,8 @@ seatpulse-event-engine/
 │   ├── idempotency.py      # Replay-safe POST handling
 │   ├── payments.py         # Gateway providers + webhook signature verification
 │   ├── reconcile_payments.py # Safety net for missed webhooks
+│   ├── worker.py           # ARQ background worker
+│   ├── tickets.py          # QR + PDF rendering, email outbox
 │   ├── websocket.py        # Connection manager + Redis pub/sub fan-out
 │   ├── routers/            # auth, events, seats, bookings, organizer, admin
 │   ├── tests/              # Concurrency + auth test suite
@@ -92,7 +94,7 @@ seatpulse-event-engine/
 │   │   └── api.js          # Single place for backend calls
 │   └── Dockerfile
 ├── loadtest/               # Locust scenarios
-├── docker-compose.yml      # Postgres + Redis + backend + frontend
+├── docker-compose.yml      # Postgres + Redis + backend + worker + frontend
 └── README.md
 ```
 
@@ -118,6 +120,16 @@ The seat moves `locked → payment_pending → booked`, and falls back to `avail
 Webhooks can still be missed, so [`reconcile_payments.py`](backend/reconcile_payments.py) sweeps expired pending payments, asks the gateway what actually happened, and either fulfils or releases the seat. The webhook is the fast path; reconciliation is the safety net.
 
 Card details never reach the server — checkout is hosted, which keeps the application out of PCI scope. **Leave `STRIPE_SECRET_KEY` empty and a mock provider takes over**, so the whole flow is demonstrable from a fresh clone without any gateway account.
+
+### Background work
+
+Confirming a booking must feel instant, so anything the user does not need *right now* runs outside the request. Generating a QR code, rendering the PDF ticket and sending the email add up to 2-3 seconds — long enough that a synchronous checkout would look broken, and long enough that under load each booking would pin a connection for the whole duration.
+
+[ARQ](backend/worker.py) handles this on the Redis instance already in the stack, so no broker was added. The worker runs from the **same image** as the API with a different command, which keeps models and config identical rather than duplicated.
+
+Two details matter more than the queue itself. **Enqueueing never raises** — it is called after the booking exists and the money has moved, so failing the request there would be the worst possible outcome; a lost job leaves the ticket `pending` and [`retry_pending_tickets.py`](backend/retry_pending_tickets.py) picks it up. And **the job is idempotent** — ARQ retries, so regenerating a ready ticket would rotate its QR token and invalidate the copy the attendee already holds.
+
+The QR encodes a random 32-character token, never the sequential booking id, and tickets are downloadable only by their owner — the QR *is* the entry pass. Email uses an outbox (written to disk and logged) rather than real SMTP; swapping in a provider means changing one function.
 
 ### Authorization
 
@@ -145,7 +157,8 @@ The frontend hides organizer and admin navigation by role, but that is **UX only
 | `DELETE` | `/api/seats/{id}/lock` | Release your hold (safe: only your own lock) |
 | `GET` | `/api/seats/{id}/lock` | Who holds the seat and for how long |
 | `POST` | `/api/bookings` | Book a seat — returns `409` if already taken. Accepts an `Idempotency-Key` header |
-| `GET` | `/api/bookings` | Your bookings |
+| `GET` | `/api/bookings` | Your bookings, each with its ticket status |
+| `GET` | `/api/bookings/{id}/ticket` | Download the PDF ticket (owner only) |
 | `DELETE` | `/api/bookings/{id}` | Cancel your booking, releasing the seat |
 | `GET` | `/api/health` | Service, database and Redis status |
 | `POST` | `/api/payments/checkout` | Start a checkout session for a held seat |
@@ -233,7 +246,7 @@ docker compose --profile loadtest run --rm locust \
     --host http://backend:8000
 
 docker compose exec backend python verify_integrity.py
-docker compose exec backend pytest tests/ -v         # 37 tests: auth, RBAC, payments, concurrency
+docker compose exec backend pytest tests/ -v         # 42 tests: auth, RBAC, payments, tickets, concurrency
 ```
 
 ### What load testing actually caught
@@ -278,12 +291,12 @@ Result on the same 200-user flash sale: **1,250 requests with 58 failures and a 
 - [x] RBAC — attendee / organizer / admin, with ownership checked separately from role
 - [x] Organizer portal — create events with price-tier seat generation, track sales; admin platform stats
 - [x] Payments — webhook-confirmed checkout with signature verification, idempotent fulfilment, and a reconciliation job for missed webhooks
+- [x] Background worker (ARQ) — QR code, PDF ticket and email generated outside the request, with retries and a re-queue safety net
 
 ### Planned
 
 Ordered by dependency — each item leans on the ones above it. None of these are built yet.
 
-- [ ] **Background task queue** (ARQ + Redis) — QR code, PDF ticket and email generated outside the request, so checkout stays instant
 - [ ] **QR check-in portal** — mobile scanner with an atomic `valid → checked_in` flip, so one ticket cannot pass two gates
 - [ ] **Dynamic pricing** — demand-based surge recomputed on booking events and pushed over the existing WebSocket channel
 - [ ] **Visual seat layout builder** — organizer draws rows, sections and price bands; saved as JSON and expanded into seats server-side

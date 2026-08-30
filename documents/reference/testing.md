@@ -9,7 +9,7 @@ Har cheez kaise verify karni hai. Phase-wise details unki apni files me hain, ye
 ```bash
 docker compose ps
 ```
-Chaar containers `Up` dikhne chahiye (`db` aur `redis` **healthy**).
+**Paanch** containers `Up` dikhne chahiye — db, redis, backend, worker, frontend (`db` aur `redis` **healthy**).
 
 ```bash
 curl http://localhost:8000/api/health
@@ -92,6 +92,9 @@ tests/test_concurrency.py::test_booking_works_without_idempotency_key PASSED
 | `wrong_password_eventually_rate_limited` | Brute force protection |
 | `same_idempotency_key_returns_same_booking` | Double-click → wahi booking, DB me ek row |
 | `same_key_different_body_is_rejected` | 422, chupchap galat jawab nahi |
+| `worker_generates_a_downloadable_ticket` | End-to-end: booking → worker → asli PDF |
+| `cannot_download_someone_elses_ticket` | ⚠️ QR = entry pass. 404 |
+| `qr_token_is_not_the_booking_id` | Sequential id QR me nahi honi chahiye |
 | `attendee_cannot_touch_organizer_or_admin` | RBAC — role ke bina 403 |
 | `organizer_cannot_touch_another_organizers_event` | ⭐ Ownership — role hone se resource tumhara nahi ho jata |
 | `event_with_bookings_cannot_be_deleted` | Paid tickets kabhi gayab nahi honi chahiye |
@@ -622,6 +625,9 @@ Aakhir me browser me ek round: login → seat hold → book → cancel → logou
 | Redis locks | `docker compose exec redis redis-cli KEYS "seat:*"` |
 | Refresh tokens | `docker compose exec redis redis-cli KEYS "refresh:*"` |
 | DB connections | `docker compose exec db psql -U seatpulse -d seatpulse -c "SELECT state, count(*) FROM pg_stat_activity WHERE datname='seatpulse' GROUP BY state;"` |
+| Worker chal raha hai? | `docker compose logs -f worker` |
+| Stuck tickets re-queue | `docker compose exec backend python retry_pending_tickets.py` |
+| Bheji hui emails | `docker compose exec worker ls /app/tickets/outbox/` |
 | Logs | `docker compose logs -f backend` |
 
 ---
