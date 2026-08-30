@@ -153,6 +153,23 @@ export const updateEvent = (eventId, payload) =>
 export const deleteEvent = (eventId) =>
   request(`/api/organizer/events/${eventId}`, { method: "DELETE" });
 
+// ---- Gate check-in ----
+
+/**
+ * QR token scan karke entry mark karo.
+ *
+ * ⚠️ Ye 200 lautata hai chahe check-in fail ho — `ok: false` ke saath.
+ * Isliye yahan try/catch nahi, `result.ok` dekhna hai.
+ */
+export const checkIn = (token) =>
+  request("/api/checkin", {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  });
+
+export const getCheckinStats = (eventId) =>
+  request(`/api/checkin/events/${eventId}/stats`);
+
 // ---- Admin ----
 
 export const getAdminStats = () => request("/api/admin/stats");

@@ -9,6 +9,7 @@ import {
   IconCode,
   IconHome,
   IconPlus,
+  IconShield,
   IconTicket,
   IconUser,
 } from './icons'
@@ -33,6 +34,7 @@ const NAV = [
 const ORGANIZER_NAV = [
   { to: '/organizer/events', label: 'My Events', Icon: IconCalendar },
   { to: '/organizer/events/new', label: 'Create Event', Icon: IconPlus },
+  { to: '/gate', label: 'Gate Check-in', Icon: IconShield },
 ]
 
 const ADMIN_NAV = [{ to: '/admin', label: 'Platform Stats', Icon: IconActivity }]

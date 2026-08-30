@@ -800,3 +800,127 @@ def test_qr_token_is_not_the_booking_id(client, tokens, free_seat):
         assert str(booking["id"]) != row.qr_token
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# Gate check-in
+# ---------------------------------------------------------------------------
+
+def _booked_with_ticket(client, token, seat_id):
+    """Book karo aur ticket ready hone ka intezaar karo — QR token wapas do."""
+    client.post("/api/bookings", json={"seat_id": seat_id}, headers=_headers(token))
+    booking = _wait_for_ticket(client, token, seat_id)
+    if booking is None or booking["ticket_status"] != "ready":
+        pytest.skip("Worker nahi chal raha")
+
+    from database import SessionLocal
+    from models import Booking
+
+    db = SessionLocal()
+    try:
+        return booking, db.get(Booking, booking["id"]).qr_token
+    finally:
+        db.close()
+
+
+def test_valid_ticket_checks_in(client, tokens, role_tokens, free_seat):
+    seat_id = free_seat["id"]
+    _, qr = _booked_with_ticket(client, tokens[0], seat_id)
+
+    res = client.post(
+        "/api/checkin", json={"token": qr}, headers=_headers(role_tokens["organizer"])
+    ).json()
+
+    assert res["ok"] is True
+    assert res["reason"] == "checked_in"
+    assert res["seat_label"]
+    assert res["checked_in_at"]
+
+
+def test_same_qr_cannot_be_used_twice(client, tokens, role_tokens, free_seat):
+    """
+    ⭐ Ye phase ka core test.
+
+    Do log ek hi QR ka screenshot leke alag gates pe jaayein — dono andar
+    nahi jaane chahiye.
+    """
+    seat_id = free_seat["id"]
+    _, qr = _booked_with_ticket(client, tokens[0], seat_id)
+    gate = _headers(role_tokens["organizer"])
+
+    first = client.post("/api/checkin", json={"token": qr}, headers=gate).json()
+    second = client.post("/api/checkin", json={"token": qr}, headers=gate).json()
+
+    assert first["ok"] is True
+    assert second["ok"] is False
+    assert second["reason"] == "already_checked_in"
+    # Duplicate pe "kab" bhi milna chahiye — gate pe yahi poocha jata hai
+    assert second["checked_in_at"] == first["checked_in_at"]
+
+
+def test_concurrent_scans_admit_exactly_one(client, tokens, role_tokens, free_seat):
+    """
+    ⭐ Asli race — 10 gates ek saath.
+
+    Wahi "exactly once" problem jo seat booking me thi, alag kapdon me.
+    """
+    seat_id = free_seat["id"]
+    _, qr = _booked_with_ticket(client, tokens[0], seat_id)
+    gate = _headers(role_tokens["organizer"])
+
+    def scan(_):
+        return client.post("/api/checkin", json={"token": qr}, headers=gate).json()["reason"]
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        reasons = list(pool.map(scan, range(10)))
+
+    assert reasons.count("checked_in") == 1, f"Ek se zyada entry mili: {reasons}"
+    assert reasons.count("already_checked_in") == 9
+
+
+def test_invalid_token_is_rejected(client, role_tokens):
+    res = client.post(
+        "/api/checkin",
+        json={"token": "this-token-does-not-exist-at-all"},
+        headers=_headers(role_tokens["organizer"]),
+    ).json()
+
+    assert res["ok"] is False
+    assert res["reason"] == "invalid_ticket"
+    # ⚠️ Koi detail leak nahi honi chahiye — warna tokens brute-force ho sakte hain
+    assert res["booking_id"] is None
+    assert res["seat_label"] is None
+
+
+def test_attendee_cannot_scan_tickets(client, tokens, role_tokens, free_seat):
+    """Gate portal sirf organizer/admin ke liye hai."""
+    seat_id = free_seat["id"]
+    _, qr = _booked_with_ticket(client, tokens[0], seat_id)
+
+    res = client.post(
+        "/api/checkin", json={"token": qr}, headers=_headers(role_tokens["attendee"])
+    )
+    assert res.status_code == 403
+
+
+def test_cancelled_booking_cannot_check_in(client, tokens, role_tokens, free_seat):
+    seat_id = free_seat["id"]
+    booking, qr = _booked_with_ticket(client, tokens[0], seat_id)
+
+    client.delete(f"/api/bookings/{booking['id']}", headers=_headers(tokens[0]))
+
+    res = client.post(
+        "/api/checkin", json={"token": qr}, headers=_headers(role_tokens["organizer"])
+    ).json()
+    assert res["ok"] is False
+    assert res["reason"] == "booking_cancelled"
+
+
+def test_checkin_stats(client, role_tokens):
+    res = client.get(
+        "/api/checkin/events/1/stats", headers=_headers(role_tokens["admin"])
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["tickets_sold"] >= body["checked_in"]
+    assert body["remaining"] == body["tickets_sold"] - body["checked_in"]

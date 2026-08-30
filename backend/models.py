@@ -114,8 +114,17 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    # ⚠️ foreign_keys explicitly dena ZAROORI hai.
+    #
+    # Booking me ab DO foreign keys users ko point karte hain:
+    #   user_id       -> kisne book kiya
+    #   checked_in_by -> kis staff ne gate pe scan kiya
+    #
+    # SQLAlchemy khud tay nahi kar sakta ki "user ki bookings" kaunse
+    # column se joduon. Bina iske app start hote hi ye error deta hai:
+    #   "there are multiple foreign key paths linking the tables"
     bookings: Mapped[list["Booking"]] = relationship(
-        back_populates="user", passive_deletes=True
+        back_populates="user", passive_deletes=True, foreign_keys="Booking.user_id"
     )
 
     __table_args__ = (
@@ -295,7 +304,7 @@ class Booking(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    user: Mapped["User"] = relationship(back_populates="bookings")
+    user: Mapped["User"] = relationship(back_populates="bookings", foreign_keys=[user_id])
     seat: Mapped["Seat"] = relationship(back_populates="bookings")
 
     __table_args__ = (

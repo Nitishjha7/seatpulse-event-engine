@@ -11,6 +11,7 @@ import Events from './pages/Events'
 import MockCheckout from './pages/MockCheckout'
 import MyBookings from './pages/MyBookings'
 import PaymentReturn from './pages/PaymentReturn'
+import GatePortal from './pages/gate/GatePortal'
 import CreateEvent from './pages/organizer/CreateEvent'
 import MyEvents from './pages/organizer/MyEvents'
 import Profile from './pages/Profile'
@@ -73,6 +74,14 @@ export default function App() {
             element={
               <RequireRole roles={['organizer', 'admin']}>
                 <CreateEvent />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="gate"
+            element={
+              <RequireRole roles={['organizer', 'admin']}>
+                <GatePortal />
               </RequireRole>
             }
           />
