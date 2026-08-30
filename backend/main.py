@@ -13,7 +13,7 @@ from config import settings
 from database import SessionLocal, get_db
 from models import Event, Seat
 from redis_client import ping as redis_ping
-from routers import admin, bookings, events, organizer, payments, seats
+from routers import admin, bookings, checkin, events, organizer, payments, seats
 from routers import auth as auth_router
 from websocket import manager, start_subscriber
 
@@ -97,6 +97,7 @@ app.include_router(events.router)
 app.include_router(seats.router)
 app.include_router(bookings.router)
 app.include_router(payments.router)
+app.include_router(checkin.router)
 
 
 @app.websocket("/ws/events/{event_id}")

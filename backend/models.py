@@ -277,6 +277,22 @@ class Booking(Base):
     ticket_generated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    # ---- Check-in (Phase 13) ----
+    #
+    # NULL = abhi tak andar nahi aaya. Ye NULL-ness hi hamara guard hai:
+    # check-in ka UPDATE `WHERE checked_in_at IS NULL` se hota hai, to do
+    # gates ek saath scan karein to sirf ek jeetega.
+    #
+    # Alag boolean `is_checked_in` rakhte to "kab" wali jaankari kho jaati,
+    # aur wo dispute me sabse zaroori hoti hai.
+    checked_in_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Kis staff member ne scan kiya — audit ke liye
+    checked_in_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     user: Mapped["User"] = relationship(back_populates="bookings")

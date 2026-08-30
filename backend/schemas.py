@@ -249,3 +249,33 @@ class PaymentOut(ORMModel):
     failure_reason: str | None
     expires_at: datetime
     created_at: datetime
+
+
+# ---------- Check-in (Phase 13) ----------
+
+class CheckInRequest(BaseModel):
+    token: str = Field(..., min_length=8, max_length=64)
+
+
+class CheckInResult(BaseModel):
+    """
+    Gate ka jawab.
+
+    ⚠️ `ok` field response body me hai, HTTP status me nahi. Gate pe khada
+    banda status code nahi dekhta — use ek saaf jawab chahiye, aur uske
+    saath wo jaankari jo dispute me kaam aaye (kab, kisne).
+    """
+    ok: bool
+    # checked_in | already_checked_in | invalid_ticket | booking_cancelled | ticket_not_issued
+    reason: str
+
+    booking_id: int | None = None
+    booking_ref: str | None = None
+    seat_label: str | None = None
+    event_name: str | None = None
+    attendee_name: str | None = None
+
+    checked_in_at: datetime | None = None
+    already_checked_in: bool = False
+    # Kisne scan kiya — duplicate ke case me "pehle kisne kiya tha"
+    scanned_by: str | None = None
