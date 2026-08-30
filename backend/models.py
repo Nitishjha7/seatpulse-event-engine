@@ -17,6 +17,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    func,
     Index,
     Integer,
     Numeric,
@@ -43,6 +44,18 @@ SEAT_BOOKED = "booked"
 # Alag status isliye ki dusre users ko grid me "purchase ho rahi hai" dikhe,
 # aur cleanup logic ise locked se alag treat kar sake.
 SEAT_PAYMENT_PENDING = "payment_pending"
+# Ek group booking ne hold kiya hai (Phase 17).
+#
+# ⚠️ Ye `locked` se ALAG hona zaroori hai, sirf rang badalne ke liye nahi.
+#
+# `locked` aur `payment_pending` seats ko lazy cleanup (`release_expired_locks`)
+# TTL nikalne par chupchaap `available` kar deta hai. Group seats ke saath
+# aisa karna GALAT hoga: unme se kuch logon ka **paisa kat chuka** hota hai.
+# Unhe chhodne ka matlab refund bhi hai, aur wo faisla ek background job
+# leta hai — koi read request nahi.
+#
+# Isliye lazy cleanup is status ko chhoota hi nahi.
+SEAT_GROUP_HELD = "group_held"
 
 # Booking ki possible haalat
 BOOKING_PENDING = "pending"
@@ -83,7 +96,28 @@ ROLE_ADMIN = "admin"           # poore platform ka access
 
 ALL_ROLES = (ROLE_ATTENDEE, ROLE_ORGANIZER, ROLE_ADMIN)
 
-ALL_SEAT_STATUSES = (SEAT_AVAILABLE, SEAT_LOCKED, SEAT_PAYMENT_PENDING, SEAT_BOOKED)
+# ---- Group booking (Phase 17) ----
+
+GROUP_COLLECTING = "collecting"   # link share ho chuka, paise aa rahe hain
+GROUP_CONFIRMED = "confirmed"     # sabne pay kiya, seats pakki
+GROUP_EXPIRED = "expired"         # deadline nikal gayi, sab seats chhoot gayi
+GROUP_CANCELLED = "cancelled"     # banane wale ne khud cancel kiya
+
+ALL_GROUP_STATUSES = (GROUP_COLLECTING, GROUP_CONFIRMED, GROUP_EXPIRED, GROUP_CANCELLED)
+
+SHARE_UNPAID = "unpaid"
+SHARE_PAID = "paid"
+SHARE_REFUNDED = "refunded"       # group toota, paisa wapas
+
+ALL_SHARE_STATUSES = (SHARE_UNPAID, SHARE_PAID, SHARE_REFUNDED)
+
+ALL_SEAT_STATUSES = (
+    SEAT_AVAILABLE,
+    SEAT_LOCKED,
+    SEAT_PAYMENT_PENDING,
+    SEAT_BOOKED,
+    SEAT_GROUP_HELD,
+)
 SEAT_STATUS_SQL = ", ".join(repr(s) for s in ALL_SEAT_STATUSES)
 
 
@@ -434,3 +468,126 @@ class Payment(Base):
 
     def __repr__(self) -> str:
         return f"<Payment {self.id} {self.status} {self.amount}>"
+
+
+class GroupBooking(Base):
+    """
+    Ek "sab saath baithenge" wali booking — N seats, N alag payments.
+
+    ---- Ye alag table kyu hai ----
+
+    Seedha rasta ye lagta hai ki N normal bookings bana do aur unhe ek
+    `group_id` se jod do. Wo galat hai, kyunki booking ka matlab hi hai
+    "seat pakki ho gayi". Group me seat kisi ki bhi pakki nahi hoti jab
+    tak SABKA paisa na aa jaye.
+
+    To beech ki ek haalat chahiye: seats roki hui hain, kuch paise aa
+    chuke hain, faisla abhi baaki hai. Wahi ye table hai.
+
+    Bookings tabhi banti hain jab group `confirmed` hota hai — aur tab ek
+    saath sabki.
+    """
+
+    __tablename__ = "group_bookings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[int] = mapped_column(
+        ForeignKey("events.id", ondelete="CASCADE"), index=True
+    )
+    created_by: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(16), default=GROUP_COLLECTING, nullable=False, index=True
+    )
+
+    # Link me jaane wala secret.
+    #
+    # Group id (1, 2, 3...) NAHI bhej sakte — koi bhi id badal ke doosre
+    # logon ke group me ghus jata. Wahi galti Phase 12 me ticket QR ke
+    # saath ho sakti thi; wahi hal yahan bhi hai.
+    share_token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+
+    # Iske baad group toot jata hai aur seats chhoot jaati hain.
+    #
+    # Ye Redis TTL se NAHI aata (jaise single seat hold aata hai). 30 minute
+    # ka hold Redis key pe rakhna galat hai: expire hone par Redis chupchaap
+    # key uda deta hai aur kisi ko refund karne ka mauka hi nahi milta.
+    # Yahan expiry ek FAISLA hai, isliye database me hai aur ek job ise
+    # uthata hai.
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    settled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    event: Mapped["Event"] = relationship()
+    creator: Mapped["User"] = relationship()
+    shares: Mapped[list["GroupShare"]] = relationship(
+        back_populates="group", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN (" + ", ".join(repr(x) for x in ALL_GROUP_STATUSES) + ")",
+            name="ck_group_status",
+        ),
+    )
+
+
+class GroupShare(Base):
+    """
+    Group ki ek seat + uska hissa.
+
+    Har share ek banda claim karta hai aur apna paisa khud deta hai.
+    """
+
+    __tablename__ = "group_shares"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    group_id: Mapped[int] = mapped_column(
+        ForeignKey("group_bookings.id", ondelete="CASCADE"), index=True
+    )
+    seat_id: Mapped[int] = mapped_column(
+        ForeignKey("seats.id", ondelete="CASCADE"), index=True
+    )
+
+    # Kisne ye seat li. NULL = abhi khaali hai, koi bhi le sakta hai.
+    #
+    # Nullable isliye ki link banate waqt hume pata hi nahi hota kaun-kaun
+    # aayega. Banane wala pehla share khud le leta hai.
+    claimed_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+    payment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("payments.id", ondelete="SET NULL"), nullable=True
+    )
+    # Group confirm hone par bani booking
+    booking_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bookings.id", ondelete="SET NULL"), nullable=True
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(16), default=SHARE_UNPAID, nullable=False, index=True
+    )
+    # Amount yahan FREEZE hota hai, seat se har baar padha nahi jata.
+    # Wahi wajah jo Phase 14 me thi: quote ek waada hai. Aur group me to
+    # 30 minute lag sakte hain, jisme surge kaafi badh sakta hai.
+    amount: Mapped[float] = mapped_column(Numeric(10, 2))
+
+    group: Mapped["GroupBooking"] = relationship(back_populates="shares")
+    seat: Mapped["Seat"] = relationship()
+
+    __table_args__ = (
+        # Ek seat ek group me sirf ek baar
+        UniqueConstraint("group_id", "seat_id", name="uq_group_seat"),
+        CheckConstraint(
+            "status IN (" + ", ".join(repr(x) for x in ALL_SHARE_STATUSES) + ")",
+            name="ck_share_status",
+        ),
+    )
