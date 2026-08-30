@@ -8,7 +8,9 @@ import AdminStats from './pages/admin/AdminStats'
 import Dashboard from './pages/Dashboard'
 import EventDetail from './pages/EventDetail'
 import Events from './pages/Events'
+import MockCheckout from './pages/MockCheckout'
 import MyBookings from './pages/MyBookings'
+import PaymentReturn from './pages/PaymentReturn'
 import CreateEvent from './pages/organizer/CreateEvent'
 import MyEvents from './pages/organizer/MyEvents'
 import Profile from './pages/Profile'
@@ -55,6 +57,8 @@ export default function App() {
           <Route path="events/:id" element={<EventDetail />} />
           <Route path="bookings" element={<MyBookings />} />
           <Route path="profile" element={<Profile />} />
+          <Route path="pay/:paymentId" element={<MockCheckout />} />
+          <Route path="payment/return" element={<PaymentReturn />} />
 
           <Route
             path="organizer/events"

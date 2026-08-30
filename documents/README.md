@@ -43,7 +43,8 @@ documents/
 │   ├── 07-auth-google-oauth.md
 │   ├── 08-dashboard-ui.md
 │   ├── 09-rate-limit-idempotency.md
-│   └── 10-rbac-organizer.md
+│   ├── 10-rbac-organizer.md
+│   └── 11-payments.md
 │
 └── reference/             ← command cheatsheets
     ├── docker-commands.md
@@ -80,8 +81,9 @@ Har phase ka format ek jaisa hai: **problem → approach → steps → ✅ proof
 | 08 | [Dashboard UI](phases/08-dashboard-ui.md) | Routing, shared context, ek hi WebSocket |
 | 09 | [Rate Limit + Idempotency](phases/09-rate-limit-idempotency.md) | Token bucket Lua me, per-user (per-IP nahi) |
 | 10 | [RBAC + Organizer](phases/10-rbac-organizer.md) | ⭐ Role ≠ ownership. 403 vs 404 ka farak |
+| 11 | [Payments](phases/11-payments.md) | ⭐ Webhook source of truth, redirect nahi. Idempotent fulfilment |
 
-> **Interview ke liye sabse zaroori:** 04, 06, 07. Wahan teeno defence layers aur load test se mile teen bug hain.
+> **Interview ke liye sabse zaroori:** 04, 06, 07, 11. Wahan teeno defence layers aur load test se mile teen bug hain.
 
 ---
 

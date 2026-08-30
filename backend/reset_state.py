@@ -10,13 +10,15 @@ Chalao:
 from sqlalchemy import delete, update
 
 from database import SessionLocal
-from models import SEAT_AVAILABLE, Booking, Seat
+from models import SEAT_AVAILABLE, Booking, Payment, Seat
 from redis_client import redis_client
 
 
 def reset():
     db = SessionLocal()
     try:
+        # Payments pehle — unka booking_id FK bookings ko point karta hai
+        payments = db.execute(delete(Payment)).rowcount
         bookings = db.execute(delete(Booking)).rowcount
         seats = db.execute(
             update(Seat).values(
@@ -27,7 +29,7 @@ def reset():
             )
         ).rowcount
         db.commit()
-        print(f"✅ {bookings} bookings hataye, {seats} seats available ki")
+        print(f"✅ {payments} payments, {bookings} bookings hataye, {seats} seats available ki")
     finally:
         db.close()
 

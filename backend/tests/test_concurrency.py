@@ -541,3 +541,147 @@ def test_version_increments_on_change(client, tokens, free_seat):
 
     client.post("/api/bookings", json={"seat_id": seat_id}, headers=_headers(token))
     assert client.get(f"/api/seats/{seat_id}").json()["version"] > after_lock
+
+
+# ---------------------------------------------------------------------------
+# Payments
+# ---------------------------------------------------------------------------
+
+def _checkout(client, token, seat_id):
+    """Seat hold karke checkout shuru karo — helper."""
+    client.post(f"/api/seats/{seat_id}/lock", headers=_headers(token))
+    return client.post(
+        "/api/payments/checkout", json={"seat_id": seat_id}, headers=_headers(token)
+    )
+
+
+def test_checkout_moves_seat_to_payment_pending(client, tokens, free_seat):
+    """Checkout ke baad seat hold se aage badh jaati hai — par booked NAHI."""
+    seat_id = free_seat["id"]
+
+    res = _checkout(client, tokens[0], seat_id)
+    assert res.status_code == 201
+    assert res.json()["provider"] in ("mock", "stripe")
+
+    seat = client.get(f"/api/seats/{seat_id}").json()
+    assert seat["status"] == "payment_pending"
+
+    # ⭐ Sabse zaroori: abhi tak koi booking nahi bani
+    mine = client.get("/api/bookings", headers=_headers(tokens[0])).json()
+    assert not [b for b in mine if b["seat_id"] == seat_id and b["status"] == "confirmed"]
+
+
+def test_another_user_cannot_checkout_held_seat(client, tokens, free_seat):
+    """Ek user ka hold, dusre ka checkout — 409."""
+    seat_id = free_seat["id"]
+    _checkout(client, tokens[0], seat_id)
+
+    res = client.post(
+        "/api/payments/checkout", json={"seat_id": seat_id}, headers=_headers(tokens[1])
+    )
+    assert res.status_code == 409
+
+
+def test_successful_payment_creates_exactly_one_booking(client, tokens, free_seat):
+    """Happy path — payment succeed, booking bani, seat booked."""
+    seat_id = free_seat["id"]
+    token = tokens[0]
+
+    payment_id = _checkout(client, token, seat_id).json()["payment_id"]
+
+    res = client.post(
+        f"/api/payments/{payment_id}/simulate",
+        json={"outcome": "success"},
+        headers=_headers(token),
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "succeeded"
+    assert body["booking_id"] is not None
+
+    assert client.get(f"/api/seats/{seat_id}").json()["status"] == "booked"
+
+    mine = client.get("/api/bookings", headers=_headers(token)).json()
+    confirmed = [b for b in mine if b["seat_id"] == seat_id and b["status"] == "confirmed"]
+    assert len(confirmed) == 1
+
+
+def test_fulfilment_is_idempotent(client, tokens, free_seat):
+    """
+    ⭐ Webhooks AT-LEAST-ONCE hote hain — gateway same event do baar bhej
+    sakta hai. Dusri baar naya kaam nahi, wahi booking wapas milni chahiye.
+    """
+    seat_id = free_seat["id"]
+    token = tokens[0]
+
+    payment_id = _checkout(client, token, seat_id).json()["payment_id"]
+
+    first = client.post(
+        f"/api/payments/{payment_id}/simulate",
+        json={"outcome": "success"},
+        headers=_headers(token),
+    ).json()
+
+    second = client.post(
+        f"/api/payments/{payment_id}/simulate",
+        json={"outcome": "success"},
+        headers=_headers(token),
+    ).json()
+
+    assert first["booking_id"] == second["booking_id"], "Dusri baar nayi booking ban gayi!"
+
+    # DB me bhi ek hi
+    mine = client.get("/api/bookings", headers=_headers(token)).json()
+    assert len([b for b in mine if b["seat_id"] == seat_id and b["status"] == "confirmed"]) == 1
+
+
+def test_failed_payment_releases_the_seat(client, tokens, free_seat):
+    """Payment fail — seat wapas available, koi booking nahi."""
+    seat_id = free_seat["id"]
+    token = tokens[0]
+
+    payment_id = _checkout(client, token, seat_id).json()["payment_id"]
+
+    res = client.post(
+        f"/api/payments/{payment_id}/simulate",
+        json={"outcome": "fail"},
+        headers=_headers(token),
+    ).json()
+    assert res["status"] == "failed"
+    assert res["booking_id"] is None
+
+    assert client.get(f"/api/seats/{seat_id}").json()["status"] == "available"
+
+    mine = client.get("/api/bookings", headers=_headers(token)).json()
+    assert not [b for b in mine if b["seat_id"] == seat_id and b["status"] == "confirmed"]
+
+
+def test_cannot_see_or_settle_someone_elses_payment(client, tokens, free_seat):
+    """IDOR — dusre ka payment na dikhe, na settle ho."""
+    seat_id = free_seat["id"]
+    payment_id = _checkout(client, tokens[0], seat_id).json()["payment_id"]
+
+    attacker = _headers(tokens[1])
+    assert client.get(f"/api/payments/{payment_id}", headers=attacker).status_code == 404
+    assert client.post(
+        f"/api/payments/{payment_id}/simulate", json={"outcome": "success"}, headers=attacker
+    ).status_code == 404
+
+
+def test_webhook_rejects_bad_signature(client):
+    """
+    ⭐ Webhook endpoint authenticated nahi hai — signature hi uska auth hai.
+
+    Bina iske koi bhi POST maar ke free ticket le leta.
+    """
+    res = client.post(
+        "/api/payments/webhook",
+        content=b'{"type":"checkout.session.completed"}',
+        headers={"stripe-signature": "t=1,v1=deadbeef"},
+    )
+    assert res.status_code == 400
+
+
+def test_webhook_without_signature_is_rejected(client):
+    res = client.post("/api/payments/webhook", content=b"{}")
+    assert res.status_code == 400

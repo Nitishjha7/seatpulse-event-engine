@@ -16,7 +16,7 @@ function formatTime(seconds) {
 export default function HoldCard({
   seat,
   secondsLeft,
-  onConfirm,
+  onPay,
   onRelease,
   booking,
   message,
@@ -61,18 +61,19 @@ export default function HoldCard({
           </p>
 
           <p className="mt-4 text-xs leading-relaxed text-slate-500">
-            Ye seat tumhare naam hold hai. Time khatam hone par apne aap wapas
-            available ho jayegi — chahe tum browser band hi kyu na kar do.
+            Ye seat tumhare naam hold hai. Booking payment complete hone par
+            hi banegi — aur time khatam hone par seat apne aap wapas available
+            ho jayegi, chahe tum browser band hi kyu na kar do.
           </p>
 
           <button
-            onClick={onConfirm}
+            onClick={onPay}
             disabled={booking}
             className="mt-4 w-full rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold
                        transition hover:bg-violet-500 disabled:cursor-not-allowed
                        disabled:opacity-50"
           >
-            {booking ? 'Booking…' : 'Confirm Booking'}
+            {booking ? 'Redirecting…' : `Pay ₹${seat.price}`}
           </button>
 
           <button

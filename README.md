@@ -71,6 +71,8 @@ seatpulse-event-engine/
 │   ├── redis_client.py     # Seat locking (SET NX EX + Lua release)
 │   ├── rate_limit.py       # Token bucket in Lua
 │   ├── idempotency.py      # Replay-safe POST handling
+│   ├── payments.py         # Gateway providers + webhook signature verification
+│   ├── reconcile_payments.py # Safety net for missed webhooks
 │   ├── websocket.py        # Connection manager + Redis pub/sub fan-out
 │   ├── routers/            # auth, events, seats, bookings, organizer, admin
 │   ├── tests/              # Concurrency + auth test suite
@@ -107,6 +109,16 @@ seatpulse-event-engine/
 - **Passwords** are hashed with bcrypt (deliberately slow, salt included).
 - **Google OAuth** uses the Authorization Code flow — the code is exchanged for user info server-to-server, so `client_secret` never reaches the browser and no token ever appears in a URL. Leave `GOOGLE_CLIENT_ID` empty and the button simply disappears; email/password keeps working.
 
+### Payments
+
+Booking is confirmed by a **signature-verified webhook**, never by the browser redirect. That redirect is only a "thank you" page: if a user pays and closes the tab it never arrives, yet the booking still happens — and someone opening the success URL directly gets nothing, because the page only *asks* for status rather than granting it.
+
+The seat moves `locked → payment_pending → booked`, and falls back to `available` if the payment fails or the window expires. Fulfilment is **idempotent** — webhooks are at-least-once, so a repeated event returns the original booking instead of creating a second one, enforced by a unique `provider_ref`. Signature verification is HMAC-SHA256 over the raw body with a timestamp tolerance (blocking replays) and `compare_digest` (blocking timing attacks).
+
+Webhooks can still be missed, so [`reconcile_payments.py`](backend/reconcile_payments.py) sweeps expired pending payments, asks the gateway what actually happened, and either fulfils or releases the seat. The webhook is the fast path; reconciliation is the safety net.
+
+Card details never reach the server — checkout is hosted, which keeps the application out of PCI scope. **Leave `STRIPE_SECRET_KEY` empty and a mock provider takes over**, so the whole flow is demonstrable from a fresh clone without any gateway account.
+
 ### Authorization
 
 Three flat roles — `attendee`, `organizer`, `admin` — enforced by a `require_role(...)` dependency and backed by a check constraint on the column, so a typo can never become a role.
@@ -136,6 +148,9 @@ The frontend hides organizer and admin navigation by role, but that is **UX only
 | `GET` | `/api/bookings` | Your bookings |
 | `DELETE` | `/api/bookings/{id}` | Cancel your booking, releasing the seat |
 | `GET` | `/api/health` | Service, database and Redis status |
+| `POST` | `/api/payments/checkout` | Start a checkout session for a held seat |
+| `POST` | `/api/payments/webhook` | Gateway callback — signature verified, unauthenticated by necessity |
+| `GET` | `/api/payments/{id}` | Payment status (the return page polls this) |
 | `WS` | `/ws/events/{id}` | Live seat updates — pushed on every lock, release, booking or cancellation |
 
 **Auth**
@@ -218,7 +233,7 @@ docker compose --profile loadtest run --rm locust \
     --host http://backend:8000
 
 docker compose exec backend python verify_integrity.py
-docker compose exec backend pytest tests/ -v         # 29 auth + RBAC + concurrency tests
+docker compose exec backend pytest tests/ -v         # 37 tests: auth, RBAC, payments, concurrency
 ```
 
 ### What load testing actually caught
@@ -262,13 +277,13 @@ Result on the same 200-user flash sale: **1,250 requests with 58 failures and a 
 - [x] Idempotency keys — a replayed booking returns the original result instead of creating a second one
 - [x] RBAC — attendee / organizer / admin, with ownership checked separately from role
 - [x] Organizer portal — create events with price-tier seat generation, track sales; admin platform stats
+- [x] Payments — webhook-confirmed checkout with signature verification, idempotent fulfilment, and a reconciliation job for missed webhooks
 
 ### Planned
 
 Ordered by dependency — each item leans on the ones above it. None of these are built yet.
 
 - [ ] **Background task queue** (ARQ + Redis) — QR code, PDF ticket and email generated outside the request, so checkout stays instant
-- [ ] **Payment gateway** — Razorpay/Stripe with signature-verified webhooks as the source of truth; the seat stays held until the webhook confirms
 - [ ] **QR check-in portal** — mobile scanner with an atomic `valid → checked_in` flip, so one ticket cannot pass two gates
 - [ ] **Dynamic pricing** — demand-based surge recomputed on booking events and pushed over the existing WebSocket channel
 - [ ] **Visual seat layout builder** — organizer draws rows, sections and price bands; saved as JSON and expanded into seats server-side

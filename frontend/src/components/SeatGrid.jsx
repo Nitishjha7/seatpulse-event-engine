@@ -10,6 +10,9 @@ const SEAT_STYLES = {
   available:
     'bg-emerald-500/85 text-emerald-950 hover:bg-emerald-400 hover:-translate-y-0.5 cursor-pointer',
   locked: 'bg-amber-400/80 text-amber-950 cursor-not-allowed',
+  // Payment chal raha hai — locked se alag rang, taki dusre users ko dikhe
+  // ki ye seat bikne ke kagaar pe hai, sirf hold me nahi
+  payment_pending: 'bg-orange-600/80 text-orange-50 cursor-not-allowed animate-pulse',
   booked: 'bg-rose-600/70 text-rose-100/70 cursor-not-allowed line-through',
   // Meri hold — dusre ki hold (peeli) se साफ alag dikhni chahiye
   selected:
@@ -82,6 +85,7 @@ export default function SeatGrid({ seats, selectedSeat, onSelect, currentUserId,
         <Legend className="bg-emerald-500/85" label="Available" />
         <Legend className="bg-violet-500" label="Your hold" />
         <Legend className="bg-amber-400/80" label="Held by someone else" />
+        <Legend className="bg-orange-600/80" label="Being purchased" />
         <Legend className="bg-rose-600/70" label="Booked" />
       </div>
     </section>

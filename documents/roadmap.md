@@ -46,6 +46,9 @@ React ka kaam har phase me thoda-thoda hua hai, isliye ye index:
 | Create-event form, live seat preview | `pages/organizer/CreateEvent.jsx` | [Phase 10](phases/10-rbac-organizer.md) Step 7 |
 | Organizer events + sales bar | `pages/organizer/MyEvents.jsx` | [Phase 10](phases/10-rbac-organizer.md) Step 7 |
 | Admin stats, 10s polling | `pages/admin/AdminStats.jsx` | [Phase 10](phases/10-rbac-organizer.md) Step 6 |
+| **Mock checkout page** (simulated gateway) | `pages/MockCheckout.jsx` | [Phase 11](phases/11-payments.md) Step 7 |
+| **Payment return page** — polls, decide nahi karta | `pages/PaymentReturn.jsx` | [Phase 11](phases/11-payments.md) Step 7 |
+| `payForSeat()` — redirect to gateway | `booking/BookingContext.jsx` | [Phase 11](phases/11-payments.md) Step 7 |
 
 > **Phase 7 ke aage ka plan** — 13 naye features 4 tracks me — [../README.md](../README.md) ke "Roadmap → Planned" section me hai.
 > Wahan har feature ka problem + approach likha hai. Yahan wali table sirf jo **ban chuka** hai wo track karti hai.
@@ -66,6 +69,7 @@ React ka kaam har phase me thoda-thoda hua hai, isliye ye index:
 | 8 | Dashboard UI shell (sidebar, routes, theme) | ✅ Done — [Phase 8 — Dashboard UI](phases/08-dashboard-ui.md) |
 | 9 | Rate limiting + idempotency keys | ✅ Done — [Phase 9 — Rate Limit + Idempotency](phases/09-rate-limit-idempotency.md) |
 | 10 | RBAC + organizer portal | ✅ Done — [Phase 10 — RBAC + Organizer](phases/10-rbac-organizer.md) |
+| 11 | Payments + webhooks | ✅ Done — [Phase 11 — Payments](phases/11-payments.md) |
 
 ---
 

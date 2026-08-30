@@ -23,7 +23,7 @@ export default function Dashboard() {
     message,
     selectSeat,
     releaseHold,
-    confirmBooking,
+    payForSeat,
     cancel,
     dismissLastBooking,
   } = useBooking()
@@ -48,7 +48,7 @@ export default function Dashboard() {
           <HoldCard
             seat={selectedSeat}
             secondsLeft={lockSecondsLeft}
-            onConfirm={confirmBooking}
+            onPay={payForSeat}
             onRelease={releaseHold}
             booking={booking}
             message={message}
