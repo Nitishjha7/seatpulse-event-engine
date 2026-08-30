@@ -478,7 +478,94 @@ Ye is poore jawab ka sabse important hissa hai.
 
 ---
 
-## 11. Traps — jahan "haan" bolna galat hai
+## 11. Dynamic pricing — "quote ek waada hai"
+
+Ye section chhota lagta hai par **interview me bahut chalta hai**, kyunki
+isme ek aisa faisla hai jo zyada log miss kar dete hain.
+
+### "Dynamic pricing kaise kiya?"
+
+> "Formula sabse boring hissa hai — `multiplier = 1 + (sold/total) x demand_factor`, ek `max_surge` cap ke saath. Do faisle interesting the.
+>
+> **Pehla:** seat ka `price` column kabhi update nahi hota. Wo BASE hai, aur current price hamesha usse calculate hota hai.
+>
+> **Dusra:** jab user seat hold karta hai, tabhi uska price bhi lock ho jata hai."
+
+### ⭐ "Base price update karne me kya problem thi?"
+
+Ye wo sawaal hai jahan char alag wajah gina sakte ho — aur char wajah ek se
+kahin behtar sunai deti hai:
+
+> "Char cheezein tootti:
+>
+> 1. **History mit jati** — purani booking me ₹800 likha hai, seat pe ₹1400. 'Original price kya tha' ka jawab kahin nahi bachta.
+> 2. **Write amplification** — ek booking par 500 seats ka UPDATE. Flash sale me 500 bookings matlab 250,000 row updates.
+> 3. **Naya race condition** — do parallel bookings ab price update pe bhi ladtin. Maine ek nayi contention point paida kar di hoti.
+> 4. **Compounding** — `price x 1.1` baar-baar lagega to ₹800 → ₹880 → ₹968… wo formula ka matlab hi nahi tha.
+>
+> Ab teen alag facts teen alag jagah hain: base price seat pe, multiplier calculated, aur jo actually charge hua wo booking pe."
+
+### ⭐⭐ "Checkout ke beech price badal gaya to?"
+
+**Ye poore feature ka sabse achha sawaal hai. Isko tayyar rakho.**
+
+> "Ye maine feature banane se pehle socha, kyunki ye correctness ka sawaal hai, UX ka nahi.
+>
+> User ₹1000 dekhta hai, seat hold karta hai, payment page pe jata hai. Beech me 4 seats aur bik gayi. Agar checkout ₹1400 charge kar de — to maine user se chup-chaap zyada paisa liya. Wo bug nahi, wo dhokha hai.
+>
+> Solution: quote **hold ke saath lock** ho jata hai. `seats.held_price` column me jo price dikhaya tha wahi likh dete hain. Hold chhutne ya expire hone par NULL ho jata hai."
+
+**Follow-up jo aayega — "column kyu, calculate kyu nahi?"**
+
+> "Kyunki 'us waqt price kya tha' ko baad me compute kiya hi nahi ja sakta — demand tab tak badal chuki hoti hai. Quote ek waada hai, aur waade store karne padte hain, derive nahi hote."
+
+**Follow-up 2 — "user hold-release-hold karke sasta price pakad le to?"**
+
+> "Isliye release par `held_price` NULL kar dete hain, aur lazy expiry cleanup me bhi. Naya hold matlab naya price. Ye maine specifically test kiya hai — `test_releasing_a_hold_drops_the_locked_price`."
+
+### "Payments me isse related koi bug mila?"
+
+Ye khud bata do — self-caught bug batana bahut strong lagta hai:
+
+> "Ek chhupi hui galti thi. Maine pehle `price_now()` ko do baar call kiya tha — ek baar payment row banane me, ek baar gateway session banane me. Beech me hold expire ho sakta tha, aur tab gateway ₹1400 charge karta jabki mere DB me ₹1000 likha hota.
+>
+> Wo mismatch reconciliation job me hi pakda jata — tab tak user ka paisa kat chuka hota. Ab ek hi baar quote nikalta hai aur dono jagah wahi jata."
+
+### "WebSocket pe price update kaise bheja?"
+
+> "Seedha rasta hota har seat ka naya price broadcast karna — par 500 seats wale event me ek booking = 500 messages. Flash sale me wo khud ek DoS hai.
+>
+> Asli baat ye hai ki multiplier **poore event ka ek hi hai**, aur base price frontend ke paas pehle se hai. To ek event-level `pricing_update` message bhejta hoon. Ek message vs 500, result same."
+
+**Follow-up — "phir frontend base x multiplier kar leta na?"**
+
+Yahan ek achhi detail hai jo interviewer ko surprise karti hai:
+
+> "Maine try kiya tha, par nahi rakha. JavaScript ka `Math.round(100.5)` 101 deta hai, Python ka `round(100.5)` 100 — banker's rounding. Ties par dono alag jawab dete hain.
+>
+> Matlab UI ₹1010 dikhata aur server ₹1000 charge karta. ₹10 chhota lagta hai, par is feature ki poori buniyaad hi 'jo dikha wahi kata' hai — wahi toot jata.
+>
+> To banner turant update hota hai (wahi user dekhta hai), aur exact prices 400ms debounce ke baad server se aate hain."
+
+### "UI me urgency kaise dikhayi?"
+
+> "Sirf jab sach ho. 'N seats left at this price' tabhi dikhta hai jab server ne actually calculate kiya ho ki N seats me price badhega — aur wo loop chala kar nikalta hai, formula se andaza nahi lagata.
+>
+> Agar price abhi nahi badhne wala, ya max surge aa chuka hai, to wo line **dikhati hi nahi**. Jhoothi urgency banane se behtar khaali jagah hai. Wahi 'price locked' badge ke saath — wo tabhi aata hai jab market price actually locked price se upar ho."
+
+### Rapid fire
+
+| Sawaal | Ek-line jawab |
+|---|---|
+| Default on ya off? | Off. Free community meetup pe surge bhaddha lagta hai — organizer khud on kare |
+| `max_surge` kyu chahiye? | Bina cap ke pricing bekaboo lagti hai. Aur `demand_factor` ka upper bound bhi hai — galti se 50 type ho jaana bahut mehnga |
+| Organizer base price edit kar sakta hai? | Nahi. Wo purani bookings ko jhootha bana deta. Surge knobs edit kar sakta hai — wo sirf aage ki bookings pe lagte hain |
+| Multiplier cache kyu nahi kiya? | 2 count queries hain, per-seat nahi. Aur galat cached price dikhana us saving se kahin mehnga hai |
+| Time-based surge kyu nahi? | Bina asli historical data ke wo sirf random constants hote. Jo nahi maapa, use claim nahi karta |
+
+---
+
+## 12. Traps — jahan "haan" bolna galat hai
 
 ### "Kafka use kar sakte the na?"
 
@@ -502,7 +589,7 @@ Ye is poore jawab ka sabse important hissa hai.
 
 ---
 
-## 12. Rapid fire
+## 13. Rapid fire
 
 | Sawaal | Ek-line jawab |
 |---|---|
@@ -522,7 +609,7 @@ Ye is poore jawab ka sabse important hissa hai.
 
 ---
 
-## 13. Whiteboard — architecture aise banao
+## 14. Whiteboard — architecture aise banao
 
 Isi order me banao, bolte hue:
 
@@ -543,7 +630,7 @@ Bolte waqt teen baatein zaroor:
 
 ---
 
-## 14. Tum kya poochho
+## 15. Tum kya poochho
 
 Interview do-tarfa hai. Ye poochne se pata chalta hai ki tum production ke bare me sochte ho:
 
@@ -574,4 +661,5 @@ Aur ek line jo kabhi mat bhoolna:
 - [Phase 4 — Redis Locking](phases/04-redis-locking.md) — locking ka design
 - [Phase 6 — Load Testing](phases/06-load-testing.md) — load test aur pehla bug
 - [Phase 7 — Auth + Google OAuth](phases/07-auth-google-oauth.md) — auth + baaki do bug
+- [Phase 14 — Dynamic Pricing](phases/14-dynamic-pricing.md) — price lock ka poora design
 - [testing.md](reference/testing.md) — sab kuch demo karne ke commands

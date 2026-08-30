@@ -633,7 +633,40 @@ Aakhir me browser me ek round: login → seat hold → book → cancel → logou
 | Bheji hui emails | `docker compose exec worker ls /app/tickets/outbox/` |
 | Gate check-in (browser) | organizer se login → sidebar → **Gate Check-in** |
 | QR token nikalo (manual test) | `docker compose exec db psql -U seatpulse -d seatpulse -t -A -c "SELECT qr_token FROM bookings WHERE id=<ID>;"` |
+| Surge on wala event | organizer se **Create Event** → "Demand-based pricing" checkbox |
+| Locked price dekho | `docker compose exec db psql -U seatpulse -d seatpulse -c "SELECT id, price, held_price, status FROM seats WHERE held_price IS NOT NULL;"` |
 | Logs | `docker compose logs -f backend` |
+
+---
+
+## Dynamic pricing manually test karna
+
+Ye do browser windows wala test hai, aur **isme dekhna hai ki price NA badle**.
+
+1. Organizer se login → **Create Event**
+   - price tier: 1 row × 5 seats @ ₹1000
+   - "Demand-based pricing" **on** karo, slider poora right (sold out par +100%)
+2. Window A (`demo@seatpulse.dev`) — us event ka dashboard kholo, ek seat **hold** karo.
+   HoldCard me ₹1000 dikhega.
+3. Window B (`user1@seatpulse.dev`) — usi event me do aur seats **khareedo**.
+4. Window A dobara dekho, **bina refresh kiye**:
+   - upar surge banner `+40%` ho gaya (WebSocket se)
+   - grid me baaki seats ₹1400 dikha rahi hain
+   - **par HoldCard abhi bhi ₹1000** hai, aur uske neeche
+     "🔒 Price locked — abhi ye seat ₹1400 ki hai"
+5. Window A me **Pay** karo → charge exactly ₹1000 hona chahiye.
+
+Agar step 5 me ₹1400 kata, to price lock toota hai — wahi is feature ka
+sabse important bug hai.
+
+| Kya check kar rahe ho | Kahan dikhega |
+|---|---|
+| Surge live badh raha hai | banner ka `+N%`, bina refresh |
+| Base price nahi badla | DB me `seats.price` wahi ₹1000 |
+| Quote locked hai | `seats.held_price` = 1000, `current_price` = 1400 |
+| Charge quote se match kiya | `bookings.amount` = 1000 |
+
+**Automated version:** `pytest -k "price or surge"` (13 tests).
 
 ---
 
@@ -654,6 +687,7 @@ Aakhir me browser me ek round: login → seat hold → book → cancel → logou
 
 - [Phase 7 — Auth + Google OAuth](../phases/07-auth-google-oauth.md) — auth design + **Google credentials kaise banayein**
 - [Phase 6 — Load Testing](../phases/06-load-testing.md) — load testing ka poora detail + results
+- [Phase 14 — Dynamic Pricing](../phases/14-dynamic-pricing.md) — price lock kyu zaroori hai
 - [postgres-commands.md](postgres-commands.md) — DB queries
 - [docker-commands.md](docker-commands.md) — container commands
 - [roadmap.md](../roadmap.md) — poora plan

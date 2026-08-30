@@ -139,6 +139,18 @@ The endpoint returns `200` even when entry is refused, with `ok: false` and a re
 
 Scanning uses the browser's native `BarcodeDetector` rather than a ~200KB QR library, with manual token entry always available — needed anyway for a torn ticket or a dead phone.
 
+### Dynamic pricing
+
+Prices rise with demand — `multiplier = 1 + (sold / total) x demand_factor`, capped by a per-event `max_surge`. It is off by default; surge pricing is wrong for a free community meetup, so an organizer has to switch it on.
+
+**A seat's `price` column never changes.** It is the base, and the current price is always computed from it. Rewriting seat prices on every booking would erase the answer to "what was this originally worth", turn one booking into hundreds of row updates, add a fresh contention point between parallel bookings, and compound the multiplier on every pass. Base price, current price and the amount actually charged are three different facts, so they live in three different places.
+
+**The quoted price is locked when the seat is held.** Without that, a user sees Rs.1000, holds the seat, and gets charged Rs.1400 because four other people bought in the meantime — money taken quietly above what was shown. Holding writes `seats.held_price`; releasing or expiring the hold clears it, so hold-release-hold cannot farm the opening price forever. Every price decision routes through one `price_now()` helper, and payments read it once so the payment row and the gateway session can never disagree.
+
+Because the multiplier is one number for the whole event, a booking broadcasts a single event-level `pricing_update` over the existing WebSocket channel rather than one message per seat. The browser does **not** recompute prices from it: JavaScript rounds `100.5` to `101` and Python to `100`, so a client-side calculation would display a price the server would not charge. The banner updates instantly; exact prices come from the server.
+
+Verified end to end: one user held a seat at Rs.1000, four more bookings pushed the market to Rs.1400, and the held seat still charged exactly Rs.1000.
+
 ### Authorization
 
 Three flat roles — `attendee`, `organizer`, `admin` — enforced by a `require_role(...)` dependency and backed by a check constraint on the column, so a typo can never become a role.
@@ -216,8 +228,8 @@ WebSocket messages are fanned out through a Redis pub/sub channel per event, so 
 | Table | Purpose |
 |---|---|
 | `users` | Accounts — bcrypt password (nullable for Google users), `google_id`, avatar |
-| `events` | Name, venue, start time, total seats, description, category |
-| `seats` | Position, price, `status`, **`version`** (optimistic lock), lock holder + expiry |
+| `events` | Name, venue, start time, total seats, description, category, surge pricing settings |
+| `seats` | Position, **base** price, `status`, **`version`** (optimistic lock), lock holder + expiry, `held_price` (quote locked at hold time) |
 | `bookings` | Links user ↔ seat, with a **partial unique index** enforcing one confirmed booking per seat |
 
 ## 📊 Load Test Results
@@ -255,7 +267,7 @@ docker compose --profile loadtest run --rm locust \
     --host http://backend:8000
 
 docker compose exec backend python verify_integrity.py
-docker compose exec backend pytest tests/ -v         # 49 tests: auth, RBAC, payments, tickets, check-in, concurrency
+docker compose exec backend pytest tests/ -v         # 63 tests: auth, RBAC, payments, tickets, check-in, pricing, concurrency
 ```
 
 ### What load testing actually caught
@@ -302,12 +314,12 @@ Result on the same 200-user flash sale: **1,250 requests with 58 failures and a 
 - [x] Payments — webhook-confirmed checkout with signature verification, idempotent fulfilment, and a reconciliation job for missed webhooks
 - [x] Background worker (ARQ) — QR code, PDF ticket and email generated outside the request, with retries and a re-queue safety net
 - [x] Gate check-in — camera QR scanning with an atomic single-entry guard, verified with 10 concurrent scans
+- [x] Dynamic pricing — demand-based surge pushed over the existing WebSocket channel, with the quoted price locked at hold time so checkout never costs more than what was shown
 
 ### Planned
 
 Ordered by dependency — each item leans on the ones above it. None of these are built yet.
 
-- [ ] **Dynamic pricing** — demand-based surge recomputed on booking events and pushed over the existing WebSocket channel
 - [ ] **Visual seat layout builder** — organizer draws rows, sections and price bands; saved as JSON and expanded into seats server-side
 - [ ] **Group booking + split payment** — shareable payment link with a deadline; every share paid or the whole group's seats are released
 - [ ] **Natural-language seat finder** — an LLM turns *"3 seats together under ₹1500, centred on the stage"* into structured filters that run as an ordinary query

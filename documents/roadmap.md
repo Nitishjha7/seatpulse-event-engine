@@ -51,6 +51,10 @@ React ka kaam har phase me thoda-thoda hua hai, isliye ye index:
 | `payForSeat()` — redirect to gateway | `booking/BookingContext.jsx` | [Phase 11](phases/11-payments.md) Step 7 |
 | Ticket download via blob (header + navigation) | `api.js`, `components/BookingsList.jsx` | [Phase 12](phases/12-background-tickets.md) Step 8 |
 | **Camera QR scan** — native BarcodeDetector, no library | `pages/gate/GatePortal.jsx` | [Phase 13](phases/13-gate-checkin.md) Step 6 |
+| **Live surge banner** + honest "N seats left at this price" | `components/PricingBanner.jsx` | [Phase 14](phases/14-dynamic-pricing.md) |
+| `seatPrice()` — ek hi jagah price ka faisla | `booking/BookingContext.jsx` | [Phase 14](phases/14-dynamic-pricing.md) |
+| Price client-side calculate **nahi** karte (JS vs Python rounding) | `booking/BookingContext.jsx` | [Phase 14](phases/14-dynamic-pricing.md) |
+| Surge toggle + slider in create-event | `pages/organizer/CreateEvent.jsx` | [Phase 14](phases/14-dynamic-pricing.md) |
 
 > **Phase 7 ke aage ka plan** — 13 naye features 4 tracks me — [../README.md](../README.md) ke "Roadmap → Planned" section me hai.
 > Wahan har feature ka problem + approach likha hai. Yahan wali table sirf jo **ban chuka** hai wo track karti hai.
@@ -74,6 +78,7 @@ React ka kaam har phase me thoda-thoda hua hai, isliye ye index:
 | 11 | Payments + webhooks | ✅ Done — [Phase 11 — Payments](phases/11-payments.md) |
 | 12 | Background queue + QR + PDF ticket | ✅ Done — [Phase 12 — Background Tickets](phases/12-background-tickets.md) |
 | 13 | Gate check-in (QR scan) | ✅ Done — [Phase 13 — Gate Check-in](phases/13-gate-checkin.md) |
+| 14 | Dynamic pricing + price lock | ✅ Done — [Phase 14 — Dynamic Pricing](phases/14-dynamic-pricing.md) |
 
 ---
 

@@ -46,7 +46,8 @@ documents/
 │   ├── 10-rbac-organizer.md
 │   ├── 11-payments.md
 │   ├── 12-background-tickets.md
-│   └── 13-gate-checkin.md
+│   ├── 13-gate-checkin.md
+│   └── 14-dynamic-pricing.md
 │
 └── reference/             ← command cheatsheets
     ├── docker-commands.md
@@ -86,6 +87,7 @@ Har phase ka format ek jaisa hai: **problem → approach → steps → ✅ proof
 | 11 | [Payments](phases/11-payments.md) | ⭐ Webhook source of truth, redirect nahi. Idempotent fulfilment |
 | 12 | [Background Tickets](phases/12-background-tickets.md) | ARQ worker, QR + PDF, outbox email. Kya background me jaana chahiye |
 | 13 | [Gate Check-in](phases/13-gate-checkin.md) | ⭐ Wahi exactly-once problem, alag kapdon me |
+| 14 | [Dynamic Pricing](phases/14-dynamic-pricing.md) | ⭐ Price lock — quote ek waada hai. Base price kabhi mat badlo |
 
 > **Interview ke liye sabse zaroori:** 04, 06, 07, 11, 13. Wahan teeno defence layers aur load test se mile teen bug hain.
 
