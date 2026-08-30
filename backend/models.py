@@ -20,6 +20,7 @@ from sqlalchemy import (
     func,
     Index,
     Integer,
+    JSON,
     Numeric,
     String,
     Text,
@@ -188,6 +189,21 @@ class Event(Base):
     # "Music", "Comedy", "Sports" — UI me tag ki tarah dikhta hai
     category: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
+    # ---- Seat layout (Phase 18) ----
+    #
+    # Venue ka naksha — sections, rows, aur aisles kahan hain.
+    #
+    # NULLABLE hai, aur ye jaan-boojh ke hai: 17 phases ke purane events
+    # me ye hai hi nahi, aur unhe todna nahi hai. NULL matlab "simple
+    # uniform grid" — frontend usi tarah render karta hai jaise pehle
+    # karta tha.
+    #
+    # Ye seats ka SOURCE OF TRUTH nahi hai. Asli seats `seats` table me
+    # hain; ye sirf naksha hai jisse wo bani thi, aur jisse grid aisles
+    # aur section headings dikha sake. Dono me farak aa jaye to seats
+    # sach hain — kyunki bookings unhi se judi hain.
+    layout: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     # ---- Dynamic pricing (Phase 14) ----
     # Off by default — purane events ka behaviour na badle.
     dynamic_pricing: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -243,6 +259,15 @@ class Seat(Base):
     # Seat ka pata: "A" row, seat 12
     row_label: Mapped[str] = mapped_column(String(4))
     seat_number: Mapped[int] = mapped_column(Integer)
+
+    # Kis section ki seat hai — "Ground", "Balcony" (Phase 18).
+    #
+    # Nullable: purane events me sections the hi nahi.
+    #
+    # Ye layout JSON se DUPLICATE lagta hai, par yahan hona zaroori hai —
+    # ticket PDF aur gate check-in ko section chahiye, aur unhe layout
+    # parse karwana galat hoga. Seat khud bata sake ki wo kahan hai.
+    section: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     price: Mapped[float] = mapped_column(Numeric(10, 2), default=0)
 

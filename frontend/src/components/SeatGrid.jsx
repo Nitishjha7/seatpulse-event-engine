@@ -1,3 +1,5 @@
+import { Fragment } from 'react'
+
 import { seatPrice } from '../booking/BookingContext'
 
 /**
@@ -45,12 +47,50 @@ function Seat({ seat, isSelected, isMine, onSelect, busy }) {
   )
 }
 
-export default function SeatGrid({ seats, selectedSeat, onSelect, currentUserId, busy }) {
+/**
+ * Layout se ek lookup banao: row label -> kis seat ke baad aisle hai.
+ *
+ * ⚠️ Layout OPTIONAL hai. Phase 18 se pehle bane events me `layout` NULL
+ * hai, aur unhe waise hi render karna hai jaise pehle hota tha. Isliye
+ * har jagah fallback rakha hai — `layout` na ho to ye khali Map deta hai
+ * aur grid uniform rows dikhata hai.
+ */
+function aisleMap(layout) {
+  const map = new Map()
+  if (!layout?.sections) return map
+
+  for (const section of layout.sections) {
+    for (const row of section.rows ?? []) {
+      if (row.aisles_after?.length) {
+        map.set(row.label, new Set(row.aisles_after))
+      }
+    }
+  }
+  return map
+}
+
+export default function SeatGrid({
+  seats,
+  selectedSeat,
+  onSelect,
+  currentUserId,
+  busy,
+  layout,
+}) {
   // Flat list ko rows me todo. Backend already sorted bhejta hai.
   const rows = seats.reduce((acc, seat) => {
     ;(acc[seat.row_label] ||= []).push(seat)
     return acc
   }, {})
+
+  const aisles = aisleMap(layout)
+
+  // Section headings tabhi dikhao jab SACH ME ek se zyada section ho.
+  //
+  // Ek hi section wale event me "Ground" likhna sirf shor hai — wo koi
+  // jaankari nahi deta. Aur purane events me section hai hi nahi.
+  const sectionNames = [...new Set(seats.map((s) => s.section).filter(Boolean))]
+  const showSections = sectionNames.length > 1
 
   return (
     <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-5">
@@ -67,23 +107,50 @@ export default function SeatGrid({ seats, selectedSeat, onSelect, currentUserId,
 
       <div className="-mx-1 overflow-x-auto px-1 pb-1">
         <div className="inline-block min-w-full space-y-2">
-          {Object.entries(rows).map(([rowLabel, rowSeats]) => (
-            <div key={rowLabel} className="flex items-center gap-1.5 sm:gap-2">
-              <span className="w-4 shrink-0 text-xs font-semibold text-slate-500">
-                {rowLabel}
-              </span>
-              {rowSeats.map((seat) => (
-                <Seat
-                  key={seat.id}
-                  seat={seat}
-                  isSelected={selectedSeat?.id === seat.id}
-                  isMine={seat.status === 'locked' && seat.locked_by === currentUserId}
-                  onSelect={onSelect}
-                  busy={busy}
-                />
-              ))}
-            </div>
-          ))}
+          {Object.entries(rows).map(([rowLabel, rowSeats], rowIndex, allRows) => {
+            const gaps = aisles.get(rowLabel)
+            const section = rowSeats[0]?.section
+            // Section badla? Heading dikhao. Pehli row par bhi.
+            const prevSection =
+              rowIndex > 0 ? rows[allRows[rowIndex - 1][0]][0]?.section : null
+            const newSection = showSections && section && section !== prevSection
+
+            return (
+              <div key={rowLabel}>
+                {newSection && (
+                  <p
+                    className="mb-1.5 mt-4 text-[10px] font-semibold uppercase
+                               tracking-[0.2em] text-slate-500 first:mt-0"
+                  >
+                    {section}
+                  </p>
+                )}
+
+                <div className="flex items-center gap-1.5 sm:gap-2">
+                  <span className="w-4 shrink-0 text-xs font-semibold text-slate-500">
+                    {rowLabel}
+                  </span>
+                  {rowSeats.map((seat) => (
+                    <Fragment key={seat.id}>
+                      <Seat
+                        seat={seat}
+                        isSelected={selectedSeat?.id === seat.id}
+                        isMine={seat.status === 'locked' && seat.locked_by === currentUserId}
+                        onSelect={onSelect}
+                        busy={busy}
+                      />
+                      {/* Aisle — sirf ek khali jagah. Yahan koi seat nahi
+                          hoti aur numbering bhi nahi rukti; ye purely
+                          dikhne ke liye hai taki venue ka shape samajh aaye. */}
+                      {gaps?.has(seat.seat_number) && (
+                        <span className="w-4 shrink-0 sm:w-5" aria-hidden="true" />
+                      )}
+                    </Fragment>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
         </div>
       </div>
 

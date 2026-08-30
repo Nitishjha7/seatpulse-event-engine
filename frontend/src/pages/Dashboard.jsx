@@ -48,6 +48,7 @@ export default function Dashboard() {
             onSelect={selectSeat}
             currentUserId={user.id}
             busy={locking}
+            layout={event?.layout}
           />
         </div>
 

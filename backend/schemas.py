@@ -87,6 +87,9 @@ class EventDetail(EventOut):
     min_price: float | None = None
     max_price: float | None = None
     pricing: PricingOut | None = None
+    # Grid isse aisles aur section headings dikhata hai.
+    # None = purana uniform event, grid pehle jaisa hi render karega.
+    layout: dict | None = None
 
 
 # ---------- Organizer (Phase 10) ----------
@@ -103,6 +106,36 @@ class PriceTier(BaseModel):
     price: float = Field(..., ge=0, le=1_000_000)
 
 
+class LayoutRow(BaseModel):
+    label: str = Field(..., min_length=1, max_length=4)
+    seats: int = Field(..., ge=1, le=60)
+    # Kis seat ke BAAD gap dikhani hai. Sirf dikhne ke liye — koi seat
+    # nahi banti, koi number skip nahi hota.
+    aisles_after: list[int] = Field(default_factory=list, max_length=10)
+
+
+class LayoutSection(BaseModel):
+    name: str = Field(..., min_length=1, max_length=40)
+    price: float = Field(..., ge=0, le=1_000_000)
+    rows: list[LayoutRow] = Field(..., min_length=1, max_length=40)
+
+
+class SeatLayout(BaseModel):
+    """
+    Venue ka naksha.
+
+    Pydantic yahan shape check karta hai (types, lengths). BUSINESS rules
+    — duplicate row labels, total seat cap, aisle position row ke andar —
+    `layout.py` me hain.
+
+    Ye bantwara jaan-boojh ke hai: shape rules schema me likhna aasan hai,
+    par "do sections me same row label nahi ho sakta" jaise rules ko poore
+    layout ka context chahiye, aur unhe test karna bina HTTP ke aasan hona
+    chahiye.
+    """
+    sections: list[LayoutSection] = Field(..., min_length=1, max_length=10)
+
+
 class EventCreate(BaseModel):
     name: str = Field(..., min_length=3, max_length=200)
     venue: str = Field(..., min_length=3, max_length=200)
@@ -110,9 +143,21 @@ class EventCreate(BaseModel):
     description: str | None = Field(None, max_length=5000)
     category: str | None = Field(None, max_length=40)
 
-    seats_per_row: int = Field(..., gt=0, le=50)
-    # Kam se kam ek tier. Total rows = sab tiers ka sum.
-    price_tiers: list[PriceTier] = Field(..., min_length=1, max_length=10)
+    # ---- Seats kaise banengi: do me se ek raasta ----
+    #
+    # `layout` diya ho to wahi chalta hai aur neeche wale do ignore ho
+    # jaate hain. Warna purana `price_tiers` wala raasta.
+    #
+    # Dono ko REQUIRED banana galat hota: simple event ke liye naksha
+    # banwana user ko sataana hai, aur layout wale ke liye seats_per_row
+    # ka koi matlab hi nahi.
+    layout: SeatLayout | None = None
+
+    seats_per_row: int = Field(10, gt=0, le=50)
+    price_tiers: list[PriceTier] = Field(
+        default_factory=lambda: [PriceTier(rows=5, price=500)],
+        max_length=10,
+    )
 
     # ---- Dynamic pricing (Phase 14) ----
     # Default OFF. Surge pricing har event ke liye theek nahi hai — free
@@ -180,6 +225,8 @@ class SeatOut(ORMModel):
     event_id: int
     row_label: str
     seat_number: int
+    # "Ground" / "Balcony" — layout wale events me. Purane events me None.
+    section: str | None = None
     price: float
     status: str
     # version client ko bhi bhejte hain — isse UI me dikhta hai ki optimistic

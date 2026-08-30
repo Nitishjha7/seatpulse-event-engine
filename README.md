@@ -151,6 +151,16 @@ Because the multiplier is one number for the whole event, a booking broadcasts a
 
 Verified end to end: one user held a seat at Rs.1000, four more bookings pushed the market to Rs.1400, and the held seat still charged exactly Rs.1000.
 
+### Seat layouts
+
+Events were previously a uniform grid — N rows of M seats, priced in tiers. Real venues have aisles, named sections, and rows of differing widths, so an organizer can now describe the venue instead: sections with their own price, per-row seat counts, and aisle positions, built through a form with a live preview of exactly what an attendee will see.
+
+The older `price_tiers` request still works and was not deprecated. It is what seventeen phases of seed data, tests and demos are built on, and most events genuinely do not need a floor plan. Rather than keeping two seat generators that would drift apart, the tier input is **converted into a layout** and both paths run through the same expansion — so a tier-built event stores a layout too, and the grid renders every event the same way.
+
+Aisles are presentation only: they create no seat and skip no number, which a test pins down by expanding the same row with and without one. Validation runs entirely before any row is written — duplicate row labels are the important case, since `seats` carries `UNIQUE(event_id, row_label, seat_number)` and catching it late would mean failing after several hundred inserts. A rejected layout leaves no event behind at all.
+
+Both new columns are nullable, and that is the point rather than a convenience: events created before this phase have no layout and no section, and the grid falls back to its previous rendering for them. That path has its own test, because it is the thing most easily broken by adding a column and least likely to be noticed.
+
 ### Group booking, all-or-nothing
 
 Four friends want to sit together and each pay their own share. That changes the correctness question the rest of this project answers. Everywhere else it is *one seat, one booking* — a single row, settled by a conditional `UPDATE`. Here it is **all-or-nothing across N independent payments**, each arriving at its own time from a different person, with a deadline running underneath.
@@ -268,8 +278,8 @@ WebSocket messages are fanned out through a Redis pub/sub channel per event, so 
 | Table | Purpose |
 |---|---|
 | `users` | Accounts — bcrypt password (nullable for Google users), `google_id`, avatar |
-| `events` | Name, venue, start time, total seats, description, category, surge pricing settings |
-| `seats` | Position, **base** price, `status`, **`version`** (optimistic lock), lock holder + expiry, `held_price` (quote locked at hold time) |
+| `events` | Name, venue, start time, total seats, description, category, surge pricing settings, optional seat layout (JSON) |
+| `seats` | Position (section, row, number), **base** price, `status`, **`version`** (optimistic lock), lock holder + expiry, `held_price` (quote locked at hold time) |
 | `bookings` | Links user ↔ seat, with a **partial unique index** enforcing one confirmed booking per seat |
 | `group_bookings` | A split-payment group — status, deadline, and the secret share token |
 | `group_shares` | One seat inside a group: who claimed it, what they owe, whether they have paid |
@@ -309,7 +319,7 @@ docker compose --profile loadtest run --rm locust \
     --host http://backend:8000
 
 docker compose exec backend python verify_integrity.py
-docker compose exec backend pytest tests/ -v         # 79 tests: auth, RBAC, payments, tickets, check-in, pricing, locking, groups, concurrency
+docker compose exec backend pytest tests/ -v         # 90 tests: auth, RBAC, payments, tickets, check-in, pricing, locking, groups, layout, concurrency
 ```
 
 ### What load testing actually caught
@@ -360,12 +370,12 @@ Result on the same 200-user flash sale: **1,250 requests with 58 failures and a 
 - [x] Locking benchmark — `SELECT … FOR UPDATE` implemented alongside the optimistic path and measured against it; the difference turned out to be smaller than run-to-run variance, and the writeup says so
 - [x] Multi-worker deployment and CI — a production compose running 4 uvicorn workers behind a built frontend, a GitHub Actions pipeline that boots the real stack for every push, and a test proving WebSocket broadcasts cross process boundaries
 - [x] Group booking with split payment — a shareable link where each person pays their own share, confirmed all-or-nothing against a deadline, with the confirm/expire race verified over 60 concurrent runs
+- [x] Visual seat layout builder — sections, per-row seat counts and aisles, validated server-side and expanded into seats atomically, with events created before it left untouched
 
 ### Planned
 
 Ordered by dependency — each item leans on the ones above it. None of these are built yet.
 
-- [ ] **Visual seat layout builder** — organizer draws rows, sections and price bands; saved as JSON and expanded into seats server-side
 - [ ] **Natural-language seat finder** — an LLM turns *"3 seats together under ₹1500, centred on the stage"* into structured filters that run as an ordinary query
 - [ ] **AI event copy + poster generator** — draft title, description and banner from a short prompt, always editable before publishing
 - [ ] Screenshots / demo GIF, and a deployed live demo

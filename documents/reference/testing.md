@@ -640,6 +640,8 @@ Aakhir me browser me ek round: login → seat hold → book → cancel → logou
 | Kis worker ne serve kiya | `curl -s localhost:8000/api/health` -> `worker_pid` |
 | Micro-benchmark (sirf DB claim step) | `docker compose exec backend python /loadtest/micro_benchmark.py` |
 | Group booking (browser) | seat hold karo → HoldCard me **"Sabka alag-alag payment"** |
+| Layout builder (browser) | organizer → **Create Event** → Seat layout card me **"Layout builder"** tab |
+| Layout DB me | `docker compose exec db psql -U seatpulse -d seatpulse -c "SELECT id, name, layout IS NOT NULL AS has_layout FROM events ORDER BY id DESC LIMIT 5;"` |
 | Group ki DB state | `docker compose exec db psql -U seatpulse -d seatpulse -c "SELECT g.id, g.status, g.expires_at, count(s.id) FROM group_bookings g JOIN group_shares s ON s.group_id=g.id GROUP BY g.id;"` |
 | Expiry job chal raha hai? | `docker compose logs -f worker \| grep expire_groups` |
 | Ek request me kitni SQL queries? | `docker compose exec db psql -U seatpulse -d seatpulse -c "ALTER SYSTEM SET log_statement='all';" -c "SELECT pg_reload_conf();"` phir `docker compose logs db` |
@@ -676,6 +678,36 @@ sabse important bug hai.
 | Charge quote se match kiya | `bookings.amount` = 1000 |
 
 **Automated version:** `pytest -k "price or surge"` (13 tests).
+
+---
+
+## Seat layout manually test karna
+
+1. Organizer → **Create Event** → "Seat layout" card me **Layout builder** tab
+2. Do sections banao — "Ground" ₹2000 aur "Balcony" ₹800
+3. Ground ki row A me `seats = 10`, `aisle after = 5`
+4. **Live preview** me dekho: seat 5 aur 6 ke beech gap aa gaya
+5. Ab row B ka label bhi `A` kar do → turant error:
+   *"Row A do jagah hai"*, aur submit button disable
+6. Wapas B karo, event banao
+7. Dashboard me us event ka grid kholo:
+   - "GROUND" aur "BALCONY" headings dikhni chahiye
+   - row A me seat 5 ke baad gap
+   - **seat numbers 1-10 lagatar hain** — aisle ne koi number skip nahi kiya
+
+**Sabse zaroori check — purana event na toote:**
+
+Event 1 (seed wala) kholo. Uska `layout` NULL hai. Grid bilkul pehle jaisa
+dikhna chahiye — koi section heading nahi, koi gap nahi, 100 seats.
+
+| Kya check kar rahe ho | Kahan |
+|---|---|
+| Aisle sirf dikhne ki cheez hai | numbering 1..10 lagatar, koi seat missing nahi |
+| Section heading tabhi jab 2+ sections hon | ek section wale event me heading nahi |
+| Purane events safe hain | event 1 pehle jaisa render ho |
+| Server validation | `curl` se duplicate label wala layout bhejo → 422 |
+
+**Automated:** `pytest -k "layout or aisle"` (12 tests).
 
 ---
 
@@ -855,6 +887,7 @@ Poore results aur unka matlab: [Phase 15](../phases/15-locking-benchmark.md).
 - [Phase 15 — Locking Benchmark](../phases/15-locking-benchmark.md) — benchmark ka method aur results
 - [Phase 16 — Multi-Worker + CI](../phases/16-multiworker-ci.md) — prod config aur CI pipeline
 - [Phase 17 — Group Booking](../phases/17-group-booking.md) — split payment ka design aur race
+- [Phase 18 — Seat Layout](../phases/18-seat-layout.md) — layout validation aur backwards compatibility
 - [postgres-commands.md](postgres-commands.md) — DB queries
 - [docker-commands.md](docker-commands.md) — container commands
 - [roadmap.md](../roadmap.md) — poora plan

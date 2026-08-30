@@ -1833,3 +1833,245 @@ def test_broken_group_does_not_leave_pending_payments(client, tokens, group_seat
     # se takrayega. (Wahi galti jo abhi test kar rahe hain.)
     client.post(f"/api/payments/{res.json()['payment_id']}/simulate",
                 json={"outcome": "fail"}, headers=_headers(tokens[3]))
+
+
+# ---------------------------------------------------------------------------
+# Phase 18 — Seat layout
+#
+# Do hisse:
+#   1. validate/expand — pure functions, koi DB nahi
+#   2. HTTP flow — dono raaste (layout aur price_tiers) same manzil pe
+#
+# Sabse zaroori invariant: **purane events (layout NULL) na tootein.**
+# ---------------------------------------------------------------------------
+
+import layout as seat_layout
+
+
+def _layout(*sections):
+    return {"sections": list(sections)}
+
+
+def _section(name, price, *rows):
+    return {"name": name, "price": price, "rows": list(rows)}
+
+
+def _row(label, seats, aisles=None):
+    return {"label": label, "seats": seats, "aisles_after": aisles or []}
+
+
+def test_expand_produces_every_seat():
+    plan = seat_layout.expand(
+        _layout(
+            _section("Ground", 2500, _row("A", 3), _row("B", 2)),
+            _section("Balcony", 800, _row("C", 4)),
+        )
+    )
+    assert len(plan) == 9
+    assert {p.section for p in plan} == {"Ground", "Balcony"}
+    # Price section se aata hai, row se nahi
+    assert {p.price for p in plan if p.section == "Balcony"} == {800.0}
+    # Numbering har row me 1 se shuru
+    assert sorted(p.seat_number for p in plan if p.row_label == "A") == [1, 2, 3]
+
+
+def test_aisles_do_not_create_or_skip_seats():
+    """
+    ⭐ Aisle sirf DIKHNE ki cheez hai.
+
+    Ye aasan galti hai: aisle ko ek "khali seat" bana dena, ya uske baad
+    numbering skip kar dena. Dono galat hain — attendee "seat 5" maangta
+    hai aur usse seat 6 mil jati.
+    """
+    with_aisle = seat_layout.expand(_layout(_section("X", 100, _row("A", 6, [3]))))
+    without = seat_layout.expand(_layout(_section("X", 100, _row("A", 6))))
+
+    assert len(with_aisle) == len(without) == 6
+    assert [p.seat_number for p in with_aisle] == [1, 2, 3, 4, 5, 6]
+
+
+def test_duplicate_row_label_across_sections_is_rejected():
+    """
+    ⭐ `seats` par UNIQUE(event_id, row_label, seat_number) hai.
+
+    Ye pakde bina expansion 500 seats insert karne ke BAAD IntegrityError
+    se marta — aur tab tak transaction bhaari ho chuki hoti.
+    """
+    with pytest.raises(seat_layout.LayoutError, match="do jagah"):
+        seat_layout.validate(
+            _layout(
+                _section("Ground", 100, _row("A", 5)),
+                _section("Balcony", 200, _row("A", 5)),
+            )
+        )
+
+
+def test_aisle_outside_row_is_rejected():
+    """Aakhri seat ke baad aisle ka koi matlab nahi — wo row ka ant hai."""
+    with pytest.raises(seat_layout.LayoutError, match="aisle position"):
+        seat_layout.validate(_layout(_section("X", 100, _row("A", 5, [5]))))
+
+    with pytest.raises(seat_layout.LayoutError, match="aisle position"):
+        seat_layout.validate(_layout(_section("X", 100, _row("A", 5, [9]))))
+
+    # 4 theek hai — 5 seats me seat 4 ke baad gap ban sakti hai
+    seat_layout.validate(_layout(_section("X", 100, _row("A", 5, [4]))))
+
+
+def test_duplicate_section_name_is_rejected():
+    with pytest.raises(seat_layout.LayoutError, match="naam ek hi"):
+        seat_layout.validate(
+            _layout(
+                _section("Ground", 100, _row("A", 5)),
+                _section("Ground", 200, _row("B", 5)),
+            )
+        )
+
+
+def test_empty_and_oversized_layouts_are_rejected():
+    with pytest.raises(seat_layout.LayoutError):
+        seat_layout.validate({"sections": []})
+
+    with pytest.raises(seat_layout.LayoutError):
+        seat_layout.validate(_layout(_section("X", 100)))     # koi row nahi
+
+    huge = _layout(
+        _section("X", 100, *[_row(f"R{i}", 60) for i in range(40)])
+    )
+    with pytest.raises(seat_layout.LayoutError, match="Max 2000"):
+        seat_layout.validate(huge)
+
+
+def test_price_tiers_convert_to_the_same_shape():
+    """
+    Purana raasta bhi layout se hi guzarta hai.
+
+    Do alag generators rakhne ka matlab hota do jagah bugs — aur wo
+    dheere-dheere alag behave karne lagte.
+    """
+    converted = seat_layout.from_price_tiers(
+        [{"rows": 1, "price": 1500}, {"rows": 2, "price": 500}],
+        seats_per_row=4,
+        row_labels="ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    )
+    plan = seat_layout.expand(converted)
+
+    assert len(plan) == 12                       # 3 rows x 4
+    assert [p.row_label for p in plan[:4]] == ["A"] * 4
+    assert {p.price for p in plan if p.row_label == "A"} == {1500.0}
+    assert {p.price for p in plan if p.row_label in ("B", "C")} == {500.0}
+
+
+# ---- HTTP flow ----
+
+def test_create_event_from_layout(client, role_tokens):
+    token = role_tokens["organizer"]
+    res = client.post(
+        "/api/organizer/events",
+        headers=_headers(token),
+        json={
+            "name": "Layout Event",
+            "venue": "Test Arena",
+            "starts_at": "2027-12-01T18:00:00Z",
+            "layout": _layout(
+                _section("Ground", 2500, _row("A", 8, [4]), _row("B", 10)),
+                _section("Balcony", 900, _row("C", 12)),
+            ),
+        },
+    )
+    assert res.status_code == 201, res.text
+    event = res.json()
+    assert event["total_seats"] == 30
+
+    seats = client.get(f"/api/events/{event['id']}/seats").json()
+    assert len(seats) == 30
+    assert {s["section"] for s in seats} == {"Ground", "Balcony"}
+    assert {s["price"] for s in seats if s["section"] == "Balcony"} == {900.0}
+
+    # Layout store hua — grid isse aisles dikhata hai
+    detail = client.get(f"/api/events/{event['id']}").json()
+    assert detail["layout"]["sections"][0]["rows"][0]["aisles_after"] == [4]
+
+    assert client.delete(
+        f"/api/organizer/events/{event['id']}", headers=_headers(token)
+    ).status_code == 204
+
+
+def test_bad_layout_creates_no_event(client, role_tokens):
+    """
+    ⭐ Galat layout par ek bhi seat (aur event) nahi banna chahiye.
+
+    Validation expansion se PEHLE chalti hai, isliye DB ko haath hi nahi
+    lagta. Aadha bana hua event sabse gandi haalat hoti.
+    """
+    token = role_tokens["organizer"]
+    before = len(client.get("/api/organizer/events", headers=_headers(token)).json())
+
+    res = client.post(
+        "/api/organizer/events",
+        headers=_headers(token),
+        json={
+            "name": "Broken Layout",
+            "venue": "Test Arena",
+            "starts_at": "2027-12-01T18:00:00Z",
+            "layout": _layout(
+                _section("A", 100, _row("X", 5)),
+                _section("B", 200, _row("X", 5)),      # duplicate label
+            ),
+        },
+    )
+    assert res.status_code == 422
+    assert "do jagah" in res.json()["detail"]
+
+    after = len(client.get("/api/organizer/events", headers=_headers(token)).json())
+    assert after == before, "fail hone par bhi event ban gaya"
+
+
+def test_price_tiers_path_still_works_and_stores_a_layout(client, role_tokens):
+    """
+    Backwards compatibility — purana request body bilkul waise hi chalna
+    chahiye jaise Phase 10 me chalta tha.
+    """
+    token = role_tokens["organizer"]
+    res = client.post(
+        "/api/organizer/events",
+        headers=_headers(token),
+        json={
+            "name": "Tier Event",
+            "venue": "Test Arena",
+            "starts_at": "2027-12-01T18:00:00Z",
+            "seats_per_row": 4,
+            "price_tiers": [{"rows": 1, "price": 1500}, {"rows": 2, "price": 500}],
+        },
+    )
+    assert res.status_code == 201, res.text
+    event = res.json()
+    assert event["total_seats"] == 12
+
+    # price_tiers se aaya event bhi layout store karta hai
+    detail = client.get(f"/api/events/{event['id']}").json()
+    assert detail["layout"] is not None
+    assert len(detail["layout"]["sections"]) == 2
+
+    seats = client.get(f"/api/events/{event['id']}/seats").json()
+    assert {s["price"] for s in seats if s["row_label"] == "A"} == {1500.0}
+
+    client.delete(f"/api/organizer/events/{event['id']}", headers=_headers(token))
+
+
+def test_old_events_without_a_layout_still_work(client):
+    """
+    ⭐⭐ Sabse zaroori test.
+
+    Event 1 seed se aata hai aur uska `layout` NULL hai. 17 phases ka
+    demo data, tests aur bookings usi par tike hain. Naya column optional
+    hai, aur usse KUCH nahi tootna chahiye.
+    """
+    detail = client.get("/api/events/1").json()
+    assert detail["layout"] is None
+
+    seats = client.get("/api/events/1/seats").json()
+    assert len(seats) == 100
+    assert all(s["section"] is None for s in seats)
+    # Baaki sab fields waise hi hain
+    assert all("price" in s and "status" in s and "version" in s for s in seats)

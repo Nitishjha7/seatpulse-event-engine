@@ -52,6 +52,8 @@ React ka kaam har phase me thoda-thoda hua hai, isliye ye index:
 | Ticket download via blob (header + navigation) | `api.js`, `components/BookingsList.jsx` | [Phase 12](phases/12-background-tickets.md) Step 8 |
 | **Camera QR scan** — native BarcodeDetector, no library | `pages/gate/GatePortal.jsx` | [Phase 13](phases/13-gate-checkin.md) Step 6 |
 | **Group share page** — polling, countdown, per-share pay | `pages/GroupBooking.jsx` | [Phase 17](phases/17-group-booking.md) |
+| **Layout builder** + live preview (form, drag-drop nahi) | `components/LayoutBuilder.jsx` | [Phase 18](phases/18-seat-layout.md) |
+| Grid me sections + aisles, purane events ka fallback | `components/SeatGrid.jsx` | [Phase 18](phases/18-seat-layout.md) |
 | `startGroup()` — saath wali seats khud chunta hai | `booking/BookingContext.jsx` | [Phase 17](phases/17-group-booking.md) |
 | **Live surge banner** + honest "N seats left at this price" | `components/PricingBanner.jsx` | [Phase 14](phases/14-dynamic-pricing.md) |
 | `seatPrice()` — ek hi jagah price ka faisla | `booking/BookingContext.jsx` | [Phase 14](phases/14-dynamic-pricing.md) |
@@ -84,6 +86,7 @@ React ka kaam har phase me thoda-thoda hua hai, isliye ye index:
 | 15 | Locking benchmark (optimistic vs pessimistic) | ✅ Done — [Phase 15 — Locking Benchmark](phases/15-locking-benchmark.md) |
 | 16 | Multi-worker deploy + CI | ✅ Done — [Phase 16 — Multi-Worker + CI](phases/16-multiworker-ci.md) |
 | 17 | Group booking + split payment | ✅ Done — [Phase 17 — Group Booking](phases/17-group-booking.md) |
+| 18 | Visual seat layout builder | ✅ Done — [Phase 18 — Seat Layout](phases/18-seat-layout.md) |
 | — | **Follow-up:** `pricing_state()` har booking me do baar chalta hai (6 faaltu queries). Phase 15 ki query-count ne pakda. |
 
 ---

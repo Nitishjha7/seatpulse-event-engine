@@ -54,6 +54,7 @@ def get_event(event_id: int, db: Session = Depends(get_db)):
         min_price=float(price_range[0]) if price_range[0] is not None else None,
         max_price=float(price_range[1]) if price_range[1] is not None else None,
         pricing=_pricing_out(db, event),
+        layout=event.layout,
     )
 
 

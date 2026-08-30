@@ -25,6 +25,9 @@ from sqlalchemy.orm import Session
 
 from auth import require_role
 from database import get_db
+# `layout` naam local variables me bhi use hota, isliye alias —
+# warna shadowing ke bugs aate hain.
+import layout as seat_layout
 from events_broadcast import broadcast_pricing_update
 from models import (
     BOOKING_CONFIRMED,
@@ -112,24 +115,38 @@ def create_event(
     """
     Naya event + uski saari seats banao.
 
-    Seats yahin generate hoti hain price tiers se. Organizer ko har seat
-    alag se nahi banani padti — wo "3 rows @ ₹2500, 7 rows @ ₹800" bolta
-    hai aur 100 seats ban jaati hain.
+    Do raaste, ek hi manzil:
+
+      layout diya      -> naksha waise ka waisa use hota hai
+      price_tiers diya -> usse layout BANAYA jata hai, phir wahi raasta
+
+    Dono ke aakhir me `seat_layout.expand()` chalta hai. Do alag generators
+    rakhne ka matlab hota do jagah bugs — aur wo dheere-dheere alag
+    behave karne lagte.
     """
-    total_rows = sum(tier.rows for tier in payload.price_tiers)
-
-    if total_rows > len(ROW_LABELS):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"Max {len(ROW_LABELS)} rows ho sakti hain (A-Z), tumne {total_rows} maangi",
+    if payload.layout is not None:
+        plan_source = payload.layout.model_dump()
+    else:
+        total_rows = sum(tier.rows for tier in payload.price_tiers)
+        if total_rows > len(ROW_LABELS):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                f"Max {len(ROW_LABELS)} rows ho sakti hain (A-Z), tumne {total_rows} maangi",
+            )
+        plan_source = seat_layout.from_price_tiers(
+            [t.model_dump() for t in payload.price_tiers],
+            payload.seats_per_row,
+            ROW_LABELS,
         )
 
-    total_seats = total_rows * payload.seats_per_row
-    if total_seats > MAX_SEATS_PER_EVENT:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"Max {MAX_SEATS_PER_EVENT} seats — tumne {total_seats} maangi",
-        )
+    # ⚠️ Validation seats banane se PEHLE — aadhi seats ban jaane ke baad
+    # error dena sabse bura outcome hai.
+    try:
+        planned = seat_layout.expand(plan_source)
+    except seat_layout.LayoutError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
+
+    total_seats = len(planned)
 
     event = Event(
         name=payload.name,
@@ -139,6 +156,9 @@ def create_event(
         category=payload.category,
         total_seats=total_seats,
         organizer_id=user.id,
+        # Layout hamesha store hota hai — chahe price_tiers se aaya ho.
+        # Isse grid har event ke liye ek hi tarah se render kar sakta hai.
+        layout=plan_source,
         dynamic_pricing=payload.dynamic_pricing,
         demand_factor=payload.demand_factor,
         max_surge=payload.max_surge,
@@ -146,25 +166,17 @@ def create_event(
     db.add(event)
     db.flush()      # id chahiye seats banane ke liye
 
-    # Tiers upar se neeche: pehla tier row A se
-    seats = []
-    row_index = 0
-    for tier in payload.price_tiers:
-        for _ in range(tier.rows):
-            label = ROW_LABELS[row_index]
-            seats.extend(
-                Seat(
-                    event_id=event.id,
-                    row_label=label,
-                    seat_number=n,
-                    price=tier.price,
-                )
-                for n in range(1, payload.seats_per_row + 1)
-            )
-            row_index += 1
-
     # bulk_save_objects — 2000 alag INSERT se bahut tez
-    db.bulk_save_objects(seats)
+    db.bulk_save_objects([
+        Seat(
+            event_id=event.id,
+            section=p.section,
+            row_label=p.row_label,
+            seat_number=p.seat_number,
+            price=p.price,
+        )
+        for p in planned
+    ])
     db.commit()
     db.refresh(event)
 

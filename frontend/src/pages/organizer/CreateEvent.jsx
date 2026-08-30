@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { createEvent } from '../../api'
+import LayoutBuilder, { emptyLayout, validateLayout } from '../../components/LayoutBuilder'
 import { IconClose, IconTicket } from '../../layout/icons'
 
 const ROW_LABELS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -9,6 +10,8 @@ const ROW_LABELS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 export default function CreateEvent() {
   const navigate = useNavigate()
 
+  // NOTE: `seats_per_row` yahan hai kyunki wo sirf tiers mode me chahiye.
+  // Layout mode me ye bheja hi nahi jata (neeche handleSubmit dekho).
   const [form, setForm] = useState({
     name: '',
     venue: '',
@@ -27,6 +30,15 @@ export default function CreateEvent() {
   // surge har event ke liye theek nahi (free meetup pe ye bhaddha lagta).
   const [surge, setSurge] = useState({ on: false, demand_factor: 0.5, max_surge: 2.0 })
 
+  // 'tiers'  = purana simple raasta (N rows x M seats, ek price per tier)
+  // 'layout' = poora naksha — sections, alag-alag row sizes, aisles
+  //
+  // Default 'tiers' hai jaan-boojh ke. Zyadatar events ko naksha chahiye
+  // hi nahi, aur simple form 20 second me bhar jata hai. Layout builder
+  // tab hai jab sach me zaroorat ho.
+  const [mode, setMode] = useState('tiers')
+  const [layout, setLayout] = useState(emptyLayout)
+
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
@@ -36,6 +48,21 @@ export default function CreateEvent() {
   // Backend me bhi yahi limits hain — yahan sirf user ko pehle bata rahe hain
   const tooManyRows = totalRows > 26
   const tooManySeats = totalSeats > 2000
+
+  // Layout mode me seat count aur validity dono LayoutBuilder se aate hain,
+  // tiers wale hisaab se nahi.
+  const layoutError = mode === 'layout' ? validateLayout(layout) : null
+  const layoutSeats =
+    mode === 'layout'
+      ? layout.sections.reduce(
+          (sum, sec) => sum + sec.rows.reduce((n, r) => n + Number(r.seats || 0), 0),
+          0,
+        )
+      : 0
+
+  const seatCount = mode === 'layout' ? layoutSeats : totalSeats
+  const blocked =
+    mode === 'layout' ? Boolean(layoutError) : tooManyRows || tooManySeats || totalSeats === 0
 
   function setField(key, value) {
     setForm((f) => ({ ...f, [key]: value }))
@@ -50,16 +77,38 @@ export default function CreateEvent() {
     setBusy(true)
     setError(null)
     try {
+      // Sirf chuna hua raasta bhejte hain. Dono bhejte to server ko
+      // guess karna padta ki user ka matlab kya tha — aur wo guess
+      // kabhi na kabhi galat hoti.
+      const seatPlan =
+        mode === 'layout'
+          ? {
+              layout: {
+                sections: layout.sections.map((sec) => ({
+                  name: sec.name.trim(),
+                  price: Number(sec.price),
+                  rows: sec.rows.map((r) => ({
+                    label: r.label.trim().toUpperCase(),
+                    seats: Number(r.seats),
+                    aisles_after: r.aisles_after,
+                  })),
+                })),
+              },
+            }
+          : {
+              seats_per_row: Number(form.seats_per_row),
+              price_tiers: tiers.map((t) => ({
+                rows: Number(t.rows),
+                price: Number(t.price),
+              })),
+            }
+
       const created = await createEvent({
         ...form,
-        seats_per_row: Number(form.seats_per_row),
+        ...seatPlan,
         // datetime-local "2026-12-01T19:30" deta hai — backend ko ISO chahiye
         starts_at: new Date(form.starts_at).toISOString(),
         description: form.description || null,
-        price_tiers: tiers.map((t) => ({
-          rows: Number(t.rows),
-          price: Number(t.price),
-        })),
         dynamic_pricing: surge.on,
         demand_factor: Number(surge.demand_factor),
         max_surge: Number(surge.max_surge),
@@ -77,7 +126,9 @@ export default function CreateEvent() {
       <header>
         <h1 className="text-xl font-semibold text-slate-100">Create Event</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Seats price tiers se apne aap ban jaayengi
+          {mode === 'layout'
+            ? 'Sections, row sizes aur aisles — jaisa asli venue hai'
+            : 'Seats price tiers se apne aap ban jaayengi'}
         </p>
       </header>
 
@@ -141,6 +192,32 @@ export default function CreateEvent() {
         </Card>
 
         <Card title="Seat layout">
+          {/* Mode toggle */}
+          <div className="mb-4 inline-flex rounded-xl border border-[var(--border)] p-0.5">
+            {[
+              ['tiers', 'Simple', 'Barabar rows, tier-wise price'],
+              ['layout', 'Layout builder', 'Sections, aisles, alag row sizes'],
+            ].map(([value, label, hint]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setMode(value)}
+                title={hint}
+                className={`rounded-lg px-3.5 py-1.5 text-xs font-medium transition ${
+                  mode === value
+                    ? 'bg-violet-600 text-white'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {mode === 'layout' ? (
+            <LayoutBuilder layout={layout} onChange={setLayout} />
+          ) : (
+          <>
           <Field label="Seats per row" className="max-w-[10rem]">
             <input
               required
@@ -237,6 +314,8 @@ export default function CreateEvent() {
             {tooManyRows && <Warn>Max 26 rows (A–Z)</Warn>}
             {tooManySeats && <Warn>Max 2000 seats</Warn>}
           </div>
+          </>
+          )}
 
           {/* ---- Dynamic pricing ---- */}
           <div className="mt-5 border-t border-[var(--border)] pt-4">
@@ -306,11 +385,11 @@ export default function CreateEvent() {
         <div className="flex gap-3">
           <button
             type="submit"
-            disabled={busy || tooManyRows || tooManySeats || totalSeats === 0}
+            disabled={busy || blocked}
             className="rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-semibold transition
                        hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {busy ? 'Creating…' : `Create event with ${totalSeats} seats`}
+            {busy ? 'Creating…' : `Create event with ${seatCount} seats`}
           </button>
 
           <button

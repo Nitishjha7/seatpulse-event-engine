@@ -50,7 +50,8 @@ documents/
 │   ├── 14-dynamic-pricing.md
 │   ├── 15-locking-benchmark.md
 │   ├── 16-multiworker-ci.md
-│   └── 17-group-booking.md
+│   ├── 17-group-booking.md
+│   └── 18-seat-layout.md
 │
 └── reference/             ← command cheatsheets
     ├── docker-commands.md
@@ -94,6 +95,7 @@ Har phase ka format ek jaisa hai: **problem → approach → steps → ✅ proof
 | 15 | [Locking Benchmark](phases/15-locking-benchmark.md) | ⭐ Optimistic vs `FOR UPDATE` maapa — aur andaza galat nikla |
 | 16 | [Multi-Worker + CI](phases/16-multiworker-ci.md) | ⭐ Phase 5 ka daawa aakhirkar verify hua. Clean state ne 3 chhupe bug nikale |
 | 17 | [Group Booking](phases/17-group-booking.md) | ⭐ "Sab ya koi nahi" — N payments par atomicity. Jahan optimistic locking kaam nahi aayi |
+| 18 | [Seat Layout](phases/18-seat-layout.md) | Sections + aisles. Purane events na tootein — nullable columns ka poora point |
 
 > **Interview ke liye sabse zaroori:** 04, 06, 07, 11, 13. Wahan teeno defence layers aur load test se mile teen bug hain.
 

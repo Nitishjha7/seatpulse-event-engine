@@ -896,7 +896,90 @@ Yahan imaandari se jawab dena, ye achha lagta hai:
 
 ---
 
-## 15. Traps — jahan "haan" bolna galat hai
+## 15. Seat layout — "purane data ko na todna"
+
+Chhota feature hai, par isme ek sawaal hai jo interviewer aksar poochta hai.
+
+### "Naya column add karte waqt purane rows ka kya karte ho?"
+
+> "Phase 18 me maine `Event.layout` aur `Seat.section` add kiye, dono
+> **nullable**. Aur wo convenience nahi, poora design hai.
+>
+> 17 phases ka data — seed, tests, demo events — bina layout ke bana hai.
+> `NULL` ka matlab hai 'purana uniform event', aur frontend usse bilkul
+> waise render karta hai jaise pehle karta tha.
+>
+> Iska ek alag test hai: event 1 utha kar check karo ki `layout` null hai,
+> 100 seats hain, har seat ka `section` null hai, aur baaki sab fields
+> waise ke waise. Ye wahi cheez hai jo column add karte waqt sabse aasani
+> se tootti hai — aur uska pata bahut baad me chalta hai."
+
+### "Purana API format hata diya?"
+
+> "Nahi. `price_tiers` abhi bhi chalta hai.
+>
+> Par maine do generators nahi rakhe — wo dheere-dheere alag behave karne
+> lagte. `price_tiers` ko layout ke shape me **convert** karta hoon, aur
+> phir dono ek hi expansion function se guzarte hain.
+>
+> Faayda: tier se bana event bhi layout store karta hai, to grid har event
+> ko ek hi tarah render karta hai."
+
+### ⭐ "Validation kahan karte ho?"
+
+> "Do jagah, aur dono ka kaam alag hai.
+>
+> **Pydantic** shape dekhta hai — types, lengths, ranges. **`layout.py`**
+> business rules — duplicate row labels, seat cap, aisle position row ke
+> andar hai ya nahi.
+>
+> Bantwara isliye ki 'do sections me same row label nahi ho sakta' jaise
+> rules ko poore layout ka context chahiye, aur unhe DB ke bina test karna
+> aasan hona chahiye.
+>
+> Sabse zaroori rule duplicate row label wala hai. `seats` par
+> `UNIQUE(event_id, row_label, seat_number)` hai. Ye check na hota to
+> expansion **500 seats insert karne ke baad** IntegrityError se marta."
+
+### "Aadha bana hua event ban sakta hai?"
+
+> "Nahi, aur wo jaan-boojh ke hai. `expand()` DB ko haath hi nahi lagata —
+> wo sirf ek list lauta deta hai. Caller usse ek transaction me bulk
+> insert karta hai.
+>
+> Agar `expand` khud likhta, to 'aadhi seats ban gayi phir error' mumkin
+> ho jata. Test check karta hai ki galat layout ke baad organizer ke
+> events ki ginti wahi rahe."
+
+### "Drag-and-drop kyu nahi banaya?"
+
+Ye sawaal aayega, aur "time nahi tha" galat jawab hai:
+
+> "Kyunki asli venue rows aur sections me hi bana hota hai. 'Row C me 12
+> seats, seat 4 ke baad aisle' **type** karna maus se 12 boxes ghaseetne
+> se tez bhi hai aur galti-proof bhi.
+>
+> Aur drag-and-drop apne saath pointer-events, undo/redo, snapping aur
+> touch handling ka poora pahaad laata hai — us feature ke liye jo saal me
+> kuch baar use hota hai.
+>
+> Iske badle **live preview** rakha — bilkul wahi shape jo attendee ko
+> dikhega. Builder ka asli faayda wahi hai: 40 seats aur 4 aisles ko
+> numbers me sochna mushkil hai, dekh ke turant samajh aata hai."
+
+### Rapid fire
+
+| Sawaal | Ek-line jawab |
+|---|---|
+| Aisle ek seat hai? | Nahi — koi seat nahi banti, numbering bhi nahi rukti. Purely dikhne ke liye, isliye layout JSON me hai, seats table me nahi |
+| `section` layout JSON me hai, seat pe kyu? | Ticket PDF aur gate check-in ko section chahiye — unhe layout parse karwana galat hoga |
+| Layout edit ho sakta hai? | Nahi. Seats badalna matlab bookings ka reference todna — wahi asool jo base price ka hai |
+| Client-side validation duplicate nahi? | Hai, aur jaan-boojh ke. Server asli faisla karta hai; client sirf round-trip bachata hai |
+| Layout aur seats me farak aa jaye to? | Seats sach hain — bookings unhi se judi hain. Layout sirf naksha hai |
+
+---
+
+## 16. Traps — jahan "haan" bolna galat hai
 
 ### "Kafka use kar sakte the na?"
 
@@ -920,7 +1003,7 @@ Yahan imaandari se jawab dena, ye achha lagta hai:
 
 ---
 
-## 16. Rapid fire
+## 17. Rapid fire
 
 | Sawaal | Ek-line jawab |
 |---|---|
@@ -940,7 +1023,7 @@ Yahan imaandari se jawab dena, ye achha lagta hai:
 
 ---
 
-## 17. Whiteboard — architecture aise banao
+## 18. Whiteboard — architecture aise banao
 
 Isi order me banao, bolte hue:
 
@@ -961,7 +1044,7 @@ Bolte waqt teen baatein zaroor:
 
 ---
 
-## 18. Tum kya poochho
+## 19. Tum kya poochho
 
 Interview do-tarfa hai. Ye poochne se pata chalta hai ki tum production ke bare me sochte ho:
 
@@ -996,4 +1079,5 @@ Aur ek line jo kabhi mat bhoolna:
 - [Phase 15 — Locking Benchmark](phases/15-locking-benchmark.md) — poore numbers aur method
 - [Phase 16 — Multi-Worker + CI](phases/16-multiworker-ci.md) — deploy config aur teen bugs
 - [Phase 17 — Group Booking](phases/17-group-booking.md) — "sab ya koi nahi" ka poora design
+- [Phase 18 — Seat Layout](phases/18-seat-layout.md) — nullable columns aur backwards compatibility
 - [testing.md](reference/testing.md) — sab kuch demo karne ke commands

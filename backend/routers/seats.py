@@ -117,6 +117,7 @@ def _seat_out(seat: Seat, info) -> SeatOut:
         event_id=seat.event_id,
         row_label=seat.row_label,
         seat_number=seat.seat_number,
+        section=seat.section,
         price=float(seat.price),
         status=seat.status,
         version=seat.version,
