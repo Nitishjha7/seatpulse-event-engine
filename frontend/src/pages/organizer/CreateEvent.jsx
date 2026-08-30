@@ -23,6 +23,10 @@ export default function CreateEvent() {
     { rows: 3, price: 1200 },
     { rows: 5, price: 800 },
   ])
+  // Dynamic pricing DEFAULT OFF. Organizer jaan-boojh ke on kare —
+  // surge har event ke liye theek nahi (free meetup pe ye bhaddha lagta).
+  const [surge, setSurge] = useState({ on: false, demand_factor: 0.5, max_surge: 2.0 })
+
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
@@ -56,6 +60,9 @@ export default function CreateEvent() {
           rows: Number(t.rows),
           price: Number(t.price),
         })),
+        dynamic_pricing: surge.on,
+        demand_factor: Number(surge.demand_factor),
+        max_surge: Number(surge.max_surge),
       })
       navigate('/organizer/events', { state: { created: created.name } })
     } catch (err) {
@@ -229,6 +236,66 @@ export default function CreateEvent() {
 
             {tooManyRows && <Warn>Max 26 rows (A–Z)</Warn>}
             {tooManySeats && <Warn>Max 2000 seats</Warn>}
+          </div>
+
+          {/* ---- Dynamic pricing ---- */}
+          <div className="mt-5 border-t border-[var(--border)] pt-4">
+            <label className="flex cursor-pointer items-start gap-3">
+              <input
+                type="checkbox"
+                checked={surge.on}
+                onChange={(e) => setSurge((s) => ({ ...s, on: e.target.checked }))}
+                className="mt-0.5 h-4 w-4 accent-violet-500"
+              />
+              <span>
+                <span className="text-sm font-medium text-slate-200">
+                  Demand-based pricing
+                </span>
+                <span className="mt-0.5 block text-xs leading-relaxed text-slate-500">
+                  Seats bikne ke saath price apne aap badhta hai. Upar ka price
+                  BASE hai — surge usi par lagta hai.
+                </span>
+              </span>
+            </label>
+
+            {surge.on && (
+              <div className="mt-3 space-y-3 rounded-xl bg-white/[0.03] p-3.5">
+                <div>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-400">Kitna aggressive</span>
+                    <span className="font-mono text-violet-300">
+                      sold out par +{Math.round(surge.demand_factor * 100)}%
+                    </span>
+                  </div>
+                  {/* Slider isliye ki 0.5 ka matlab pehli nazar me samajh nahi
+                      aata — par "sold out par +50%" turant samajh aata hai */}
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={surge.demand_factor}
+                    onChange={(e) =>
+                      setSurge((s) => ({ ...s, demand_factor: e.target.value }))
+                    }
+                    className="mt-1.5 w-full accent-violet-500"
+                  />
+                </div>
+
+                <p className="text-[11px] leading-relaxed text-slate-500">
+                  ₹{tiers[0]?.price || 0} wali seat sold-out ke waqt tak
+                  <strong className="text-slate-300">
+                    {' '}
+                    ₹
+                    {Math.round(
+                      ((tiers[0]?.price || 0) * (1 + Number(surge.demand_factor))) / 10,
+                    ) * 10}
+                  </strong>{' '}
+                  tak jayegi. Jisne pehle hold kar liya, uska price locked
+                  rehta hai.
+                </p>
+              </div>
+            )}
           </div>
         </Card>
 

@@ -12,9 +12,10 @@ import { API_URL, getAccessToken } from '../api'
  *
  * @param {number|null} eventId  null = abhi connect mat karo
  * @param {(seat, action) => void} onSeatUpdate
+ * @param {(pricing) => void} [onPricingUpdate]  demand se price badla
  * @returns {{ status: 'connecting'|'open'|'closed' }}
  */
-export function useWebSocket(eventId, onSeatUpdate) {
+export function useWebSocket(eventId, onSeatUpdate, onPricingUpdate) {
   const [status, setStatus] = useState('connecting')
 
   const socketRef = useRef(null)
@@ -27,6 +28,9 @@ export function useWebSocket(eventId, onSeatUpdate) {
   // na bane. Warna har render pe reconnect hota rehta.
   const handlerRef = useRef(onSeatUpdate)
   handlerRef.current = onSeatUpdate
+
+  const pricingRef = useRef(onPricingUpdate)
+  pricingRef.current = onPricingUpdate
 
   const connect = useCallback(() => {
     if (!eventId) return
@@ -56,6 +60,9 @@ export function useWebSocket(eventId, onSeatUpdate) {
         const msg = JSON.parse(e.data)
         if (msg.type === 'seat_update') {
           handlerRef.current?.(msg.seat, msg.action)
+        } else if (msg.type === 'pricing_update') {
+          // Poore event ka demand multiplier badla — kisi ek seat ka nahi
+          pricingRef.current?.(msg.pricing)
         }
       } catch {
         // kachra message — ignore

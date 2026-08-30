@@ -24,6 +24,8 @@ from models import (
     User,
     utcnow,
 )
+from pricing import current_price
+from pricing_state import pricing_state
 from rate_limit import SEAT_LOCK, limit_user
 from redis_client import (
     acquire_seat_lock,
@@ -68,6 +70,10 @@ def release_expired_locks(db: Session, event_id: int) -> None:
             status=SEAT_AVAILABLE,
             locked_by=None,
             locked_until=None,
+            # Hold gaya to price lock bhi gaya -- agli baar naya (shayad
+            # zyada) price lagega. Ye saaf karna zaroori hai, warna user
+            # ek baar hold karke hamesha ke liye purana price pa leta.
+            held_price=None,
             version=Seat.version + 1,
         )
         .execution_options(synchronize_session=False)
@@ -91,11 +97,34 @@ def list_event_seats(event_id: int, db: Session = Depends(get_db)):
 
     release_expired_locks(db, event_id)
 
-    return db.scalars(
+    seats = db.scalars(
         select(Seat)
         .where(Seat.event_id == event_id)
         .order_by(Seat.row_label, Seat.seat_number)
     ).all()
+
+    # Pricing EK BAAR nikalte hain, har seat ke liye nahi. Multiplier poore
+    # event ka ek hi hota hai -- 500 seats ke liye 500 count queries maarna
+    # bewakoofi hoti.
+    info = pricing_state(db, db.get(Event, event_id))
+    return [_seat_out(seat, info) for seat in seats]
+
+
+def _seat_out(seat: Seat, info) -> SeatOut:
+    """ORM Seat -> API SeatOut, current price ke saath."""
+    return SeatOut(
+        id=seat.id,
+        event_id=seat.event_id,
+        row_label=seat.row_label,
+        seat_number=seat.seat_number,
+        price=float(seat.price),
+        status=seat.status,
+        version=seat.version,
+        locked_by=seat.locked_by,
+        locked_until=seat.locked_until,
+        current_price=current_price(float(seat.price), info),
+        held_price=float(seat.held_price) if seat.held_price is not None else None,
+    )
 
 
 @router.get("/seats/{seat_id}", response_model=SeatOut)
@@ -103,7 +132,7 @@ def get_seat(seat_id: int, db: Session = Depends(get_db)):
     seat = db.get(Seat, seat_id)
     if seat is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Seat nahi mili")
-    return seat
+    return _seat_out(seat, pricing_state(db, db.get(Event, seat.event_id)))
 
 
 @router.post(
@@ -170,6 +199,23 @@ def lock_seat(
     # Guard ke saath: seat beech me book ho gayi to rowcount 0 aata hai,
     # hum lock wapas chhod dete hain aur 409 dete hain.
     ttl = settings.SEAT_LOCK_TTL
+
+    # PRICE LOCK -- hold ke saath price bhi freeze ho jata hai.
+    #
+    # User ko grid me jo price dikha tha, checkout pe wahi lagega. Beech me
+    # 50 seats bik jayein to bhi is user ka price nahi badlega.
+    #
+    # Ye jaan-boojh ke ek COLUMN hai, calculation nahi -- kyunki "us waqt
+    # kya price tha" ko baad me dobara compute nahi kiya ja sakta. Demand
+    # tab tak badal chuki hoti hai.
+    #
+    # Note: seat pehle se `locked` thi aur wahi user dubara lock kar raha
+    # hai, to bhi naya price likh dete hain -- TTL bhi to reset ho raha hai,
+    # matlab ye ek naya hold hai.
+    quoted = current_price(
+        float(seat.price), pricing_state(db, db.get(Event, seat.event_id))
+    )
+
     result = db.execute(
         update(Seat)
         .where(
@@ -180,6 +226,7 @@ def lock_seat(
             status=SEAT_LOCKED,
             locked_by=user.id,
             locked_until=utcnow() + timedelta(seconds=ttl),
+            held_price=quoted,
             version=Seat.version + 1,
         )
         .execution_options(synchronize_session=False)
@@ -202,6 +249,7 @@ def lock_seat(
         locked_by=user.id,
         expires_in=ttl,
         already_owned=False,
+        price=quoted,
     )
 
 
@@ -230,6 +278,7 @@ def unlock_seat(
                 status=SEAT_AVAILABLE,
                 locked_by=None,
                 locked_until=None,
+                held_price=None,   # price lock bhi chhoda
                 version=Seat.version + 1,
             )
             .execution_options(synchronize_session=False)

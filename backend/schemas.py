@@ -82,6 +82,17 @@ class EventCreate(BaseModel):
     # Kam se kam ek tier. Total rows = sab tiers ka sum.
     price_tiers: list[PriceTier] = Field(..., min_length=1, max_length=10)
 
+    # ---- Dynamic pricing (Phase 14) ----
+    # Default OFF. Surge pricing har event ke liye theek nahi hai — free
+    # community meetup pe ye ulta lagta hai. Organizer khud on kare.
+    dynamic_pricing: bool = False
+    # 0 = koi surge nahi, 1.0 = sab bikne par price double.
+    # Upper bound 2.0 rakha hai — usse zyada kisi bhi normal event ke liye
+    # bakwaas hai, aur galti se 50 type ho jaana bahut mehnga padta.
+    demand_factor: float = Field(0.5, ge=0, le=2.0)
+    # Hard ceiling. Chahe formula kuch bhi kahe, isse upar nahi jayega.
+    max_surge: float = Field(2.0, ge=1.0, le=3.0)
+
 
 class EventUpdate(BaseModel):
     """
@@ -97,6 +108,16 @@ class EventUpdate(BaseModel):
     starts_at: datetime | None = None
     description: str | None = Field(None, max_length=5000)
     category: str | None = Field(None, max_length=40)
+
+    # Pricing KNOBS badle ja sakte hain, base price nahi.
+    #
+    # Faraq ye hai: base price badalna purani bookings ko jhootha bana deta
+    # ("₹800 ka ticket kaha tha, ab ₹1200 likha hai"). Surge band karna ya
+    # halka karna sirf AAGE ki bookings pe asar daalta hai — jo har event
+    # organizer ko karne ka haq hona chahiye agar sales slow ho rahi hain.
+    dynamic_pricing: bool | None = None
+    demand_factor: float | None = Field(None, ge=0, le=2.0)
+    max_surge: float | None = Field(None, ge=1.0, le=3.0)
 
 
 class OrganizerEventOut(EventOut):
@@ -156,6 +177,9 @@ class SeatLockOut(BaseModel):
     already_owned: bool = False
     # unlock call ke liye — False matlab lock TTL pe pehle hi expire ho chuka tha
     released: bool | None = None
+    # Is hold ke liye LOCKED price. Checkout pe exactly yahi lagega —
+    # frontend seedha yahi dikhata hai, dobara calculate nahi karta.
+    price: float | None = None
 
 
 # ---------- Booking ----------

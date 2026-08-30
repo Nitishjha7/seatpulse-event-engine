@@ -26,6 +26,24 @@ import { useWebSocket } from '../hooks/useWebSocket'
 
 const BookingContext = createContext(null)
 
+/**
+ * Ek seat par abhi kya price lagega.
+ *
+ * Priority saaf hai aur JAAN-BOOJH ke isi order me hai:
+ *   1. held_price   — hold ke waqt lock hua quote. Sabse upar, kyunki
+ *                     user se yahi waada kiya gaya hai.
+ *   2. current_price — server ka calculated dynamic price
+ *   3. price         — base (dynamic pricing off ho, ya purana API response)
+ *
+ * Ye ek hi function hai jo ye faisla karta hai. Har component apna hisaab
+ * lagata to kisi ek jagah `held_price` bhoolna aasan hota — aur wahi ek
+ * jagah user ko galat price dikha deti.
+ */
+export function seatPrice(seat) {
+  if (!seat) return null
+  return seat.held_price ?? seat.current_price ?? seat.price
+}
+
 /** Error ko user ke padhne layak text me badlo. */
 function errorText(err) {
   if (err.status === 429) {
@@ -59,6 +77,10 @@ export function BookingProvider({ children }) {
   const [event, setEvent] = useState(null)
   const [seats, setSeats] = useState([])
   const [bookings, setBookings] = useState([])
+  // Event ka demand/surge state. WebSocket se live update hota hai,
+  // isliye `event.pricing` se alag rakha hai — warna har pricing message
+  // pe poora event object replace karna padta.
+  const [pricing, setPricing] = useState(null)
 
   const [selectedSeat, setSelectedSeat] = useState(null)
   const [lockSecondsLeft, setLockSecondsLeft] = useState(0)
@@ -75,6 +97,12 @@ export function BookingProvider({ children }) {
   const selectedRef = useRef(null)
   selectedRef.current = selectedSeat
 
+  // Pricing update aane par kaunsa event refetch karna hai — callback ko
+  // `event` pe depend karana pada to har event change pe socket handler
+  // badal jata (aur wo useWebSocket ke andar reconnect trigger karta).
+  const eventIdRef = useRef(null)
+  const pricingRefetchRef = useRef(null)
+
   const refresh = useCallback(async (eventId) => {
     const [eventData, seatData, bookingData] = await Promise.all([
       getEvent(eventId),
@@ -84,6 +112,8 @@ export function BookingProvider({ children }) {
     setEvent(eventData)
     setSeats(seatData)
     setBookings(bookingData)
+    setPricing(eventData.pricing ?? null)
+    eventIdRef.current = eventId
   }, [])
 
   useEffect(() => {
@@ -127,7 +157,38 @@ export function BookingProvider({ children }) {
     [user.id],
   )
 
-  const { status: wsStatus } = useWebSocket(event?.id ?? null, handleSeatUpdate)
+  /**
+   * Demand se price badla — poore event ka multiplier aaya hai.
+   *
+   * ⚠️ Yahan hum client-side me `base × multiplier` NAHI karte, chahe wo
+   * ek line ka kaam ho. Wajah: JS ka Math.round(100.5) = 101, par Python ka
+   * round(100.5) = 100. Ties par dono alag jawab dete hain — matlab UI
+   * ₹1010 dikhata aur server ₹1000 charge karta. ₹10 ka farq chhota lagta
+   * hai, par "jo dikha wahi kata" ka bharosa toot jata hai.
+   *
+   * Isliye: banner turant update karo (wahi user dekhta hai), aur exact
+   * prices server se hi lo.
+   */
+  const handlePricingUpdate = useCallback((next) => {
+    setPricing(next)
+
+    // Debounce — flash sale me ek second me 20 bookings ho sakti hain,
+    // aur har ek pe seat refetch karna server ko bekaar me peetna hai.
+    clearTimeout(pricingRefetchRef.current)
+    pricingRefetchRef.current = setTimeout(() => {
+      const id = eventIdRef.current
+      if (id) getEventSeats(id).then(setSeats).catch(() => {})
+    }, 400)
+  }, [])
+
+  const { status: wsStatus } = useWebSocket(
+    event?.id ?? null,
+    handleSeatUpdate,
+    handlePricingUpdate,
+  )
+
+  // Unmount pe pending refetch cancel — warna gaye hue page ka setState
+  useEffect(() => () => clearTimeout(pricingRefetchRef.current), [])
 
   /**
    * Hold ka countdown — sirf DIKHANE ke liye.
@@ -188,7 +249,10 @@ export function BookingProvider({ children }) {
       if (selectedSeat) await unlockSeat(selectedSeat.id).catch(() => {})
 
       const lock = await lockSeat(seat.id)
-      setSelectedSeat(seat)
+      // Server ne is hold ke liye jo price LOCK kiya, wahi seat pe chipka
+      // dete hain. Checkout card seedha isse dikhata hai — dobara calculate
+      // karne ki koshish hi nahi karta, kyunki charge exactly yahi hoga.
+      setSelectedSeat({ ...seat, held_price: lock.price })
       setLockSecondsLeft(lock.expires_in)
       setMessage({
         type: 'success',
@@ -289,6 +353,8 @@ export function BookingProvider({ children }) {
     event,
     seats,
     counts,
+    pricing,
+    seatPrice,
     bookings,
     selectedSeat,
     lockSecondsLeft,

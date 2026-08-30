@@ -79,7 +79,18 @@ def multiplier_for(sold: int, total: int, demand_factor: float, max_surge: float
 
 
 def apply(base_price: float, multiplier: float) -> float:
-    """Base price pe multiplier lagao aur round karo."""
+    """
+    Base price pe multiplier lagao aur round karo.
+
+    Python ka round() banker's rounding karta hai: 100.5 -> 100, 101.5 -> 102.
+    Yaani theek beech me atke price kabhi upar kabhi neeche jate hain.
+    Ye theek hai -- surge me tie par user ke haq me jhukna behtar hai, aur
+    lambe samay me ye upar-neeche balance ho jata hai.
+
+    Iska ek natija hai: multiplier thoda badhne par bhi FINAL price wahi
+    reh sakta hai. Isiliye `_seats_until_increase` andaza nahi lagata --
+    wo asli price ko aage badha kar dekhta hai kab badalta hai.
+    """
     raw = base_price * multiplier
     return float(round(raw / ROUND_TO) * ROUND_TO)
 

@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from auth import require_role
 from database import get_db
+from events_broadcast import broadcast_pricing_update
 from models import (
     BOOKING_CONFIRMED,
     ROLE_ADMIN,
@@ -138,6 +139,9 @@ def create_event(
         category=payload.category,
         total_seats=total_seats,
         organizer_id=user.id,
+        dynamic_pricing=payload.dynamic_pricing,
+        demand_factor=payload.demand_factor,
+        max_surge=payload.max_surge,
     )
     db.add(event)
     db.flush()      # id chahiye seats banane ke liye
@@ -191,12 +195,17 @@ def update_event(
     user: User = Depends(require_role(ROLE_ORGANIZER, ROLE_ADMIN)),
 ):
     """
-    Event ki details badlo.
+    Event ki details + pricing knobs badlo.
 
-    Seat layout aur pricing yahan nahi badalte — log tickets khareed
-    chuke ho sakte hain. (EventUpdate schema me wo fields hain hi nahi.)
+    Seat layout aur BASE price yahan nahi badalte — log tickets khareed
+    chuke ho sakte hain, aur base price badalna unki purani bookings ko
+    jhootha bana deta. (EventUpdate schema me wo fields hain hi nahi.)
+
+    Surge knobs badal sakte hain: wo sirf AAGE ki bookings pe lagte hain.
+    Sales slow hain to organizer ko surge band karne ka haq hona chahiye.
     """
     event = _owned_event(event_id, user, db)
+    pricing_before = (event.dynamic_pricing, event.demand_factor, event.max_surge)
 
     # exclude_unset — sirf wahi fields update ho jo client ne BHEJI hain.
     # Bina iske None bheja hua field bhi NULL kar deta.
@@ -205,6 +214,11 @@ def update_event(
 
     db.commit()
     db.refresh(event)
+
+    # Pricing badli to sab connected clients ko turant batao — warna wo
+    # purane price pe seat select karte rahenge aur checkout pe surprise.
+    if (event.dynamic_pricing, event.demand_factor, event.max_surge) != pricing_before:
+        broadcast_pricing_update(db, event.id)
 
     stats = _event_stats(db, [event.id])
     return _to_organizer_out(event, stats.get(event.id, {}))

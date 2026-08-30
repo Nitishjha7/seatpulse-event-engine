@@ -42,6 +42,7 @@ from auth import get_current_user
 from config import settings
 from database import get_db
 from events_broadcast import broadcast_seat_update
+from pricing_state import price_now
 from models import (
     BOOKING_CONFIRMED,
     PAYMENT_EXPIRED,
@@ -155,11 +156,21 @@ def start_checkout(
     provider = get_provider()
     expires_at = utcnow() + timedelta(seconds=settings.PAYMENT_TTL_SECONDS)
 
+    # ⭐ Ek hi baar price nikalte hain aur payment row + gateway session
+    # dono me WAHI bhejte hain.
+    #
+    # Do baar `price_now()` call karna bug hai: beech me hold expire ho
+    # sakta hai, aur tab gateway ₹920 charge karta jabki hamare DB me ₹800
+    # likha hota. Wo mismatch reconciliation me hi pakda jata — user ka
+    # paisa kat chuka hota.
+    quoted = price_now(db, seat)
+
     payment = Payment(
         user_id=user.id,
         seat_id=seat.id,
         event_id=seat.event_id,
-        amount=float(seat.price),
+        # Hold ka LOCKED price. User ne jo dekha, wahi charge hoga.
+        amount=quoted,
         currency=settings.CURRENCY,
         provider=provider.name,
         status=PAYMENT_PENDING,
@@ -180,7 +191,7 @@ def start_checkout(
     try:
         session = provider.create_checkout(
             payment_id=payment.id,
-            amount=float(seat.price),
+            amount=quoted,
             description=f"Seat {seat.row_label}-{seat.seat_number}",
         )
     except PaymentError as exc:

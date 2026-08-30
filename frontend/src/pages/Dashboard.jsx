@@ -6,6 +6,7 @@ import EventHero from '../components/EventHero'
 import EventSummary from '../components/EventSummary'
 import FeatureStrip from '../components/FeatureStrip'
 import HoldCard from '../components/HoldCard'
+import PricingBanner from '../components/PricingBanner'
 import SeatGrid from '../components/SeatGrid'
 
 export default function Dashboard() {
@@ -14,6 +15,7 @@ export default function Dashboard() {
     event,
     seats,
     counts,
+    pricing,
     bookings,
     selectedSeat,
     lockSecondsLeft,
@@ -45,6 +47,9 @@ export default function Dashboard() {
 
         <div className="space-y-5">
           <EventSummary event={event} counts={counts} />
+          {/* HoldCard ke UPAR — user ko pehle pata chale ki price demand se
+              chal raha hai, tabhi 'price locked' badge ka matlab banta hai */}
+          <PricingBanner pricing={pricing} />
           <HoldCard
             seat={selectedSeat}
             secondsLeft={lockSecondsLeft}

@@ -924,3 +924,270 @@ def test_checkin_stats(client, role_tokens):
     body = res.json()
     assert body["tickets_sold"] >= body["checked_in"]
     assert body["remaining"] == body["tickets_sold"] - body["checked_in"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 14 — Dynamic pricing
+#
+# Yahan do alag cheezein test ho rahi hain:
+#   1. FORMULA sahi hai (pure functions, koi DB nahi)
+#   2. QUOTED PRICE ka waada nibhta hai (poora HTTP flow)
+#
+# (2) zyada important hai. Formula galat ho to price thoda ajeeb lagega.
+# Price lock toota to user se galat paisa katega — wo bug alag level ka hai.
+# ---------------------------------------------------------------------------
+
+from pricing import apply, multiplier_for, pricing_for_event
+
+
+def test_multiplier_grows_with_demand():
+    """0% bika = base, 100% bika = base x (1 + demand_factor)."""
+    assert multiplier_for(0, 100, 0.5, 2.0) == 1.0
+    assert multiplier_for(50, 100, 0.5, 2.0) == 1.25
+    assert multiplier_for(100, 100, 0.5, 2.0) == 1.5
+
+
+def test_max_surge_is_a_hard_ceiling():
+    """demand_factor kitna bhi ho, max_surge se upar nahi ja sakta."""
+    # 100% bika, factor 5.0 -> formula 6.0 kehta hai, cap 1.5 hai
+    assert multiplier_for(100, 100, 5.0, 1.5) == 1.5
+
+
+def test_empty_event_does_not_divide_by_zero():
+    """total=0 pe crash nahi hona chahiye — naya event banate waqt ye hota hai."""
+    assert multiplier_for(0, 0, 0.5, 2.0) == 1.0
+
+
+def test_price_rounds_to_a_clean_number():
+    """₹827.43 nahi, ₹830. Ajeeb price pe user ko shak hota hai."""
+    assert apply(827.43, 1.0) == 830.0
+    assert apply(1000, 1.25) == 1250.0
+
+
+def test_disabled_pricing_never_surges():
+    """
+    Off hone par multiplier hamesha 1.0 — chahe event pura bik jaaye.
+
+    Ye default hai, aur ye default hi zyada events pe lagega.
+    """
+    info = pricing_for_event(
+        enabled=False, sold=100, total=100, demand_factor=0.5, max_surge=2.0
+    )
+    assert info.multiplier == 1.0
+    assert info.seats_until_increase is None
+
+
+def test_seats_until_increase_counts_forward():
+    """
+    100 seats, factor 0.5, base ₹1000:
+      0 bika -> 1.000x -> ₹1000
+      1 bika -> 1.005x -> ₹1005 -> ₹10 pe round -> ₹1000  (koi badlaav nahi)
+      2 bika -> 1.010x -> ₹1010                            <- yahan badla
+
+    Matlab jawab 2 hai, 1 nahi. Ye pehli baar likhne pe 1 lagta hai —
+    par ₹5 ka farq ₹10 ke round me gayab ho jata hai. Isiliye ye function
+    seedha loop chalata hai formula se andaza lagane ke bajaye.
+    """
+    info = pricing_for_event(
+        enabled=True, sold=0, total=100, demand_factor=0.5, max_surge=2.0,
+        sample_base=1000.0,
+    )
+    assert info.seats_until_increase == 2
+
+    # Chhota factor -> price dheere badhta hai -> zyada seats lagti hain
+    slow = pricing_for_event(
+        enabled=True, sold=0, total=100, demand_factor=0.1, max_surge=2.0,
+        sample_base=1000.0,
+    )
+    assert slow.seats_until_increase > 1
+
+
+def test_max_surge_reached_reports_no_further_increase():
+    """Cap pe pahunch gaye to 'aur badhega' ka jhoot mat bolo."""
+    info = pricing_for_event(
+        enabled=True, sold=50, total=100, demand_factor=5.0, max_surge=1.0,
+        sample_base=1000.0,
+    )
+    assert info.multiplier == 1.0
+    assert info.seats_until_increase is None
+
+
+# ---- Ab HTTP flow — asli waada yahan test hota hai ----
+
+# surge_event fixture ki bookings cleanup ke liye — kaunse tokens ne is
+# event pe kuch kharida. Module-level isliye ki fixture ko test ke andar
+# banaye gaye tokens ka pata chal sake.
+tokens_cache: list[str] = []
+
+
+@pytest.fixture
+def surge_event(client, role_tokens):
+    """
+    Dynamic pricing wala chhota event, apna khud ka.
+
+    Event 1 use nahi kar sakte — uspe dusre tests bookings banate/hatate
+    rehte hain, aur multiplier sold-count se aata hai. Shared event pe ye
+    test kabhi pass kabhi fail hoti (flaky), aur flaky test bekaar test hai.
+    """
+    token = role_tokens["organizer"]
+    res = client.post(
+        "/api/organizer/events",
+        headers=_headers(token),
+        json={
+            "name": "Surge Test Event",
+            "venue": "Test Hall, Pune",
+            "starts_at": "2027-06-01T18:00:00Z",
+            "seats_per_row": 5,
+            "price_tiers": [{"rows": 2, "price": 1000}],   # 10 seats @ ₹1000
+            "dynamic_pricing": True,
+            # 10 seats, factor 1.0 -> har booking par +10% — asar saaf dikhta hai
+            "demand_factor": 1.0,
+            "max_surge": 2.0,
+        },
+    )
+    assert res.status_code == 201
+    event = res.json()
+
+    yield event
+
+    # Cleanup: bookings hatao, phir event (booking wale event delete nahi hote)
+    for t in [role_tokens["organizer"], role_tokens["admin"]] + tokens_cache:
+        for b in client.get("/api/bookings", headers=_headers(t)).json():
+            if b["event_id"] == event["id"] and b["status"] == "confirmed":
+                client.delete(f"/api/bookings/{b['id']}", headers=_headers(t))
+    tokens_cache.clear()
+    client.delete(f"/api/organizer/events/{event['id']}", headers=_headers(token))
+
+
+def test_new_event_starts_at_base_price(client, surge_event):
+    seats = client.get(f"/api/events/{surge_event['id']}/seats").json()
+    assert all(s["current_price"] == s["price"] == 1000.0 for s in seats)
+
+    detail = client.get(f"/api/events/{surge_event['id']}").json()
+    assert detail["pricing"]["enabled"] is True
+    assert detail["pricing"]["multiplier"] == 1.0
+    assert detail["pricing"]["surge_percent"] == 0
+
+
+def test_price_rises_after_a_booking(client, tokens, surge_event):
+    """Ek seat bikte hi baaki seats mehngi ho jaani chahiye."""
+    tokens_cache.append(tokens[0])
+    seats = client.get(f"/api/events/{surge_event['id']}/seats").json()
+
+    res = client.post(
+        "/api/bookings",
+        headers=_headers(tokens[0]),
+        json={"seat_id": seats[0]["id"]},
+    )
+    assert res.status_code == 201
+
+    after = client.get(f"/api/events/{surge_event['id']}/seats").json()
+    unsold = [s for s in after if s["status"] == "available"]
+
+    # 1/10 bika, factor 1.0 -> 1.1x -> ₹1100
+    assert all(s["current_price"] == 1100.0 for s in unsold)
+    # BASE price nahi badla — ye poore design ki buniyaad hai
+    assert all(s["price"] == 1000.0 for s in unsold)
+
+
+def test_held_price_survives_a_price_rise(client, tokens, surge_event):
+    """
+    ⭐ Is poore feature ka sabse zaroori test.
+
+    User A seat hold karta hai (₹1000 quote milta hai). Phir User B ek aur
+    seat khareed leta hai, jisse demand badh jati hai. A ab bhi ₹1000 hi
+    dega — kyunki usse ₹1000 kaha gaya tha.
+
+    Ye tootne par user se chup-chaap zyada paisa kat jayega.
+    """
+    tokens_cache.extend([tokens[0], tokens[1]])
+    seats = client.get(f"/api/events/{surge_event['id']}/seats").json()
+    a_seat, b_seat = seats[0], seats[1]
+
+    # A hold karta hai — quote lock ho jata hai
+    lock = client.post(
+        f"/api/seats/{a_seat['id']}/lock", headers=_headers(tokens[0])
+    ).json()
+    quoted = lock["price"]
+    assert quoted == 1000.0
+
+    # B khareedta hai — demand upar
+    assert client.post(
+        "/api/bookings", headers=_headers(tokens[1]), json={"seat_id": b_seat["id"]}
+    ).status_code == 201
+
+    # Baaki sabke liye price badh gaya...
+    fresh = client.get(f"/api/events/{surge_event['id']}/seats").json()
+    others = [s for s in fresh if s["status"] == "available"]
+    assert others and all(s["current_price"] > 1000.0 for s in others)
+
+    # ...par A ka hold abhi bhi ₹1000 pe hai
+    held = next(s for s in fresh if s["id"] == a_seat["id"])
+    assert held["held_price"] == 1000.0
+
+    # Aur booking me exactly wahi amount charge hua
+    booking = client.post(
+        "/api/bookings", headers=_headers(tokens[0]), json={"seat_id": a_seat["id"]}
+    )
+    assert booking.status_code == 201
+    assert booking.json()["amount"] == quoted
+
+
+def test_releasing_a_hold_drops_the_locked_price(client, tokens, surge_event):
+    """
+    Hold chhoda to purana price bhi gaya.
+
+    Bina iske user hold-release-hold karke hamesha ke liye sabse sasta
+    price pakad leta — surge ka koi matlab hi na bachta.
+    """
+    seats = client.get(f"/api/events/{surge_event['id']}/seats").json()
+    seat = [s for s in seats if s["status"] == "available"][-1]
+
+    client.post(f"/api/seats/{seat['id']}/lock", headers=_headers(tokens[0]))
+    client.delete(f"/api/seats/{seat['id']}/lock", headers=_headers(tokens[0]))
+
+    fresh = client.get(f"/api/seats/{seat['id']}").json()
+    assert fresh["held_price"] is None
+
+
+def test_organizer_can_turn_surge_off(client, role_tokens, surge_event):
+    """Sales slow hain to organizer surge band kar sake — base price wapas."""
+    res = client.patch(
+        f"/api/organizer/events/{surge_event['id']}",
+        headers=_headers(role_tokens["organizer"]),
+        json={"dynamic_pricing": False},
+    )
+    assert res.status_code == 200
+
+    detail = client.get(f"/api/events/{surge_event['id']}").json()
+    assert detail["pricing"]["enabled"] is False
+
+    seats = client.get(f"/api/events/{surge_event['id']}/seats").json()
+    assert all(s["current_price"] == s["price"] for s in seats)
+
+
+def test_base_price_cannot_be_edited(client, role_tokens, surge_event):
+    """
+    Base price PATCH se nahi badal sakta.
+
+    Purani bookings uske reference pe tiki hain — badla to unki receipt
+    jhoothi ho jayegi. Pydantic extra fields chup-chaap ignore karta hai,
+    isliye check karte hain ki asar HUA hi nahi.
+    """
+    client.patch(
+        f"/api/organizer/events/{surge_event['id']}",
+        headers=_headers(role_tokens["organizer"]),
+        json={"price_tiers": [{"rows": 2, "price": 99999}]},
+    )
+    seats = client.get(f"/api/events/{surge_event['id']}/seats").json()
+    assert all(s["price"] == 1000.0 for s in seats)
+
+
+def test_absurd_surge_settings_are_rejected(client, role_tokens, surge_event):
+    """demand_factor=50 galti se type ho jaye to server mana kare."""
+    res = client.patch(
+        f"/api/organizer/events/{surge_event['id']}",
+        headers=_headers(role_tokens["organizer"]),
+        json={"demand_factor": 50},
+    )
+    assert res.status_code == 422

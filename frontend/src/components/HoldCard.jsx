@@ -1,3 +1,4 @@
+import { seatPrice } from '../booking/BookingContext'
 import { IconClock, IconLock } from '../layout/icons'
 
 /** 125 -> "2:05" */
@@ -23,6 +24,15 @@ export default function HoldCard({
 }) {
   // Aakhri minute me countdown laal — user ko jaldi karni chahiye
   const urgent = secondsLeft > 0 && secondsLeft <= 60
+
+  // Hold ke waqt LOCK hua price. Grid me baaki seats mehngi ho chuki hon
+  // to bhi ye nahi badalta — server par bhi exactly yahi charge hoga.
+  const price = seatPrice(seat)
+  const lockedBelowMarket =
+    seat &&
+    seat.held_price != null &&
+    seat.current_price != null &&
+    seat.current_price > seat.held_price
 
   return (
     <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
@@ -52,7 +62,19 @@ export default function HoldCard({
           <p className="mt-4 text-4xl font-bold tracking-tight text-white">
             {seat.row_label}-{seat.seat_number}
           </p>
-          <p className="mt-0.5 text-lg text-slate-300">₹{seat.price}</p>
+          <p className="mt-0.5 text-lg text-slate-300">₹{price}</p>
+
+          {/* Sirf tab dikhate hain jab faayda SACH me ho — surge off ho ya
+              price abhi tak badla hi na ho to ye line aati hi nahi. Har haal
+              me "you saved!" chipka dena jhooth hota. */}
+          {lockedBelowMarket && (
+            <p
+              className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/10
+                         px-2 py-1 text-[11px] text-emerald-300 ring-1 ring-emerald-500/20"
+            >
+              🔒 Price locked — abhi ye seat ₹{seat.current_price} ki hai
+            </p>
+          )}
 
           {/* version dikha rahe hain kyunki optimistic locking isi par chalti hai —
               booking/hold ke baad ye number badalta hua dikhta hai */}
@@ -73,7 +95,7 @@ export default function HoldCard({
                        transition hover:bg-violet-500 disabled:cursor-not-allowed
                        disabled:opacity-50"
           >
-            {booking ? 'Redirecting…' : `Pay ₹${seat.price}`}
+            {booking ? 'Redirecting…' : `Pay ₹${price}`}
           </button>
 
           <button

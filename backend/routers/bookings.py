@@ -23,6 +23,7 @@ from database import get_db
 from events_broadcast import broadcast_seat_update
 from idempotency import Idempotency
 from job_queue import enqueue_ticket
+from pricing_state import price_now
 from models import (
     BOOKING_CANCELLED,
     BOOKING_CONFIRMED,
@@ -135,7 +136,13 @@ def _perform_booking(payload: BookingCreate, db: Session, user: User) -> Booking
         )
 
     expected_version = seat.version
-    amount = float(seat.price)
+    # Booking ka amount = jo user ko QUOTE kiya gaya tha.
+    #
+    # `price_now` hold ka locked price lautata hai agar hold hai, warna
+    # abhi ka dynamic price. Kabhi bhi seedha `seat.price` mat lo — wo BASE
+    # hai, aur dynamic pricing on ho to user ne wo price kabhi dekha hi
+    # nahi tha.
+    amount = price_now(db, seat)
     event_id = seat.event_id
 
     # ---- LAYER 2: OPTIMISTIC LOCKING ----
@@ -154,6 +161,9 @@ def _perform_booking(payload: BookingCreate, db: Session, user: User) -> Booking
             version=Seat.version + 1,
             locked_by=None,
             locked_until=None,
+            # Seat bik gayi — price lock ka ab koi matlab nahi. Amount
+            # booking row me chala gaya, jo asli record hai.
+            held_price=None,
         )
         .execution_options(synchronize_session=False)
     )

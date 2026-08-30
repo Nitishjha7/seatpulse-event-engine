@@ -1,3 +1,5 @@
+import { seatPrice } from '../booking/BookingContext'
+
 /**
  * Seat grid — event ki saari seats rows me.
  *
@@ -30,7 +32,7 @@ function Seat({ seat, isSelected, isMine, onSelect, busy }) {
     <button
       onClick={() => clickable && onSelect(seat)}
       disabled={!clickable}
-      title={`${seat.row_label}-${seat.seat_number} · ₹${seat.price} · ${seat.status}`}
+      title={`${seat.row_label}-${seat.seat_number} · ₹${seatPrice(seat)} · ${seat.status}`}
       className={`h-8 w-8 shrink-0 rounded-md text-[11px] font-semibold transition-all
                   duration-150 sm:h-9 sm:w-9 sm:text-xs ${style} ${busy ? 'opacity-60' : ''}`}
     >
