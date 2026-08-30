@@ -635,6 +635,9 @@ Aakhir me browser me ek round: login → seat hold → book → cancel → logou
 | QR token nikalo (manual test) | `docker compose exec db psql -U seatpulse -d seatpulse -t -A -c "SELECT qr_token FROM bookings WHERE id=<ID>;"` |
 | Surge on wala event | organizer se **Create Event** → "Demand-based pricing" checkbox |
 | Locking benchmark (chaar scenarios) | `bash loadtest/run_benchmark.sh` — pehle `BENCHMARK_MODE=true` |
+| Prod stack (4 workers) | `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build` |
+| Multi-worker broadcast proof | `docker compose cp loadtest/verify_multiworker.py backend:/tmp/vmw.py && docker compose exec backend python /tmp/vmw.py` |
+| Kis worker ne serve kiya | `curl -s localhost:8000/api/health` -> `worker_pid` |
 | Micro-benchmark (sirf DB claim step) | `docker compose exec backend python /loadtest/micro_benchmark.py` |
 | Ek request me kitni SQL queries? | `docker compose exec db psql -U seatpulse -d seatpulse -c "ALTER SYSTEM SET log_statement='all';" -c "SELECT pg_reload_conf();"` phir `docker compose logs db` |
 | Locked price dekho | `docker compose exec db psql -U seatpulse -d seatpulse -c "SELECT id, price, held_price, status FROM seats WHERE held_price IS NOT NULL;"` |
@@ -670,6 +673,76 @@ sabse important bug hai.
 | Charge quote se match kiya | `bookings.amount` = 1000 |
 
 **Automated version:** `pytest -k "price or surge"` (13 tests).
+
+---
+
+## ⭐ CI jaisa clean run (har bade change ke baad)
+
+Ye sabse zaroori manual check hai. Purani local DB bugs chhupa leti hai —
+Phase 16 me isi tarike se **teen bugs** mile jo mahino se code me the.
+
+```bash
+docker compose down -v          # ⚠️ poora database uda deta hai
+docker compose up -d --build
+docker compose exec backend alembic upgrade head
+docker compose exec backend python seed.py
+docker compose exec backend python -m pytest tests/ -q
+docker compose exec backend python verify_integrity.py
+```
+
+**Output me kya dekhna:**
+
+| Dikha | Matlab |
+|---|---|
+| `66 passed` | ✅ sahi |
+| `31 passed, 35 skipped` | ❌ **seed toota hai** — fixtures skip ho rahi hain. CI me ye bhi green dikhta hai, isliye skip count zaroor padho |
+| `seed.py` -> `Numbered: user1 … user499` | users sahi bane |
+
+## Multi-worker verify karna
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+# Kai workers chal rahe hain? (har baar naya connection chahiye —
+# ek hi keep-alive connection hamesha wahi worker deta hai)
+for i in 1 2 3 4 5 6; do curl -s localhost:8000/api/health | grep -o '"worker_pid":[0-9]*'; done
+
+# Broadcast process boundary paar karta hai?
+docker compose cp loadtest/verify_multiworker.py backend:/tmp/vmw.py
+docker compose exec backend python /tmp/vmw.py
+
+# Connections limit ke andar hain? (4 workers, max 100)
+docker compose exec db psql -U seatpulse -d seatpulse \
+  -c "SELECT count(*) FROM pg_stat_activity WHERE datname='seatpulse';"
+```
+
+⚠️ **Prod image me pytest nahi hai** (dev tools install hi nahi hote).
+Prod stack ke against tests chalane ke liye dev image se throwaway
+container:
+
+```bash
+docker build --target dev -t seatpulse-test:dev ./backend
+docker run --rm --network seatpulse-event-engine_default \
+  -e TEST_BASE_URL=http://backend:8000 \
+  -e DATABASE_URL="postgresql+psycopg2://seatpulse:seatpulse_dev_password@db:5432/seatpulse" \
+  -e REDIS_URL=redis://redis:6379/0 \
+  seatpulse-test:dev python -m pytest tests/ -q
+```
+
+Wapas dev pe:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+docker compose up -d --build backend worker
+```
+
+⚠️ `--build` ZAROORI hai. Prod build wahi image tag overwrite kar deta hai
+(`seatpulse-event-engine-backend:latest`), isliye seedha `up -d` karne par
+dev container prod image se chalta hai — aur usme pytest hai hi nahi:
+
+```
+/usr/local/bin/python: No module named pytest
+```
 
 ---
 
@@ -732,6 +805,7 @@ Poore results aur unka matlab: [Phase 15](../phases/15-locking-benchmark.md).
 - [Phase 6 — Load Testing](../phases/06-load-testing.md) — load testing ka poora detail + results
 - [Phase 14 — Dynamic Pricing](../phases/14-dynamic-pricing.md) — price lock kyu zaroori hai
 - [Phase 15 — Locking Benchmark](../phases/15-locking-benchmark.md) — benchmark ka method aur results
+- [Phase 16 — Multi-Worker + CI](../phases/16-multiworker-ci.md) — prod config aur CI pipeline
 - [postgres-commands.md](postgres-commands.md) — DB queries
 - [docker-commands.md](docker-commands.md) — container commands
 - [roadmap.md](../roadmap.md) — poora plan

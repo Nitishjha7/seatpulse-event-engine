@@ -80,6 +80,7 @@ React ka kaam har phase me thoda-thoda hua hai, isliye ye index:
 | 13 | Gate check-in (QR scan) | ✅ Done — [Phase 13 — Gate Check-in](phases/13-gate-checkin.md) |
 | 14 | Dynamic pricing + price lock | ✅ Done — [Phase 14 — Dynamic Pricing](phases/14-dynamic-pricing.md) |
 | 15 | Locking benchmark (optimistic vs pessimistic) | ✅ Done — [Phase 15 — Locking Benchmark](phases/15-locking-benchmark.md) |
+| 16 | Multi-worker deploy + CI | ✅ Done — [Phase 16 — Multi-Worker + CI](phases/16-multiworker-ci.md) |
 | — | **Follow-up:** `pricing_state()` har booking me do baar chalta hai (6 faaltu queries). Phase 15 ki query-count ne pakda. |
 
 ---

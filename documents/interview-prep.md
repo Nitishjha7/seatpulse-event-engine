@@ -670,7 +670,85 @@ Ye khud bata do — ye sabse strong cheez hai jo is section me hai:
 
 ---
 
-## 13. Traps — jahan "haan" bolna galat hai
+## 13. Multi-worker + CI — "jo verify nahi hua, wo sirf umeed hai"
+
+### "Multi-worker pe deploy karoge to kya badlega?"
+
+> "Maine kiya, aur do cheezein mili.
+>
+> **Pehli — jo mera daawa tha, wo aakhirkar verify hua.** Phase 5 me
+> maine broadcast Redis pub/sub se kiya tha, in-memory dict se nahi, ye
+> keh ke ki 'multi-worker me memory share nahi hoti'. Par dev me hamesha
+> ek hi worker chala, to wo baat kabhi test nahi hui thi.
+>
+> Ab test hai: 12 WebSocket clients connect karo, `/api/health` ke
+> `worker_pid` se sabit karo ki wo alag processes pe hain, ek seat book
+> karo — aur dekho ki sabko update mila. Milta hai.
+>
+> **Doosri — jo config ek worker pe sahi thi wo char pe toot gayi.** Har
+> worker apna alag process hai, apne connection pool ke saath.
+> `4 x (20 + 20) = 160 connections`, aur Postgres ki default limit 100
+> hai. Pool ab env se aata hai aur prod me 5+5 hai, matlab total 40."
+
+### "In-memory broadcast se kya galat hota?"
+
+Ye follow-up ka concrete jawab hai:
+
+> "Sirf usi worker ke clients ko message milta jisme booking hui thi.
+> Baaki 8-9 clients chup rehte, aur unke seat grid me wo seat **hari
+> dikhti rehti jabki wo bik chuki hoti**. Wo user next click par 409
+> khaata — aur usse lagta app toota hua hai.
+>
+> Ye bug single worker pe kabhi reproduce nahi hota. Isiliye maine ise
+> test me daala, comment me nahi."
+
+### ⭐ "CI se koi asli faayda hua?"
+
+**Ye sabse strong jawab hai jo is section me hai.**
+
+> "Haan — CI ne teen bugs pakde jo mahino se code me the. Teeno isliye
+> chhupe the ki meri local database purani thi. CI hamesha khaali volume
+> se shuru karta hai.
+>
+> **Ek:** `seed.py` user numbering users ki GINTI se banata tha. Named
+> accounts (demo/organizer/admin) banne ke baad counter 3 pe pahunch jata
+> tha, to `user1` aur `user2` kabhi bante hi nahi the. Tests unse login
+> karte hain — fixture skip ho jati thi. Result: **31 passed, 35 skipped**,
+> aur CI me wo bhi GREEN dikhta hai.
+>
+> **Do:** seeded event ka `organizer_id` NULL tha. Gate check-in 403 deta
+> tha. Ye sirf test failure nahi thi — demo data hi toota tha, event
+> organizer portal me dikhta hi nahi tha.
+>
+> **Teen:** do tests fixed idempotency key use karte the. Wo key Redis me
+> TTL tak zinda rehti hai, to agla run usi key par replay le aata:
+> 201 milta tha par nayi booking banti hi nahi thi."
+
+### "Debug kaise kiya?"
+
+Ye batana ki pehla andaza galat tha, bahut acha lagta hai:
+
+> "Teesra bug pehli baar prod multi-worker stack pe dikha, to pehla shak
+> multi-worker par gaya. Galat tha — wo test isolation ki dikkat thi.
+>
+> Isliye ab main pehle poochta hoon 'kya ye single worker pe bhi hota
+> hai?' Yahan teeno baar asli wajah kuch aur nikli."
+
+### Rapid fire
+
+| Sawaal | Ek-line jawab |
+|---|---|
+| GitHub ka `services:` block kyu nahi? | Wo sirf DB/Redis deta hai, app runner pe alag chalti — matlab CI wo test karta jo deploy hi nahi hoti. Main wahi compose chalata hoon jo laptop pe chalti hai |
+| Prod image me kya alag hai? | Non-root user, dev tools nahi, `--reload` nahi. CI dono properties **assert** karta hai, sirf build nahi karta |
+| Frontend prod image ka size? | 74MB (nginx + built assets) vs 407MB dev. `node_modules` aur source hai hi nahi |
+| nginx me sabse zaroori line? | `try_files $uri $uri/ /index.html` — iske bina `/events/3` par refresh 404 deta hai |
+| `index.html` cache kyu nahi karte? | Wahi file naye asset names batati hai. Cache kiya to user deploy ke baad purane assets maangega jo exist nahi karte — blank page |
+| Sticky sessions chahiye WebSocket ke liye? | Nahi. Har worker khud Redis se subscribe karta hai, isliye client kisi bhi worker pe ja sakta hai |
+| CI me sirf "passed" dekhna kaafi hai? | Nahi — **skip count** bhi. "31 passed, 35 skipped" bilkul green dikhta hai |
+
+---
+
+## 14. Traps — jahan "haan" bolna galat hai
 
 ### "Kafka use kar sakte the na?"
 
@@ -694,7 +772,7 @@ Ye khud bata do — ye sabse strong cheez hai jo is section me hai:
 
 ---
 
-## 14. Rapid fire
+## 15. Rapid fire
 
 | Sawaal | Ek-line jawab |
 |---|---|
@@ -714,7 +792,7 @@ Ye khud bata do — ye sabse strong cheez hai jo is section me hai:
 
 ---
 
-## 15. Whiteboard — architecture aise banao
+## 16. Whiteboard — architecture aise banao
 
 Isi order me banao, bolte hue:
 
@@ -735,7 +813,7 @@ Bolte waqt teen baatein zaroor:
 
 ---
 
-## 16. Tum kya poochho
+## 17. Tum kya poochho
 
 Interview do-tarfa hai. Ye poochne se pata chalta hai ki tum production ke bare me sochte ho:
 
@@ -768,4 +846,5 @@ Aur ek line jo kabhi mat bhoolna:
 - [Phase 7 — Auth + Google OAuth](phases/07-auth-google-oauth.md) — auth + baaki do bug
 - [Phase 14 — Dynamic Pricing](phases/14-dynamic-pricing.md) — price lock ka poora design
 - [Phase 15 — Locking Benchmark](phases/15-locking-benchmark.md) — poore numbers aur method
+- [Phase 16 — Multi-Worker + CI](phases/16-multiworker-ci.md) — deploy config aur teen bugs
 - [testing.md](reference/testing.md) — sab kuch demo karne ke commands

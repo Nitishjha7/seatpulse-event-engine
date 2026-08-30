@@ -151,6 +151,20 @@ Because the multiplier is one number for the whole event, a booking broadcasts a
 
 Verified end to end: one user held a seat at Rs.1000, four more bookings pushed the market to Rs.1400, and the held seat still charged exactly Rs.1000.
 
+### Running multiple workers
+
+Production runs four uvicorn workers rather than one, which is where a claim made back in Phase 5 finally gets tested. Broadcasts go through Redis pub/sub instead of an in-process dictionary specifically so they survive process boundaries — but with a single worker that had never actually been exercised. A dedicated check now connects twelve WebSocket clients, confirms via `worker_pid` in `/api/health` that they really are spread across processes, books one seat in one worker, and verifies all twelve receive the update. They do.
+
+Multiple workers also break a configuration that was correct with one. Each worker is a separate process with its own connection pool, so `4 × (20 + 20)` asks Postgres for 160 connections against a default limit of 100. Pool size and the admission-control limit are now environment-driven and scaled down per worker, holding the same invariant as before: `MAX_CONCURRENT_REQUESTS < pool_size + max_overflow`. Measured at four workers: 5 connections of 100.
+
+Images are multi-stage with `dev` and `prod` targets. The production backend runs as a non-root user and ships without test tooling; the production frontend is built assets served by nginx — 74MB against 407MB for the dev image. CI asserts both properties rather than trusting the comment.
+
+### Continuous integration
+
+Every push boots the **real** `docker compose` stack, runs migrations, seeds, executes all 66 tests, and finishes with the database integrity check. GitHub's `services:` block would have been simpler, but it only provides the database and cache — the application would run directly on the runner, which is not how it is deployed.
+
+Standing the stack up from an empty volume immediately paid for itself by exposing three bugs that had survived months of development on a long-lived local database: `seed.py` derived its user numbering from a row count, so `user1` and `user2` were never created and 35 tests silently **skipped** while the suite still reported green; the seeded event had a null `organizer_id`, so gate check-in returned 403 and the demo event never appeared in the organizer portal; and two tests used a fixed idempotency key that outlived the run in Redis, making a second run replay a stale response. Details: [documents/phases/16-multiworker-ci.md](documents/phases/16-multiworker-ci.md).
+
 ### Locking strategy, measured
 
 The obvious challenge to optimistic locking is "why not `SELECT … FOR UPDATE`?" — so both are implemented against the same booking path, switchable by a query parameter that only exists when `BENCHMARK_MODE` is on, and measured.
@@ -326,6 +340,7 @@ Result on the same 200-user flash sale: **1,250 requests with 58 failures and a 
 - [x] Gate check-in — camera QR scanning with an atomic single-entry guard, verified with 10 concurrent scans
 - [x] Dynamic pricing — demand-based surge pushed over the existing WebSocket channel, with the quoted price locked at hold time so checkout never costs more than what was shown
 - [x] Locking benchmark — `SELECT … FOR UPDATE` implemented alongside the optimistic path and measured against it; the difference turned out to be smaller than run-to-run variance, and the writeup says so
+- [x] Multi-worker deployment and CI — a production compose running 4 uvicorn workers behind a built frontend, a GitHub Actions pipeline that boots the real stack for every push, and a test proving WebSocket broadcasts cross process boundaries
 
 ### Planned
 
@@ -335,7 +350,6 @@ Ordered by dependency — each item leans on the ones above it. None of these ar
 - [ ] **Group booking + split payment** — shareable payment link with a deadline; every share paid or the whole group's seats are released
 - [ ] **Natural-language seat finder** — an LLM turns *"3 seats together under ₹1500, centred on the stage"* into structured filters that run as an ordinary query
 - [ ] **AI event copy + poster generator** — draft title, description and banner from a short prompt, always editable before publishing
-- [ ] Multi-worker deployment (`--workers`) and CI pipeline
 - [ ] Screenshots / demo GIF, and a deployed live demo
 - [ ] **Demand forecasting** — base price and sell-out prediction from booking velocity. Last on purpose: without real historical data this produces a plausible-looking number rather than a useful one
 
