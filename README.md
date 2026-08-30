@@ -151,6 +151,18 @@ Because the multiplier is one number for the whole event, a booking broadcasts a
 
 Verified end to end: one user held a seat at Rs.1000, four more bookings pushed the market to Rs.1400, and the held seat still charged exactly Rs.1000.
 
+### Group booking, all-or-nothing
+
+Four friends want to sit together and each pay their own share. That changes the correctness question the rest of this project answers. Everywhere else it is *one seat, one booking* — a single row, settled by a conditional `UPDATE`. Here it is **all-or-nothing across N independent payments**, each arriving at its own time from a different person, with a deadline running underneath.
+
+Seats a group is holding get their own status, `group_held`, rather than reusing `locked`. Lazy cleanup silently returns expired `locked` seats to the pool, which would be wrong here: some of those seats have already been paid for, so releasing them means issuing refunds — a decision, not a side effect. For the same reason expiry runs as a scheduled worker job rather than lazily on read. Getting a refund cannot depend on a stranger happening to open the event page.
+
+**Where optimistic locking stopped being enough.** The pattern used everywhere else — `UPDATE … WHERE id = ? AND status = 'expected'` — works when both racers decide on the *same row*. When the last payment lands as the expiry job fires, they do not: one writes `group_shares`, the other writes `group_bookings`. A conditional update on one row cannot guard a race on another, and the gap showed up as a real failure — a share left `paid` inside an expired group, money taken with no seat and no refund. That one place takes a `SELECT … FOR UPDATE` on the group row, which is the opposite of the conclusion in the locking benchmark and for a different reason: not throughput, but serialising two transactions that touch different rows.
+
+Verified across 60 runs of the confirm-versus-expire race: exactly one winner every time, no group left mid-flight, and the loser always cleaned up — seats booked and bookings created, or seats released and paid shares refunded. Details, including the two bugs the race test exposed: [documents/phases/17-group-booking.md](documents/phases/17-group-booking.md).
+
+Two things are deliberately not built: refunds only mark status rather than calling a real refund API (a real gateway confirms refunds by webhook too, which needs its own state), and there are no email notifications.
+
 ### Running multiple workers
 
 Production runs four uvicorn workers rather than one, which is where a claim made back in Phase 5 finally gets tested. Broadcasts go through Redis pub/sub instead of an in-process dictionary specifically so they survive process boundaries — but with a single worker that had never actually been exercised. A dedicated check now connects twelve WebSocket clients, confirms via `worker_pid` in `/api/health` that they really are spread across processes, books one seat in one worker, and verifies all twelve receive the update. They do.
@@ -204,6 +216,10 @@ The frontend hides organizer and admin navigation by role, but that is **UX only
 | `GET` | `/api/bookings` | Your bookings, each with its ticket status |
 | `GET` | `/api/bookings/{id}/ticket` | Download the PDF ticket (owner only) |
 | `POST` | `/api/checkin` | Scan a QR at the gate — admits exactly once |
+| `POST` | `/api/groups` | Hold N seats and get a shareable split-payment link |
+| `GET` | `/api/groups/{share_token}` | Group state — who claimed what, who has paid |
+| `POST` | `/api/groups/{share_token}/shares/{id}/claim` | Take one open seat in the group |
+| `POST` | `/api/groups/{share_token}/shares/{id}/pay` | Checkout for your own share |
 | `DELETE` | `/api/bookings/{id}` | Cancel your booking, releasing the seat |
 | `GET` | `/api/health` | Service, database and Redis status |
 | `POST` | `/api/payments/checkout` | Start a checkout session for a held seat |
@@ -255,6 +271,8 @@ WebSocket messages are fanned out through a Redis pub/sub channel per event, so 
 | `events` | Name, venue, start time, total seats, description, category, surge pricing settings |
 | `seats` | Position, **base** price, `status`, **`version`** (optimistic lock), lock holder + expiry, `held_price` (quote locked at hold time) |
 | `bookings` | Links user ↔ seat, with a **partial unique index** enforcing one confirmed booking per seat |
+| `group_bookings` | A split-payment group — status, deadline, and the secret share token |
+| `group_shares` | One seat inside a group: who claimed it, what they owe, whether they have paid |
 
 ## 📊 Load Test Results
 
@@ -291,7 +309,7 @@ docker compose --profile loadtest run --rm locust \
     --host http://backend:8000
 
 docker compose exec backend python verify_integrity.py
-docker compose exec backend pytest tests/ -v         # 66 tests: auth, RBAC, payments, tickets, check-in, pricing, locking, concurrency
+docker compose exec backend pytest tests/ -v         # 79 tests: auth, RBAC, payments, tickets, check-in, pricing, locking, groups, concurrency
 ```
 
 ### What load testing actually caught
@@ -341,13 +359,13 @@ Result on the same 200-user flash sale: **1,250 requests with 58 failures and a 
 - [x] Dynamic pricing — demand-based surge pushed over the existing WebSocket channel, with the quoted price locked at hold time so checkout never costs more than what was shown
 - [x] Locking benchmark — `SELECT … FOR UPDATE` implemented alongside the optimistic path and measured against it; the difference turned out to be smaller than run-to-run variance, and the writeup says so
 - [x] Multi-worker deployment and CI — a production compose running 4 uvicorn workers behind a built frontend, a GitHub Actions pipeline that boots the real stack for every push, and a test proving WebSocket broadcasts cross process boundaries
+- [x] Group booking with split payment — a shareable link where each person pays their own share, confirmed all-or-nothing against a deadline, with the confirm/expire race verified over 60 concurrent runs
 
 ### Planned
 
 Ordered by dependency — each item leans on the ones above it. None of these are built yet.
 
 - [ ] **Visual seat layout builder** — organizer draws rows, sections and price bands; saved as JSON and expanded into seats server-side
-- [ ] **Group booking + split payment** — shareable payment link with a deadline; every share paid or the whole group's seats are released
 - [ ] **Natural-language seat finder** — an LLM turns *"3 seats together under ₹1500, centred on the stage"* into structured filters that run as an ordinary query
 - [ ] **AI event copy + poster generator** — draft title, description and banner from a short prompt, always editable before publishing
 - [ ] Screenshots / demo GIF, and a deployed live demo

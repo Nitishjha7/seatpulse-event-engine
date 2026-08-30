@@ -748,7 +748,155 @@ Ye batana ki pehla andaza galat tha, bahut acha lagta hai:
 
 ---
 
-## 14. Traps — jahan "haan" bolna galat hai
+## 14. ⭐ Group booking — "sab ya koi nahi"
+
+Ye poore project ka sabse achha section hai, kyunki isme ek jagah aisi hai
+jahan mera apna default **kaam nahi aaya** — aur wo maine benchmark karke
+choose kiya tha.
+
+### "Group booking me naya kya hai?"
+
+> "Ab tak project ka har correctness sawaal ek hi shakal ka tha: **ek seat,
+> ek booking**. Redis lock, version column, partial unique index — teeno
+> usi ek sawaal ke jawab the.
+>
+> Group me sawaal badal jata hai: **sab ya koi nahi, N alag payments ke
+> paar.** Har payment apne waqt par aati hai, alag user se, alag browser
+> se — aur beech me deadline chal rahi hoti hai.
+>
+> 3 ka paisa aa gaya, chauthe ka nahi, deadline aa gayi. Teen ko seat dena
+> aur chauthe ko nahi — us se poore group ka maqsad hi khatam. Wo saath
+> baithne aaye the. To group tootta hai, seats chhootti hain, teeno ka
+> paisa wapas."
+
+### "N bookings bana ke ek group_id se jod dete?"
+
+Ye pehla suggestion aata hi hai:
+
+> "Nahi, kyunki **booking ka matlab hi hai 'seat pakki ho gayi'**. Group me
+> seat kisi ki bhi pakki nahi hoti jab tak sabka paisa na aa jaye.
+>
+> To beech ki ek haalat chahiye thi — seats roki hui, kuch paise aa chuke,
+> faisla baaki. Wo ek naya seat status hai (`group_held`) plus do tables.
+> Bookings tabhi banti hain jab group confirm hota hai, aur tab ek saath
+> sabki."
+
+### "`locked` status reuse kar lete?"
+
+Chhota sawaal lagta hai, jawab bada hai:
+
+> "Nahi ho sakta. `locked` seats ko lazy cleanup chupchaap `available` kar
+> deta hai jab TTL nikal jati hai.
+>
+> Group seats ke saath wo galat hai — unme se kuch logon ka **paisa kat
+> chuka** hota hai. Unhe chhodne ka matlab refund bhi hai, aur refund ek
+> faisla hai, side-effect nahi.
+>
+> Isi wajah se expiry bhi cron job se hoti hai, lazy cleanup se nahi:
+> agar koi us event ka page hi na khole, lazy cleanup kabhi chalta hi nahi
+> aur log apne paise ka intezaar karte reh jaate. **Paisa wapas milna
+> kisi ajnabi ke page kholne par nirbhar nahi ho sakta.**"
+
+### ⭐⭐ "Sabse mushkil race kya thi?"
+
+**Ye is poore project ka sabse strong jawab hai. Tayyar rakho.**
+
+> "Aakhri banda pay kar raha hai theek us waqt jab expiry job group todh
+> raha hai. Ek ko confirm karna hai, doosre ko todna hai.
+>
+> Maine wahi pattern lagaya jo poore project me hai — atomic conditional
+> UPDATE. **Aur wo kaam nahi kiya.**
+>
+> Wajah: conditional UPDATE tabhi kaafi hai jab dono racers **ek hi row**
+> par faisla kar rahe hon. Yahan payment thread `group_shares` ki row
+> badalta hai aur expiry job `group_bookings` ki. Ek row ka conditional
+> UPDATE doosri row ki race nahi rok sakta.
+>
+> Nateeja jo test me asal me aaya: expired group me ek `paid` share. Us
+> bande ka paisa kat gaya, seat mili nahi, refund bhi nahi hua — sabse
+> bura possible outcome.
+>
+> Fix: group ki row par `SELECT ... FOR UPDATE`. Ab dono transactions
+> serialize ho jaati hain."
+
+**Follow-up jo pakka aayega — "par tumne to benchmark me optimistic choose
+kiya tha?"**
+
+Ye jawab dono baaton ko jodta hai:
+
+> "Haan, aur dono baatein saath chalti hain.
+>
+> Phase 15 ka nateeja tha: **throughput** me farak measurable nahi, aur
+> pessimistic ka khatra ye hai ki uska kharcha lock hold time ke saath
+> badhta hai.
+>
+> Yahan main pessimistic **speed ke liye nahi, correctness ke liye** use
+> kar raha hoon — kyunki do alag rows serialize karni hain, aur uska koi
+> optimistic version hai hi nahi. Aur lock ~1ms rehta hai, to Phase 15
+> wala khatra lagta hi nahi.
+>
+> Matlab default optimistic hai, aur ye ek soch-samajh ke liya gaya apwaad
+> hai — 'pessimistic bura hai' wala andha niyam nahi."
+
+### "Kaise pakda ye bug?"
+
+> "Ek race test likha jo 20 baar chalti hai, barrier se dono threads ek
+> lamhe me shuru karti hai, aur har run me invariants check karti hai:
+> group `confirmed` hai to saari seats booked, `expired` hai to saari
+> available aur paid share refunded, aur `collecting` me **kabhi nahi**
+> atka hona chahiye.
+>
+> Bug 20 me se 1 baar dikhta tha. Ek normal test kabhi na pakadta.
+>
+> Ek aur cheez seekhi: pehle expiry HAMESHA jeet rahi thi, kyunki wo seedha
+> function call thi aur payment poore HTTP stack se guzarta tha. Matlab
+> aadha raasta test hi nahi ho raha tha. Expiry par thoda random jitter
+> daala, tab dono outcomes aane lage — 60 runs me ~48 confirmed, ~12
+> expired, aur zero invariant violation."
+
+### "Aur koi bug mila?"
+
+> "Haan, aur wo bhi isi race test ne diya. Group tootne par uske shares ke
+> **pending payments latke reh jaate the**.
+>
+> Do nateeje: pehla, us seat par naya checkout ban hi nahi sakta tha —
+> partial unique index rok deta hai. Seat `available` dikhti thi par
+> khareedi nahi ja sakti thi. Wo sabse bura kism ka bug hai, kyunki UI me
+> sab theek lagta hai.
+>
+> Doosra, user purana checkout page complete karke ek **mare hue group** ko
+> paisa de sakta tha."
+
+### "Ye feature poora hai?"
+
+Yahan imaandari se jawab dena, ye achha lagta hai:
+
+> "Nahi, aur main uska daawa nahi karta. Teen cheezein jaan-boojh ke chhodi:
+>
+> **Refund sirf status likhta hai**, asli refund API call nahi karta. Asli
+> gateway me refund ki confirmation bhi webhook se aati hai — yaani
+> `refund_pending` naam ka ek aur state chahiye, bilkul payment jaisa.
+>
+> **Email notification nahi hai** — 'tumhare dost ne pay kar diya', '1 ghanta
+> bacha'. Outbox pattern already hai to jodna aasan hoga.
+>
+> **Grace period nahi hai** — deadline sakht hai."
+
+### Rapid fire
+
+| Sawaal | Ek-line jawab |
+|---|---|
+| Group id se address kyu nahi? | `share_token` (`secrets`) — sequential id hoti to koi bhi 1, 2, 3 chala ke doosron ke group dekh leta |
+| Response me email kyu nahi? | Link kisi ke paas bhi ja sakta hai; usme sab members ke email dikhana privacy leak hai |
+| Ek user do share le sakta hai? | Nahi — warna ek banda poora group claim kar leta aur "split" ka matlab khatam |
+| Group creation partial ho sakti hai? | Nahi. Ek bhi seat na mile to poora rollback — aadhi hold kisi ke kaam ki nahi |
+| Price kab freeze hota hai? | Group banate waqt. 30 minute me surge badal sakta hai (Phase 14 wala hi asool) |
+| Cron kitni baar? | Har 30 second, `run_at_startup` ke saath. Deadline minutes me hai, to 30s kaafi hai |
+| Do worker ek saath expire karein to? | `break_group` atomic conditional UPDATE se chalta hai — ek hi todega |
+
+---
+
+## 15. Traps — jahan "haan" bolna galat hai
 
 ### "Kafka use kar sakte the na?"
 
@@ -772,7 +920,7 @@ Ye batana ki pehla andaza galat tha, bahut acha lagta hai:
 
 ---
 
-## 15. Rapid fire
+## 16. Rapid fire
 
 | Sawaal | Ek-line jawab |
 |---|---|
@@ -792,7 +940,7 @@ Ye batana ki pehla andaza galat tha, bahut acha lagta hai:
 
 ---
 
-## 16. Whiteboard — architecture aise banao
+## 17. Whiteboard — architecture aise banao
 
 Isi order me banao, bolte hue:
 
@@ -813,7 +961,7 @@ Bolte waqt teen baatein zaroor:
 
 ---
 
-## 17. Tum kya poochho
+## 18. Tum kya poochho
 
 Interview do-tarfa hai. Ye poochne se pata chalta hai ki tum production ke bare me sochte ho:
 
@@ -847,4 +995,5 @@ Aur ek line jo kabhi mat bhoolna:
 - [Phase 14 — Dynamic Pricing](phases/14-dynamic-pricing.md) — price lock ka poora design
 - [Phase 15 — Locking Benchmark](phases/15-locking-benchmark.md) — poore numbers aur method
 - [Phase 16 — Multi-Worker + CI](phases/16-multiworker-ci.md) — deploy config aur teen bugs
+- [Phase 17 — Group Booking](phases/17-group-booking.md) — "sab ya koi nahi" ka poora design
 - [testing.md](reference/testing.md) — sab kuch demo karne ke commands

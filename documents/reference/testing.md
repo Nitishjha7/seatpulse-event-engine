@@ -639,6 +639,9 @@ Aakhir me browser me ek round: login → seat hold → book → cancel → logou
 | Multi-worker broadcast proof | `docker compose cp loadtest/verify_multiworker.py backend:/tmp/vmw.py && docker compose exec backend python /tmp/vmw.py` |
 | Kis worker ne serve kiya | `curl -s localhost:8000/api/health` -> `worker_pid` |
 | Micro-benchmark (sirf DB claim step) | `docker compose exec backend python /loadtest/micro_benchmark.py` |
+| Group booking (browser) | seat hold karo → HoldCard me **"Sabka alag-alag payment"** |
+| Group ki DB state | `docker compose exec db psql -U seatpulse -d seatpulse -c "SELECT g.id, g.status, g.expires_at, count(s.id) FROM group_bookings g JOIN group_shares s ON s.group_id=g.id GROUP BY g.id;"` |
+| Expiry job chal raha hai? | `docker compose logs -f worker \| grep expire_groups` |
 | Ek request me kitni SQL queries? | `docker compose exec db psql -U seatpulse -d seatpulse -c "ALTER SYSTEM SET log_statement='all';" -c "SELECT pg_reload_conf();"` phir `docker compose logs db` |
 | Locked price dekho | `docker compose exec db psql -U seatpulse -d seatpulse -c "SELECT id, price, held_price, status FROM seats WHERE held_price IS NOT NULL;"` |
 | Logs | `docker compose logs -f backend` |
@@ -673,6 +676,51 @@ sabse important bug hai.
 | Charge quote se match kiya | `bookings.amount` = 1000 |
 
 **Automated version:** `pytest -k "price or surge"` (13 tests).
+
+---
+
+## Group booking manually test karna
+
+Ye do-browser wala test hai, aur asli baat ye dekhni hai ki **aadhe paise
+par kuch NA ho**.
+
+1. Window A (`demo@seatpulse.dev`) — ek seat hold karo, phir HoldCard me
+   **"3 log"** chuno aur **"Sabka alag-alag payment"** dabao.
+   → seedha group page pe pahunchoge, link copy karne ka button milega
+2. Grid me dekho: teeno seats ab **neeli** (`group_held`) hain — na hari,
+   na laal
+3. Window B (`user1@seatpulse.dev`) — wahi link kholo, ek khaali seat
+   **"Ye seat lo"** se claim karo, phir **pay** karo
+4. Window A refresh kiye bina dekho — progress bar `1/3` ho jayega
+   (page har 5 second poll karta hai)
+5. **Yahan rukо aur seat grid dekho:** seats abhi bhi `group_held` hain,
+   `booked` nahi. Ek banda pay kar chuka hai par kisi ki seat pakki nahi hui
+6. Baaki dono bhi pay karein → group `confirmed`, teeno seats `booked`,
+   teeno users ki alag-alag booking
+
+**Deadline wala raasta:**
+
+```bash
+# Deadline peeche khiskao (5 min ka wait na karna pade)
+docker compose exec db psql -U seatpulse -d seatpulse -c \
+  "UPDATE group_bookings SET expires_at = now() - interval '1 minute' WHERE status='collecting';"
+
+# Cron 30 second me utha lega
+docker compose logs -f worker | grep expire_groups
+```
+
+Phir group page dekho: status `expired`, jisne pay kiya tha uska share
+`refunded`, aur saari seats grid me wapas **hari**.
+
+| Kya check kar rahe ho | Kahan |
+|---|---|
+| Aadha paisa = kuch nahi hota | 2/3 paid par seats `group_held` hi rahein |
+| Sab paid = sab confirm | teeno seats ek saath `booked` |
+| Deadline = sab wapas | seats `available`, paid share `refunded` |
+| Live update | window A bina refresh ke progress badalta hai |
+
+**Automated:** `pytest -k "group or share"` (13 tests), plus race test
+`pytest -k race`.
 
 ---
 
@@ -806,6 +854,7 @@ Poore results aur unka matlab: [Phase 15](../phases/15-locking-benchmark.md).
 - [Phase 14 — Dynamic Pricing](../phases/14-dynamic-pricing.md) — price lock kyu zaroori hai
 - [Phase 15 — Locking Benchmark](../phases/15-locking-benchmark.md) — benchmark ka method aur results
 - [Phase 16 — Multi-Worker + CI](../phases/16-multiworker-ci.md) — prod config aur CI pipeline
+- [Phase 17 — Group Booking](../phases/17-group-booking.md) — split payment ka design aur race
 - [postgres-commands.md](postgres-commands.md) — DB queries
 - [docker-commands.md](docker-commands.md) — container commands
 - [roadmap.md](../roadmap.md) — poora plan
