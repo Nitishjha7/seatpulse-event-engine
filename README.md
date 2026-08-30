@@ -131,6 +131,14 @@ Two details matter more than the queue itself. **Enqueueing never raises** — i
 
 The QR encodes a random 32-character token, never the sequential booking id, and tickets are downloadable only by their owner — the QR *is* the entry pass. Email uses an outbox (written to disk and logged) rather than real SMTP; swapping in a provider means changing one function.
 
+### Gate check-in
+
+The same exactly-once problem as seat booking reappears at the gate: a QR screenshot forwarded to five friends must admit exactly one person. It gets the same answer — a single atomic statement, `UPDATE bookings SET checked_in_at = now() WHERE id = ? AND checked_in_at IS NULL`. Ten simultaneous scans of one ticket produce one admission and nine rejections.
+
+The endpoint returns `200` even when entry is refused, with `ok: false` and a reason. Someone working a gate reads a screen, not a status code, and `already_checked_in` is a legitimate business answer rather than a technical error — so both outcomes flow through one code path, and the response carries what the argument at the gate actually needs: when the ticket was used and who scanned it. An unknown token returns nothing beyond "invalid", so tokens cannot be brute-forced by watching responses get more specific.
+
+Scanning uses the browser's native `BarcodeDetector` rather than a ~200KB QR library, with manual token entry always available — needed anyway for a torn ticket or a dead phone.
+
 ### Authorization
 
 Three flat roles — `attendee`, `organizer`, `admin` — enforced by a `require_role(...)` dependency and backed by a check constraint on the column, so a typo can never become a role.
@@ -159,6 +167,7 @@ The frontend hides organizer and admin navigation by role, but that is **UX only
 | `POST` | `/api/bookings` | Book a seat — returns `409` if already taken. Accepts an `Idempotency-Key` header |
 | `GET` | `/api/bookings` | Your bookings, each with its ticket status |
 | `GET` | `/api/bookings/{id}/ticket` | Download the PDF ticket (owner only) |
+| `POST` | `/api/checkin` | Scan a QR at the gate — admits exactly once |
 | `DELETE` | `/api/bookings/{id}` | Cancel your booking, releasing the seat |
 | `GET` | `/api/health` | Service, database and Redis status |
 | `POST` | `/api/payments/checkout` | Start a checkout session for a held seat |
@@ -246,7 +255,7 @@ docker compose --profile loadtest run --rm locust \
     --host http://backend:8000
 
 docker compose exec backend python verify_integrity.py
-docker compose exec backend pytest tests/ -v         # 42 tests: auth, RBAC, payments, tickets, concurrency
+docker compose exec backend pytest tests/ -v         # 49 tests: auth, RBAC, payments, tickets, check-in, concurrency
 ```
 
 ### What load testing actually caught
@@ -292,12 +301,12 @@ Result on the same 200-user flash sale: **1,250 requests with 58 failures and a 
 - [x] Organizer portal — create events with price-tier seat generation, track sales; admin platform stats
 - [x] Payments — webhook-confirmed checkout with signature verification, idempotent fulfilment, and a reconciliation job for missed webhooks
 - [x] Background worker (ARQ) — QR code, PDF ticket and email generated outside the request, with retries and a re-queue safety net
+- [x] Gate check-in — camera QR scanning with an atomic single-entry guard, verified with 10 concurrent scans
 
 ### Planned
 
 Ordered by dependency — each item leans on the ones above it. None of these are built yet.
 
-- [ ] **QR check-in portal** — mobile scanner with an atomic `valid → checked_in` flip, so one ticket cannot pass two gates
 - [ ] **Dynamic pricing** — demand-based surge recomputed on booking events and pushed over the existing WebSocket channel
 - [ ] **Visual seat layout builder** — organizer draws rows, sections and price bands; saved as JSON and expanded into seats server-side
 - [ ] **Group booking + split payment** — shareable payment link with a deadline; every share paid or the whole group's seats are released

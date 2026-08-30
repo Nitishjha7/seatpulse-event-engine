@@ -95,6 +95,9 @@ tests/test_concurrency.py::test_booking_works_without_idempotency_key PASSED
 | `worker_generates_a_downloadable_ticket` | End-to-end: booking → worker → asli PDF |
 | `cannot_download_someone_elses_ticket` | ⚠️ QR = entry pass. 404 |
 | `qr_token_is_not_the_booking_id` | Sequential id QR me nahi honi chahiye |
+| `same_qr_cannot_be_used_twice` | ⭐ Ek ticket, ek entry |
+| `concurrent_scans_admit_exactly_one` | ⭐ 10 gates ek saath → 1 entry |
+| `invalid_token_is_rejected` | Koi detail leak nahi (brute-force rokta hai) |
 | `attendee_cannot_touch_organizer_or_admin` | RBAC — role ke bina 403 |
 | `organizer_cannot_touch_another_organizers_event` | ⭐ Ownership — role hone se resource tumhara nahi ho jata |
 | `event_with_bookings_cannot_be_deleted` | Paid tickets kabhi gayab nahi honi chahiye |
@@ -628,6 +631,8 @@ Aakhir me browser me ek round: login → seat hold → book → cancel → logou
 | Worker chal raha hai? | `docker compose logs -f worker` |
 | Stuck tickets re-queue | `docker compose exec backend python retry_pending_tickets.py` |
 | Bheji hui emails | `docker compose exec worker ls /app/tickets/outbox/` |
+| Gate check-in (browser) | organizer se login → sidebar → **Gate Check-in** |
+| QR token nikalo (manual test) | `docker compose exec db psql -U seatpulse -d seatpulse -t -A -c "SELECT qr_token FROM bookings WHERE id=<ID>;"` |
 | Logs | `docker compose logs -f backend` |
 
 ---

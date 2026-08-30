@@ -50,6 +50,7 @@ React ka kaam har phase me thoda-thoda hua hai, isliye ye index:
 | **Payment return page** — polls, decide nahi karta | `pages/PaymentReturn.jsx` | [Phase 11](phases/11-payments.md) Step 7 |
 | `payForSeat()` — redirect to gateway | `booking/BookingContext.jsx` | [Phase 11](phases/11-payments.md) Step 7 |
 | Ticket download via blob (header + navigation) | `api.js`, `components/BookingsList.jsx` | [Phase 12](phases/12-background-tickets.md) Step 8 |
+| **Camera QR scan** — native BarcodeDetector, no library | `pages/gate/GatePortal.jsx` | [Phase 13](phases/13-gate-checkin.md) Step 6 |
 
 > **Phase 7 ke aage ka plan** — 13 naye features 4 tracks me — [../README.md](../README.md) ke "Roadmap → Planned" section me hai.
 > Wahan har feature ka problem + approach likha hai. Yahan wali table sirf jo **ban chuka** hai wo track karti hai.
@@ -72,6 +73,7 @@ React ka kaam har phase me thoda-thoda hua hai, isliye ye index:
 | 10 | RBAC + organizer portal | ✅ Done — [Phase 10 — RBAC + Organizer](phases/10-rbac-organizer.md) |
 | 11 | Payments + webhooks | ✅ Done — [Phase 11 — Payments](phases/11-payments.md) |
 | 12 | Background queue + QR + PDF ticket | ✅ Done — [Phase 12 — Background Tickets](phases/12-background-tickets.md) |
+| 13 | Gate check-in (QR scan) | ✅ Done — [Phase 13 — Gate Check-in](phases/13-gate-checkin.md) |
 
 ---
 
