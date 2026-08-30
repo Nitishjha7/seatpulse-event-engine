@@ -15,7 +15,15 @@ from auth import get_current_user
 from config import settings
 from database import get_db
 from events_broadcast import broadcast_seat_update
-from models import SEAT_AVAILABLE, SEAT_LOCKED, Event, Seat, User, utcnow
+from models import (
+    SEAT_AVAILABLE,
+    SEAT_LOCKED,
+    SEAT_PAYMENT_PENDING,
+    Event,
+    Seat,
+    User,
+    utcnow,
+)
 from rate_limit import SEAT_LOCK, limit_user
 from redis_client import (
     acquire_seat_lock,
@@ -40,10 +48,12 @@ def release_expired_locks(db: Session, event_id: int) -> None:
     Isliye seats padhne se pehle ek sasta UPDATE chala dete hain.
     Ye "lazy cleanup" hai — background job/cron ki zaroorat nahi.
     """
+    # payment_pending bhi shaamil hai — abandoned checkout ki seat bhi
+    # wapas aani chahiye, warna ek chhoda hua payment seat hamesha block kar deta.
     expired = db.scalars(
         select(Seat.id).where(
             Seat.event_id == event_id,
-            Seat.status == SEAT_LOCKED,
+            Seat.status.in_((SEAT_LOCKED, SEAT_PAYMENT_PENDING)),
             Seat.locked_until < utcnow(),
         )
     ).all()

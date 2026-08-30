@@ -157,6 +157,24 @@ export const deleteEvent = (eventId) =>
 
 export const getAdminStats = () => request("/api/admin/stats");
 
+// ---- Payments ----
+
+/** Seat ke liye checkout session banao. Wapas checkout_url milta hai. */
+export const startCheckout = (seatId) =>
+  request("/api/payments/checkout", {
+    method: "POST",
+    body: JSON.stringify({ seat_id: seatId }),
+  });
+
+export const getPayment = (paymentId) => request(`/api/payments/${paymentId}`);
+
+/** Sirf mock provider — asli gateway me ye webhook se hota hai. */
+export const simulatePayment = (paymentId, outcome) =>
+  request(`/api/payments/${paymentId}/simulate`, {
+    method: "POST",
+    body: JSON.stringify({ outcome }),
+  });
+
 // ---- Bookings ----
 
 export const getMyBookings = () => request("/api/bookings");

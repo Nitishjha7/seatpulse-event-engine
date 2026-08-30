@@ -80,6 +80,25 @@ class Settings(BaseSettings):
     # karna ho to isse band kar sakte ho.
     RATE_LIMIT_ENABLED: bool = True
 
+    # ---------- Payments ----------
+    # Khali chhodo to MOCK provider chalta hai — poora flow bina Stripe
+    # account ke test ho jata hai. Yahi pattern Google OAuth me use kiya tha.
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+
+    # User ke paas checkout complete karne ke liye kitna time hai.
+    # Seat lock ki TTL bhi isi ke barabar kar dete hain — warna payment
+    # ke beech me lock chhut jata aur koi aur seat le leta.
+    PAYMENT_TTL_SECONDS: int = 600      # 10 minute
+
+    CURRENCY: str = "INR"
+
+    @property
+    def payment_provider(self) -> str:
+        """Keys hain to stripe, warna mock. Config me flag rakhne se behtar —
+        ek hi jagah sach hai."""
+        return "stripe" if self.STRIPE_SECRET_KEY else "mock"
+
     # Seat lock kitni der chalega (seconds).
     # 300 = 5 minute — itna time user ko payment ke liye milta hai.
     # Iske baad Redis khud key delete kar deta hai aur seat wapas available.

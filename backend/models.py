@@ -39,11 +39,30 @@ def utcnow() -> datetime:
 SEAT_AVAILABLE = "available"
 SEAT_LOCKED = "locked"      # kisi ne select kiya hai, abhi pay nahi kiya (Phase 4)
 SEAT_BOOKED = "booked"
+# Payment chal raha hai — seat hold me hai par abhi bik nahi hai.
+# Alag status isliye ki dusre users ko grid me "purchase ho rahi hai" dikhe,
+# aur cleanup logic ise locked se alag treat kar sake.
+SEAT_PAYMENT_PENDING = "payment_pending"
 
 # Booking ki possible haalat
 BOOKING_PENDING = "pending"
 BOOKING_CONFIRMED = "confirmed"
 BOOKING_CANCELLED = "cancelled"
+
+# Payment ki possible haalat
+PAYMENT_PENDING = "pending"       # session bana, user gateway pe hai
+PAYMENT_SUCCEEDED = "succeeded"   # webhook ne confirm kiya
+PAYMENT_FAILED = "failed"         # gateway ne fail bola
+PAYMENT_EXPIRED = "expired"       # window nikal gayi, koi jawab nahi aaya
+PAYMENT_REFUNDED = "refunded"
+
+ALL_PAYMENT_STATUSES = (
+    PAYMENT_PENDING,
+    PAYMENT_SUCCEEDED,
+    PAYMENT_FAILED,
+    PAYMENT_EXPIRED,
+    PAYMENT_REFUNDED,
+)
 
 # User roles.
 #
@@ -56,6 +75,9 @@ ROLE_ORGANIZER = "organizer"   # apne events banao aur manage karo
 ROLE_ADMIN = "admin"           # poore platform ka access
 
 ALL_ROLES = (ROLE_ATTENDEE, ROLE_ORGANIZER, ROLE_ADMIN)
+
+ALL_SEAT_STATUSES = (SEAT_AVAILABLE, SEAT_LOCKED, SEAT_PAYMENT_PENDING, SEAT_BOOKED)
+SEAT_STATUS_SQL = ", ".join(repr(s) for s in ALL_SEAT_STATUSES)
 
 
 class User(Base):
@@ -165,8 +187,8 @@ class Seat(Base):
 
     price: Mapped[float] = mapped_column(Numeric(10, 2), default=0)
 
-    # available | locked | booked
-    status: Mapped[str] = mapped_column(String(16), default=SEAT_AVAILABLE, index=True)
+    # available | locked | payment_pending | booked
+    status: Mapped[str] = mapped_column(String(24), default=SEAT_AVAILABLE, index=True)
 
     # ---- OPTIMISTIC LOCKING ----
     # Har successful update pe +1 hota hai.
@@ -207,7 +229,7 @@ class Seat(Base):
         # status me sirf teen value hi ja sakti hain. Typo ("Booked", "bookd")
         # database hi reject kar dega.
         CheckConstraint(
-            f"status IN ('{SEAT_AVAILABLE}', '{SEAT_LOCKED}', '{SEAT_BOOKED}')",
+            f"status IN ({SEAT_STATUS_SQL})",
             name="ck_seat_status",
         ),
 
@@ -258,3 +280,85 @@ class Booking(Base):
 
     def __repr__(self) -> str:
         return f"<Booking user={self.user_id} seat={self.seat_id} {self.status}>"
+
+
+class Payment(Base):
+    """
+    Ek checkout attempt.
+
+    Booking se ALAG table hai, kyunki dono ki zindagi alag hai:
+      - ek user do baar try kar sakta hai (pehli fail, dusri succeed)
+      - failed payment ka bhi record rehna chahiye
+      - booking tabhi banti hai jab payment succeed ho
+
+    Booking ke saath merge kar dete to "failed booking" jaisi ajeeb cheez
+    banti, aur refund/retry ka history kahin nahi bachta.
+    """
+
+    __tablename__ = "payments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    seat_id: Mapped[int] = mapped_column(ForeignKey("seats.id", ondelete="CASCADE"), index=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), index=True)
+
+    # Payment succeed hone par bani booking. Pending/failed me NULL rehti hai.
+    booking_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bookings.id", ondelete="SET NULL"), nullable=True
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(16), default=PAYMENT_PENDING, nullable=False, index=True
+    )
+    amount: Mapped[float] = mapped_column(Numeric(10, 2))
+    currency: Mapped[str] = mapped_column(String(3), default="INR")
+
+    # "stripe" | "mock" — kis provider se bani
+    provider: Mapped[str] = mapped_column(String(20))
+
+    # Gateway ka apna id (Stripe ka checkout session id).
+    #
+    # UNIQUE hai — yahi webhook ko idempotent banata hai. Gateway same event
+    # do baar bhej de (aur wo at-least-once hote hain) to dusri baar insert
+    # nahi, lookup hota hai.
+    provider_ref: Mapped[str | None] = mapped_column(
+        String(255), unique=True, index=True, nullable=True
+    )
+
+    # Gateway ne fail hone par kya kaha — debugging aur user ko dikhane ke liye
+    failure_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Is waqt tak payment complete hona chahiye. Nikal gaya to seat wapas.
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    user: Mapped["User"] = relationship()
+    seat: Mapped["Seat"] = relationship()
+
+    __table_args__ = (
+        CheckConstraint(
+            f"status IN ({', '.join(repr(s) for s in ALL_PAYMENT_STATUSES)})",
+            name="ck_payment_status",
+        ),
+        # ⭐ Ek seat ka ek hi PENDING payment ho sakta hai.
+        #
+        # Partial unique index — wahi pattern jo bookings pe hai. Isse do
+        # log ek saath usi seat ka checkout shuru nahi kar sakte, aur ek
+        # hi user do tab me do session nahi bana sakta.
+        # Succeeded/failed/expired par ye lagu nahi hota, isliye retry
+        # aur dobara bikna dono chalte hain.
+        Index(
+            "uq_one_pending_payment_per_seat",
+            "seat_id",
+            unique=True,
+            postgresql_where=text(f"status = '{PAYMENT_PENDING}'"),
+        ),
+        Index("ix_payment_status_expires", "status", "expires_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Payment {self.id} {self.status} {self.amount}>"

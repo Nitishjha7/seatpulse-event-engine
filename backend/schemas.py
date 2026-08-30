@@ -12,6 +12,8 @@ Alag kyu rakhte hain:
 
 from datetime import datetime
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
@@ -211,3 +213,37 @@ class TokenResponse(BaseModel):
 class AuthConfigOut(BaseModel):
     """Frontend poochta hai: Google login dikhana hai ya nahi?"""
     google_enabled: bool
+
+
+# ---------- Payments (Phase 11) ----------
+
+class CheckoutRequest(BaseModel):
+    seat_id: int = Field(..., gt=0)
+
+
+class CheckoutOut(BaseModel):
+    payment_id: int
+    # User ko yahan bhejo. Mock me hamara apna page, Stripe me unka.
+    checkout_url: str
+    provider: str          # "stripe" | "mock" — frontend UI adjust karta hai
+    amount: float
+    expires_at: datetime
+
+
+class SimulateRequest(BaseModel):
+    """Sirf mock provider ke liye — asli gateway me ye webhook se aata hai."""
+    outcome: Literal["success", "fail"] = "success"
+
+
+class PaymentOut(ORMModel):
+    id: int
+    seat_id: int
+    event_id: int
+    booking_id: int | None
+    status: str
+    amount: float
+    currency: str
+    provider: str
+    failure_reason: str | None
+    expires_at: datetime
+    created_at: datetime
