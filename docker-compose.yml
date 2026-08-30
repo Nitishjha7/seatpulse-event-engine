@@ -36,7 +36,11 @@ services:
       retries: 5
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      # dev stage — --reload aur test tools ke saath.
+      # Production ke liye: docker-compose.prod.yml (target: prod)
+      target: dev
     container_name: fastapi_backend
     ports:
       - "8000:8000"
@@ -61,7 +65,11 @@ services:
         condition: service_healthy
 
   worker:
-    build: ./backend
+    build:
+      context: ./backend
+      # dev stage — --reload aur test tools ke saath.
+      # Production ke liye: docker-compose.prod.yml (target: prod)
+      target: dev
     container_name: seatpulse_worker
     # ⭐ Same image as backend, alag command. Isse code duplicate nahi hota
     # aur worker ko wahi models/config milte hain jo API ke paas hain.
@@ -81,7 +89,11 @@ services:
         condition: service_healthy
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      # dev stage — --reload aur test tools ke saath.
+      # Production ke liye: docker-compose.prod.yml (target: prod)
+      target: dev
     container_name: react_frontend
     ports:
       - "5173:5173"

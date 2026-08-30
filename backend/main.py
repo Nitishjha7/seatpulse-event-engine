@@ -1,4 +1,5 @@
 import asyncio
+import os
 import anyio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -171,6 +172,15 @@ def health_check(db: Session = Depends(get_db)):
         "version": "0.6.0",
         "database": db_status,
         "redis": redis_status,
+        # Kis worker process ne ye request handle ki.
+        #
+        # Multi-worker me ye debugging ke liye zaroori hai: "sirf kabhi-kabhi
+        # fail hota hai" ka matlab aksar "chaar me se ek worker kharab hai"
+        # hota hai. Bina is field ke pata hi nahi chalta kaunsa.
+        #
+        # Phase 16 ka proof bhi isi se banta hai — alag PIDs dikhein to
+        # sabit hota hai ki load sach me kai processes me bant raha hai.
+        "worker_pid": os.getpid(),
         "time": datetime.now(timezone.utc).isoformat(),
     }
 

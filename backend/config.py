@@ -39,6 +39,20 @@ class Settings(BaseSettings):
     #             (30 < 40)
     MAX_CONCURRENT_REQUESTS: int = 30
 
+    # ---- Connection pool (Phase 16) ----
+    #
+    # Ye env se aane chahiye, hardcoded nahi — kyunki sahi value WORKERS
+    # par nirbhar karti hai.
+    #
+    # Har uvicorn worker ek alag process hai aur uska APNA pool hota hai.
+    # Yaani asli connections = WORKERS x (pool_size + max_overflow).
+    # 4 workers x 40 = 160, aur Postgres ka default max_connections 100 hai.
+    #
+    # Single worker (dev): 20 + 20 = 40
+    # 4 workers (prod):     5 +  5 = 40 total
+    DB_POOL_SIZE: int = 20
+    DB_MAX_OVERFLOW: int = 20
+
     # ---- Benchmark mode (Phase 15) ----
     #
     # On hone par booking endpoint do extra query params maanta hai:

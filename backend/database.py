@@ -39,8 +39,13 @@ engine = create_engine(
     #
     # Ab threadpool main.py me 32 pe fix hai, aur pool 20 + 20 = 40 > 32.
     # Postgres ka default max_connections 100 hai, to ye safe hai.
-    pool_size=20,
-    max_overflow=20,
+    #
+    # ⚠️ Phase 16: ye ab config se aate hain, hardcoded nahi. Multi-worker
+    # me har worker ka apna pool hota hai — 4 workers x 40 = 160 connections
+    # maang lete, jo Postgres ki 100 wali limit todh deta. Prod compose me
+    # ye 5 + 5 pe set hain.
+    pool_size=settings.DB_POOL_SIZE,
+    max_overflow=settings.DB_MAX_OVERFLOW,
     # 30 sec chupchap wait karne se behtar hai jaldi fail hona — tab pata to
     # chale ki pool chhota pad raha hai.
     pool_timeout=10,

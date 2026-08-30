@@ -1,0 +1,72 @@
+# Production override — dev compose ke UPAR lagti hai:
+#
+#     docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Override file kyu, alag poori file kyu nahi: db/redis ki config, network,
+# volumes, healthchecks — sab wahi rehne chahiye. Do poori files hoti to wo
+# dheere-dheere alag ho jaati aur "prod me alag behave karta hai" wali
+# dikkat paida hoti. Yahan sirf WOHI likha hai jo asal me badalta hai.
+
+services:
+  backend:
+    build:
+      target: prod
+    # ⭐ Ye phase isi line ke liye hai — 1 worker se 4.
+    #
+    # Har worker apni alag PROCESS hai, apni memory ke saath. Iska matlab
+    # in-memory kuch bhi share nahi hota — WebSocket connections bhi nahi.
+    # Isiliye Phase 5 me broadcast Redis pub/sub se kiya tha, ek Python
+    # dict se nahi. Wo faisla yahin aake kaam aata hai.
+    environment:
+      WORKERS: ${WORKERS:-4}
+      # Har worker ka apna connection pool hai. 4 workers x 40 = 160
+      # connections — aur Postgres ka default max_connections 100 hai.
+      #
+      # Isliye per-worker pool chhota karna PADTA hai. Ye wo galti hai jo
+      # sirf multi-worker pe chalane ke baad dikhti hai:
+      #   4 x (5 + 5) = 40 connections, 100 ki limit ke andar aaram se.
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
+      # Admission control bhi per-worker hai, isliye ye bhi ghatana hai.
+      # Invariant wahi rehta hai: MAX_CONCURRENT < pool + overflow.
+      MAX_CONCURRENT_REQUESTS: ${MAX_CONCURRENT_REQUESTS:-8}
+      # Benchmark knobs production me kabhi nahi.
+      BENCHMARK_MODE: "false"
+    # Source bind-mount NAHI. Prod image me code baked hai — mount karte
+    # to deployed image aur chalta hua code alag ho sakte the.
+    volumes:
+      - ticket_data:/app/tickets
+    restart: unless-stopped
+
+  worker:
+    build:
+      target: prod
+    # ARQ worker ko web workers ki zaroorat nahi — wo apni concurrency
+    # khud handle karta hai. Par uska pool bhi chhota rakhna hai, kyunki
+    # wo bhi usi Postgres ko share karta hai.
+    environment:
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
+    volumes:
+      - ticket_data:/app/tickets
+    restart: unless-stopped
+
+  frontend:
+    build:
+      target: prod
+      args:
+        # ⚠️ Build time pe bake hota hai. Deploy karte waqt yahan asli
+        # domain daalna hoga — container start hone par ye badla nahi
+        # ja sakta.
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    # nginx 80 pe sunta hai, Vite 5173 pe suntа tha
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    volumes: []
+    restart: unless-stopped
+
+  db:
+    restart: unless-stopped
+
+  redis:
+    restart: unless-stopped
