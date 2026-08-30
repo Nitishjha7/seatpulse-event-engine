@@ -56,6 +56,13 @@ PAYMENT_FAILED = "failed"         # gateway ne fail bola
 PAYMENT_EXPIRED = "expired"       # window nikal gayi, koi jawab nahi aaya
 PAYMENT_REFUNDED = "refunded"
 
+# Ticket generation ki haalat
+TICKET_PENDING = "pending"     # queue me hai ya ban raha hai
+TICKET_READY = "ready"         # QR + PDF ban gaye
+TICKET_FAILED = "failed"       # worker fail hua, retry ho sakta hai
+
+ALL_TICKET_STATUSES = (TICKET_PENDING, TICKET_READY, TICKET_FAILED)
+
 ALL_PAYMENT_STATUSES = (
     PAYMENT_PENDING,
     PAYMENT_SUCCEEDED,
@@ -251,6 +258,25 @@ class Booking(Base):
 
     status: Mapped[str] = mapped_column(String(16), default=BOOKING_CONFIRMED, index=True)
     amount: Mapped[float] = mapped_column(Numeric(10, 2), default=0)
+
+    # ---- Ticket (Phase 12) ----
+    #
+    # Booking par columns rakhe hain, alag Ticket table nahi — ticket aur
+    # booking 1:1 hain aur ticket ki apni koi zindagi nahi hai. Agar aage
+    # re-issue history chahiye hui to tab alag table banega.
+    #
+    # QR me yahi token jata hai. Booking id NAHI — wo sequential hai, koi
+    # bhi 1,2,3 try karke doosre ka ticket bana leta. Ye random aur unique hai.
+    qr_token: Mapped[str | None] = mapped_column(
+        String(64), unique=True, index=True, nullable=True
+    )
+    # pending -> ready | failed. Worker isse update karta hai.
+    ticket_status: Mapped[str] = mapped_column(
+        String(16), default=TICKET_PENDING, nullable=False
+    )
+    ticket_generated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     user: Mapped["User"] = relationship(back_populates="bookings")

@@ -42,6 +42,8 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      # Worker jo tickets banata hai, API unhe yahin se serve karti hai
+      - ticket_data:/app/tickets
     environment:
       # "db" aur "redis" = compose services ke naam. Container network me yahi
       # hostnames hain. localhost yahan kaam NAHI karega — wo backend container
@@ -51,6 +53,26 @@ services:
     depends_on:
       db:
         # Sirf "started" nahi — DB ready hone tak wait karo.
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: ./backend
+    container_name: seatpulse_worker
+    # ⭐ Same image as backend, alag command. Isse code duplicate nahi hota
+    # aur worker ko wahi models/config milte hain jo API ke paas hain.
+    command: arq worker.WorkerSettings
+    volumes:
+      - ./backend:/app
+      # Tickets ek shared volume me — worker likhta hai, API padh ke serve
+      # karta hai. Bina iske API ko file milti hi nahi.
+      - ticket_data:/app/tickets
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -86,3 +108,4 @@ services:
 
 volumes:
   postgres_data:
+  ticket_data:

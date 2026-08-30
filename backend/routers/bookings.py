@@ -13,6 +13,7 @@ interview me sabse zyada baat hoti hai.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import FileResponse
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -21,12 +22,15 @@ from auth import get_current_user
 from database import get_db
 from events_broadcast import broadcast_seat_update
 from idempotency import Idempotency
+from job_queue import enqueue_ticket
 from models import (
     BOOKING_CANCELLED,
     BOOKING_CONFIRMED,
     SEAT_AVAILABLE,
     SEAT_BOOKED,
     SEAT_LOCKED,
+    TICKET_PENDING,
+    TICKET_READY,
     Booking,
     Event,
     Seat,
@@ -35,6 +39,7 @@ from models import (
 from rate_limit import BOOKING, limit_user
 from redis_client import acquire_seat_lock, get_lock_owner, release_seat_lock
 from schemas import BookingCreate, BookingDetail, BookingOut
+from tickets import ticket_path
 
 router = APIRouter(prefix="/api/bookings", tags=["bookings"])
 
@@ -192,6 +197,10 @@ def _perform_booking(payload: BookingCreate, db: Session, user: User) -> Booking
     # Sab clients ko batao — unke grid me seat turant laal ho jayegi
     broadcast_seat_update(db, payload.seat_id, "booked")
 
+    # Ticket background me banega — QR + PDF + email mila ke 2-3 second
+    # lagta hai, aur user ko utna wait karana galat hai
+    enqueue_ticket(booking.id)
+
     db.refresh(booking)
     return booking
 
@@ -226,6 +235,7 @@ def list_bookings(
             created_at=b.created_at,
             seat_label=f"{s.row_label}-{s.seat_number}",
             event_name=e.name,
+            ticket_status=b.ticket_status,
         )
         for b, s, e in rows
     ]
@@ -274,6 +284,77 @@ def cancel_booking(
 
     # Seat wapas available — sab clients ke grid me turant hari ho jayegi
     broadcast_seat_update(db, booking.seat_id, "cancelled")
+
+    db.refresh(booking)
+    return booking
+
+
+@router.get("/{booking_id}/ticket")
+def download_ticket(
+    booking_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    Ticket PDF download.
+
+    ⚠️ Ownership check zaroori hai — bina iske koi bhi /1/ticket, /2/ticket
+    chala ke doosron ki tickets (QR ke saath!) download kar leta. Wo seedha
+    free entry ban jata.
+
+    404 dete hain, 403 nahi — attacker ko ye bhi na pata chale ki booking
+    exist karti hai.
+    """
+    booking = db.get(Booking, booking_id)
+    if booking is None or booking.user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking nahi mili")
+
+    if booking.status != BOOKING_CONFIRMED:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Cancelled booking ka ticket nahi hota")
+
+    if booking.ticket_status != TICKET_READY:
+        # 409 (404 nahi) — booking to hai, bas ticket abhi ban raha hai.
+        # Client isse "thodi der baad try karo" me badal sakta hai.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Ticket abhi ready nahi hai (status: {booking.ticket_status})",
+        )
+
+    path = ticket_path(booking.id)
+    if not path.exists():
+        # DB kehta hai ready, par file gayab — worker ke baad volume saaf
+        # ho gaya hoga. Dobara bana do.
+        booking.ticket_status = TICKET_PENDING
+        db.commit()
+        enqueue_ticket(booking.id)
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Ticket file nahi mili — dobara bana rahe hain"
+        )
+
+    return FileResponse(
+        path,
+        media_type="application/pdf",
+        filename=f"SeatPulse-SP{booking.id:05d}.pdf",
+    )
+
+
+@router.post("/{booking_id}/ticket/retry", response_model=BookingOut)
+def retry_ticket(
+    booking_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Ticket generation fail hui thi — dobara try karo."""
+    booking = db.get(Booking, booking_id)
+    if booking is None or booking.user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking nahi mili")
+
+    if booking.ticket_status == TICKET_READY:
+        return booking      # kuch karne ki zaroorat nahi
+
+    booking.ticket_status = TICKET_PENDING
+    db.commit()
+    enqueue_ticket(booking.id)
 
     db.refresh(booking)
     return booking

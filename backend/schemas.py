@@ -166,6 +166,8 @@ class BookingDetail(BookingOut):
     """Booking + seat ka pata, list dikhane ke liye."""
     seat_label: str
     event_name: str
+    # pending | ready | failed — UI isse download button dikhata hai
+    ticket_status: str = "pending"
 
 
 # ---------- User ----------

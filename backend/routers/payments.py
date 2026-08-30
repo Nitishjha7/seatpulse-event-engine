@@ -58,6 +58,7 @@ from models import (
     User,
     utcnow,
 )
+from job_queue import enqueue_ticket
 from payments import PaymentError, get_provider
 from rate_limit import BOOKING, limit_user
 from redis_client import acquire_seat_lock, get_lock_owner, redis_client, release_seat_lock
@@ -307,6 +308,10 @@ def _fulfil(db: Session, payment: Payment) -> Booking:
 
     release_seat_lock(payment.seat_id, payment.user_id)
     broadcast_seat_update(db, payment.seat_id, "booked")
+
+    # Payment confirm hone ke BAAD ticket queue karo — pehle nahi,
+    # warna failed payment ka bhi ticket ban jata
+    enqueue_ticket(booking.id)
 
     db.refresh(booking)
     return booking
