@@ -154,6 +154,15 @@ class Event(Base):
     # "Music", "Comedy", "Sports" — UI me tag ki tarah dikhta hai
     category: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
+    # ---- Dynamic pricing (Phase 14) ----
+    # Off by default — purane events ka behaviour na badle.
+    dynamic_pricing: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # 0.5 = 100% bikne par price 1.5x. Linear beech me.
+    demand_factor: Mapped[float] = mapped_column(Numeric(4, 2), default=0.5, nullable=False)
+    # Chahe kitna bhi demand ho, isse upar nahi jayega. Bina cap ke
+    # pricing bekaboo lagti hai aur user ka bharosa uth jata hai.
+    max_surge: Mapped[float] = mapped_column(Numeric(4, 2), default=2.0, nullable=False)
+
     # Kis organizer ka event hai.
     #
     # nullable=True do wajah se:
@@ -219,6 +228,18 @@ class Seat(Base):
     # hai) — bas maan ke chalte hain ki clash kam hoga, aur clash hone par
     # detect kar lete hain.
     version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # ---- Price lock (Phase 14) ----
+    #
+    # ⚠️ Seat hold karte waqt uska price YAHIN lock ho jata hai.
+    #
+    # Bina iske: user ko ₹800 dikhta hai, wo checkout pe jata hai, beech
+    # me 5 aur seats bik jaati hain, aur usse ₹920 kat jata. Wo seedha
+    # dhokha hai.
+    #
+    # Hold chhutte hi ye NULL ho jata hai — agli baar naya (shayad zyada)
+    # price lagega.
+    held_price: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
 
     # ---- Phase 4 (Redis) ke liye ----
     # Asli lock Redis me hoga (fast). Ye columns sirf "kiske paas hai aur kab tak"

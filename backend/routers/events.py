@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import SEAT_AVAILABLE, SEAT_BOOKED, SEAT_LOCKED, Event, Seat
-from schemas import EventDetail, EventOut
+from pricing_state import pricing_state
+from schemas import EventDetail, EventOut, PricingOut
 
 router = APIRouter(prefix="/api/events", tags=["events"])
 
@@ -52,4 +53,17 @@ def get_event(event_id: int, db: Session = Depends(get_db)):
         locked_seats=counts.get(SEAT_LOCKED, 0),
         min_price=float(price_range[0]) if price_range[0] is not None else None,
         max_price=float(price_range[1]) if price_range[1] is not None else None,
+        pricing=_pricing_out(db, event),
+    )
+
+
+def _pricing_out(db, event) -> PricingOut:
+    info = pricing_state(db, event)
+    return PricingOut(
+        enabled=info.enabled,
+        multiplier=round(info.multiplier, 3),
+        surge_percent=info.surge_percent,
+        sold=info.sold,
+        total=info.total,
+        seats_until_increase=info.seats_until_increase,
     )

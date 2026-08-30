@@ -35,6 +35,17 @@ class EventOut(ORMModel):
     category: str | None = None
 
 
+class PricingOut(BaseModel):
+    """Event ki abhi ki pricing state — UI ke surge badge ke liye."""
+    enabled: bool
+    multiplier: float
+    surge_percent: int
+    sold: int
+    total: int
+    # Agli price badhne se pehle kitni seats. None = pricing off ya max pe
+    seats_until_increase: int | None = None
+
+
 class EventDetail(EventOut):
     """Event + seats ka summary. Grid load karne se pehle overview ke liye."""
     available_seats: int
@@ -43,6 +54,7 @@ class EventDetail(EventOut):
     # Detail page pe "₹800 – ₹2500" dikhane ke liye. None jab koi seat na ho.
     min_price: float | None = None
     max_price: float | None = None
+    pricing: PricingOut | None = None
 
 
 # ---------- Organizer (Phase 10) ----------
@@ -124,6 +136,13 @@ class SeatOut(ORMModel):
     # (neeli) dikhani hai ya "kisi aur ki hold" (peeli).
     locked_by: int | None = None
     locked_until: datetime | None = None
+
+    # ---- Pricing (Phase 14) ----
+    # `price` BASE hai (kabhi nahi badalta). `current_price` abhi ka hai.
+    # Dynamic pricing off ho to dono barabar rehte hain.
+    current_price: float | None = None
+    # Hold ke waqt lock hua price — checkout me yahi lagega
+    held_price: float | None = None
 
 
 # ---------- Seat Lock (Phase 4) ----------
