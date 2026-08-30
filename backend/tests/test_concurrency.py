@@ -1191,3 +1191,109 @@ def test_absurd_surge_settings_are_rejected(client, role_tokens, surge_event):
         json={"demand_factor": 50},
     )
     assert res.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Phase 15 — Locking strategies
+#
+# ⭐ Ye tests dono modes me pass hone chahiye.
+#
+# BENCHMARK_MODE off ho to server `strategy` param ignore kar deta hai aur
+# optimistic chalata hai. On ho to pessimistic path chalta hai. Dono soorat
+# me ek hi cheez sach honi chahiye: **ek seat, ek booking**.
+#
+# Test isi invariant par likhi hai, kisi internal detail par nahi — isliye
+# ye mode ke hisaab se skip nahi hoti, aur benchmark mode galti se on chhut
+# jaye to bhi meaningful rehti hai.
+# ---------------------------------------------------------------------------
+
+def test_pessimistic_strategy_also_prevents_double_booking(client, tokens, free_seat):
+    """
+    Pessimistic path se bhi overselling nahi honi chahiye.
+
+    Ye benchmark ka pehla sawaal hai: dono strategies SAHI hain kya?
+    "Kaunsa tez hai" ka koi matlab nahi agar ek galat ho.
+    """
+    seat_id = free_seat["id"]
+
+    def book(token):
+        return client.post(
+            "/api/bookings?strategy=pessimistic&redis_lock=off",
+            headers=_headers(token),
+            json={"seat_id": seat_id},
+        ).status_code
+
+    with ThreadPoolExecutor(max_workers=len(tokens)) as pool:
+        codes = list(pool.map(book, tokens))
+
+    assert codes.count(201) == 1, f"exactly ek booking honi thi, mili: {codes}"
+    # Baaki sabko 409 (ya rate limit se 429) — 500 kabhi nahi
+    assert all(c in (201, 409, 429) for c in codes), codes
+
+
+def test_unknown_strategy_falls_back_to_optimistic(client, tokens, free_seat):
+    """
+    Kachra `strategy` value bheji to server safe default pe jaye, 500 na de.
+
+    Ye chhoti baat lagti hai par zaroori hai: ye param public API me nahi
+    hai, matlab ise koi bhi kuch bhi bhej sakta hai. Unknown value pe
+    crash hona ek DoS ban jata.
+    """
+    res = client.post(
+        "/api/bookings?strategy=../../etc/passwd",
+        headers=_headers(tokens[0]),
+        json={"seat_id": free_seat["id"]},
+    )
+    assert res.status_code == 201
+
+
+def test_both_strategies_write_identical_seat_state(client, tokens, role_tokens):
+    """
+    Dono strategies ke baad seat ka state bilkul same dikhna chahiye.
+
+    Agar pessimistic path `version` badhana bhool jata (usse row lock ki
+    wajah se zaroorat nahi hai), to WebSocket clients ko update dikhta hi
+    nahi — aur benchmark do ALAG cheezein maap raha hota.
+    """
+    token = role_tokens["organizer"]
+    states = []
+
+    for strategy in ("optimistic", "pessimistic"):
+        ev = client.post(
+            "/api/organizer/events",
+            headers=_headers(token),
+            json={
+                "name": f"Strategy Test {strategy}",
+                "venue": "Test Hall",
+                "starts_at": "2027-11-11T18:00:00Z",
+                "seats_per_row": 2,
+                "price_tiers": [{"rows": 1, "price": 500}],
+            },
+        ).json()
+
+        seats = client.get(f"/api/events/{ev['id']}/seats").json()
+        before = seats[0]
+
+        assert client.post(
+            f"/api/bookings?strategy={strategy}&redis_lock=off",
+            headers=_headers(tokens[0]),
+            json={"seat_id": before["id"]},
+        ).status_code == 201
+
+        after = client.get(f"/api/seats/{before['id']}").json()
+        states.append({
+            "status": after["status"],
+            "version_delta": after["version"] - before["version"],
+            "locked_by": after["locked_by"],
+            "held_price": after["held_price"],
+        })
+
+        # cleanup
+        for b in client.get("/api/bookings", headers=_headers(tokens[0])).json():
+            if b["event_id"] == ev["id"]:
+                client.delete(f"/api/bookings/{b['id']}", headers=_headers(tokens[0]))
+        client.delete(f"/api/organizer/events/{ev['id']}", headers=_headers(token))
+
+    assert states[0] == states[1], f"strategies ne alag state chhoda: {states}"
+    assert states[0]["status"] == "booked"
+    assert states[0]["version_delta"] == 1

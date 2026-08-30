@@ -50,6 +50,9 @@ services:
       # ko khud ko point karega.
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
+      # Phase 15 benchmark ke knobs. Default off — .env me
+      # BENCHMARK_MODE=true karke hi pessimistic path chalta hai.
+      BENCHMARK_MODE: ${BENCHMARK_MODE:-false}
     depends_on:
       db:
         # Sirf "started" nahi — DB ready hone tak wait karo.

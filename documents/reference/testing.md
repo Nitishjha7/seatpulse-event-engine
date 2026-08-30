@@ -634,6 +634,9 @@ Aakhir me browser me ek round: login → seat hold → book → cancel → logou
 | Gate check-in (browser) | organizer se login → sidebar → **Gate Check-in** |
 | QR token nikalo (manual test) | `docker compose exec db psql -U seatpulse -d seatpulse -t -A -c "SELECT qr_token FROM bookings WHERE id=<ID>;"` |
 | Surge on wala event | organizer se **Create Event** → "Demand-based pricing" checkbox |
+| Locking benchmark (chaar scenarios) | `bash loadtest/run_benchmark.sh` — pehle `BENCHMARK_MODE=true` |
+| Micro-benchmark (sirf DB claim step) | `docker compose exec backend python /loadtest/micro_benchmark.py` |
+| Ek request me kitni SQL queries? | `docker compose exec db psql -U seatpulse -d seatpulse -c "ALTER SYSTEM SET log_statement='all';" -c "SELECT pg_reload_conf();"` phir `docker compose logs db` |
 | Locked price dekho | `docker compose exec db psql -U seatpulse -d seatpulse -c "SELECT id, price, held_price, status FROM seats WHERE held_price IS NOT NULL;"` |
 | Logs | `docker compose logs -f backend` |
 
@@ -670,6 +673,46 @@ sabse important bug hai.
 
 ---
 
+## Locking benchmark chalana
+
+⚠️ Do baatein pehle:
+
+1. **`BENCHMARK_MODE=true` chahiye**, warna server `?strategy=` param
+   chupchaap ignore kar dega aur chaaron runs bilkul ek jaise aayenge
+   (aur wo galti pakadna mushkil hai — koi error nahi milta).
+2. Baad me **wapas off karo**. Ye knobs locking semantics badalte hain,
+   production me nahi hone chahiye.
+
+```bash
+echo "BENCHMARK_MODE=true" >> backend/.env
+docker compose up -d backend
+
+# Locust — poora system, chaar scenarios (Redis on/off x dono strategies)
+bash loadtest/run_benchmark.sh
+
+# Micro-benchmark — sirf DB claim step isolate karke
+docker compose exec backend python /loadtest/micro_benchmark.py
+
+# Order bias check — jo pehle chale usse fayda to nahi mil raha?
+docker compose exec -e BENCH_ORDER=pessimistic,optimistic backend \
+    python /loadtest/micro_benchmark.py
+
+sed -i '/BENCHMARK_MODE=true/d' backend/.env
+docker compose up -d backend
+```
+
+**Numbers padhte waqt kya dekhna:**
+
+| Column | Kya batata hai |
+|---|---|
+| `won` | har round me theek 1 hona chahiye. Nahi hai to comparison hi invalid |
+| `err` | 0 hona chahiye. Non-zero matlab 429/500 numbers me ghul rahe hain |
+| `p50` / `p99` | dono strategies ka. Farak variance se bada hai tabhi matlab rakhta hai |
+
+Poore results aur unka matlab: [Phase 15](../phases/15-locking-benchmark.md).
+
+---
+
 ## Demo accounts
 
 | Email | Password | Role |
@@ -688,6 +731,7 @@ sabse important bug hai.
 - [Phase 7 — Auth + Google OAuth](../phases/07-auth-google-oauth.md) — auth design + **Google credentials kaise banayein**
 - [Phase 6 — Load Testing](../phases/06-load-testing.md) — load testing ka poora detail + results
 - [Phase 14 — Dynamic Pricing](../phases/14-dynamic-pricing.md) — price lock kyu zaroori hai
+- [Phase 15 — Locking Benchmark](../phases/15-locking-benchmark.md) — benchmark ka method aur results
 - [postgres-commands.md](postgres-commands.md) — DB queries
 - [docker-commands.md](docker-commands.md) — container commands
 - [roadmap.md](../roadmap.md) — poora plan

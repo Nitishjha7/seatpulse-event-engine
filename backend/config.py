@@ -39,6 +39,18 @@ class Settings(BaseSettings):
     #             (30 < 40)
     MAX_CONCURRENT_REQUESTS: int = 30
 
+    # ---- Benchmark mode (Phase 15) ----
+    #
+    # On hone par booking endpoint do extra query params maanta hai:
+    # `strategy` (optimistic/pessimistic) aur `redis_lock` (on/off).
+    #
+    # Default OFF, aur ye jaan-boojh ke hai. Ek query param jo locking
+    # semantics badal de, wo production me footgun hai — koi client
+    # galti se (ya jaan-boojh ke) `?redis_lock=off` bhej ke sabse mehngi
+    # code path chala sakta hai. Benchmark ke waqt env se on karte hain,
+    # baaki hamesha optimistic + Redis.
+    BENCHMARK_MODE: bool = False
+
     # "redis" host bhi compose service ka naam hai, "db" ki tarah.
     REDIS_URL: str = "redis://redis:6379/0"
 

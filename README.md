@@ -151,6 +151,16 @@ Because the multiplier is one number for the whole event, a booking broadcasts a
 
 Verified end to end: one user held a seat at Rs.1000, four more bookings pushed the market to Rs.1400, and the held seat still charged exactly Rs.1000.
 
+### Locking strategy, measured
+
+The obvious challenge to optimistic locking is "why not `SELECT … FOR UPDATE`?" — so both are implemented against the same booking path, switchable by a query parameter that only exists when `BENCHMARK_MODE` is on, and measured.
+
+The result did not confirm the assumption. Across four runs of 1,000 contended requests each (including one with the run order reversed to rule out warm-up bias), pessimistic locking came out **5-7% faster on p50, within run-to-run variance** — not slower. The reason is visible once you count statements: one booking is **33 SQL statements**, and the locking strategy changes exactly one of them. Losers on the pessimistic path bail out at a status check without issuing a write at all, while optimistic losers still execute an `UPDATE` that matches zero rows.
+
+Two further findings came out of it. With the Redis layer enabled — the actual production path — **1 of 1,433 contended requests reached the booking endpoint**; the database strategy is nearly unreachable by design. And at 300 concurrent users the admission-control semaphore, not the database, is the bottleneck, so all four scenarios landed within 8% of each other.
+
+Optimistic remains the default, for failure mode rather than speed: a losing request returns immediately and frees its connection, where a pessimistic one queues while **holding** one. That cost scales with how long the winner holds the row lock — about 2ms today, which is why it never showed up here, and why it would show up sharply if a transaction ever grew slower. Full numbers and method: [documents/phases/15-locking-benchmark.md](documents/phases/15-locking-benchmark.md).
+
 ### Authorization
 
 Three flat roles — `attendee`, `organizer`, `admin` — enforced by a `require_role(...)` dependency and backed by a check constraint on the column, so a typo can never become a role.
@@ -267,7 +277,7 @@ docker compose --profile loadtest run --rm locust \
     --host http://backend:8000
 
 docker compose exec backend python verify_integrity.py
-docker compose exec backend pytest tests/ -v         # 63 tests: auth, RBAC, payments, tickets, check-in, pricing, concurrency
+docker compose exec backend pytest tests/ -v         # 66 tests: auth, RBAC, payments, tickets, check-in, pricing, locking, concurrency
 ```
 
 ### What load testing actually caught
@@ -315,6 +325,7 @@ Result on the same 200-user flash sale: **1,250 requests with 58 failures and a 
 - [x] Background worker (ARQ) — QR code, PDF ticket and email generated outside the request, with retries and a re-queue safety net
 - [x] Gate check-in — camera QR scanning with an atomic single-entry guard, verified with 10 concurrent scans
 - [x] Dynamic pricing — demand-based surge pushed over the existing WebSocket channel, with the quoted price locked at hold time so checkout never costs more than what was shown
+- [x] Locking benchmark — `SELECT … FOR UPDATE` implemented alongside the optimistic path and measured against it; the difference turned out to be smaller than run-to-run variance, and the writeup says so
 
 ### Planned
 
@@ -324,7 +335,6 @@ Ordered by dependency — each item leans on the ones above it. None of these ar
 - [ ] **Group booking + split payment** — shareable payment link with a deadline; every share paid or the whole group's seats are released
 - [ ] **Natural-language seat finder** — an LLM turns *"3 seats together under ₹1500, centred on the stage"* into structured filters that run as an ordinary query
 - [ ] **AI event copy + poster generator** — draft title, description and banner from a short prompt, always editable before publishing
-- [ ] **Pessimistic locking benchmark** — `SELECT … FOR UPDATE` measured against the current optimistic approach with the existing Locust suite
 - [ ] Multi-worker deployment (`--workers`) and CI pipeline
 - [ ] Screenshots / demo GIF, and a deployed live demo
 - [ ] **Demand forecasting** — base price and sell-out prediction from booking velocity. Last on purpose: without real historical data this produces a plausible-looking number rather than a useful one

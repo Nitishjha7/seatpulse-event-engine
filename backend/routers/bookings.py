@@ -12,17 +12,19 @@ Redis ne correctness nahi badli — usne sirf speed di. Isi baat par
 interview me sabse zyada baat hoti hai.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
+from config import settings
 from database import get_db
 from events_broadcast import broadcast_seat_update
 from idempotency import Idempotency
 from job_queue import enqueue_ticket
+from locking_strategies import OPTIMISTIC, PESSIMISTIC, claim_optimistic, claim_pessimistic
 from pricing_state import price_now
 from models import (
     BOOKING_CANCELLED,
@@ -57,6 +59,11 @@ def create_booking(
     response: Response,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    # ---- Benchmark-only knobs (Phase 15) ----
+    # BENCHMARK_MODE off ho to ye dono chupchaap ignore ho jaate hain.
+    # include_in_schema=False -> public API docs me dikhte bhi nahi.
+    strategy: str | None = Query(None, include_in_schema=False),
+    redis_lock: str | None = Query(None, include_in_schema=False),
 ):
     """
     Seat book karo.
@@ -72,13 +79,15 @@ def create_booking(
     to naya kaam nahi hota — pehla jawab wapas milta hai. Double-click
     aur network retry dono isse safe ho jaate hain.
     """
+    knobs = _benchmark_knobs(strategy, redis_lock)
+
     idem = Idempotency(request, user.id, "booking", payload.model_dump())
     cached = idem.begin()
     if cached:
         return idem.replay(response, cached)
 
     try:
-        booking = _perform_booking(payload, db, user)
+        booking = _perform_booking(payload, db, user, **knobs)
     except Exception:
         # Fail hua to idempotency claim chhod do — warna user usi key se
         # 60 second tak retry hi nahi kar payega
@@ -90,12 +99,41 @@ def create_booking(
     return result
 
 
-def _perform_booking(payload: BookingCreate, db: Session, user: User) -> Booking:
+def _benchmark_knobs(strategy: str | None, redis_lock: str | None) -> dict:
+    """
+    Benchmark ke query params padho — sirf tab jab BENCHMARK_MODE on ho.
+
+    Off hone par params CHUPCHAP ignore ho jaate hain, error nahi milta.
+    Wajah: ye internal measurement knobs hain, public API ka hissa nahi.
+    Inke liye 400 dena API surface me ek aisi cheez ka zikr kar dega jo
+    honi hi nahi chahiye.
+    """
+    if not settings.BENCHMARK_MODE:
+        return {}
+
+    return {
+        "strategy": PESSIMISTIC if strategy == PESSIMISTIC else OPTIMISTIC,
+        "use_redis_lock": redis_lock != "off",
+    }
+
+
+def _perform_booking(
+    payload: BookingCreate,
+    db: Session,
+    user: User,
+    strategy: str = OPTIMISTIC,
+    use_redis_lock: bool = True,
+) -> Booking:
     """
     Asli booking logic — teeno defence layers.
 
     Alag function isliye taki upar idempotency ka wrapper saaf dikhe aur
     ye logic bilkul waisa ka waisa rahe jaisa Phase 4 me tha.
+
+    `strategy` aur `use_redis_lock` sirf benchmark ke liye hain (Phase 15)
+    aur default production wali values par hain. ZAROORI: benchmark isi
+    function ko chalata hai, koi alag copy nahi — warna hum us cheez ko
+    maap rahe hote jo asal me deploy hoti hi nahi.
     """
     seat = db.get(Seat, payload.seat_id)
     if seat is None:
@@ -112,10 +150,16 @@ def _perform_booking(payload: BookingCreate, db: Session, user: User) -> Booking
     # Dono case me booking Redis lock ke bina aage nahi badhti. Isliye
     # 5000 parallel requests me se 4999 yahin ruk jaati hain — unka
     # database se koi wasta hi nahi padta.
-    lock_owner = get_lock_owner(payload.seat_id)
+    lock_owner = get_lock_owner(payload.seat_id) if use_redis_lock else None
     lock_taken_here = False
 
-    if lock_owner is None:
+    if not use_redis_lock:
+        # Benchmark: Redis layer hata di gayi hai, taki neeche wali DB
+        # strategy pe POORA load pade. Redis lagi ho to 499 requests
+        # wahin ruk jaati hain aur DB ko contention dikhta hi nahi —
+        # matlab dono strategies ek jaisi lagti hain.
+        pass
+    elif lock_owner is None:
         if not acquire_seat_lock(payload.seat_id, user.id):
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Seat abhi kisi aur ne hold kar li"
@@ -145,31 +189,23 @@ def _perform_booking(payload: BookingCreate, db: Session, user: User) -> Booking
     amount = price_now(db, seat)
     event_id = seat.event_id
 
-    # ---- LAYER 2: OPTIMISTIC LOCKING ----
-    # Poora faisla is ek atomic UPDATE me hota hai.
-    # WHERE me version aur status dono hain — do parallel requests me
-    # sirf ek ka WHERE match karega, dusre ko 0 rows milengi.
-    result = db.execute(
-        update(Seat)
-        .where(
-            Seat.id == payload.seat_id,
-            Seat.version == expected_version,
-            Seat.status.in_((SEAT_AVAILABLE, SEAT_LOCKED)),
-        )
-        .values(
-            status=SEAT_BOOKED,
-            version=Seat.version + 1,
-            locked_by=None,
-            locked_until=None,
-            # Seat bik gayi — price lock ka ab koi matlab nahi. Amount
-            # booking row me chala gaya, jo asli record hai.
-            held_price=None,
-        )
-        .execution_options(synchronize_session=False)
-    )
+    # ---- LAYER 2: DATABASE-LEVEL CLAIM ----
+    #
+    # Production me hamesha OPTIMISTIC. Pessimistic sirf benchmark me
+    # (Phase 15) — dono ka code `locking_strategies.py` me hai, saath me
+    # yeh bhi ki farak kya padta hai.
+    #
+    # Optimistic kyu default hai: haarne wala TURANT nikal jata hai.
+    # Pessimistic me wo qataar me lagta hai aur apna DB connection pakde
+    # rakhta hai — 500 users ek seat pe hon to 40 connections ka pool
+    # minton me khatam ho jata hai.
+    if strategy == PESSIMISTIC:
+        claim = claim_pessimistic(db, payload.seat_id)
+    else:
+        claim = claim_optimistic(db, payload.seat_id, expected_version)
 
-    if result.rowcount == 0:
-        # Koi aur jeet gaya. Hamara version purana ho chuka hai.
+    if not claim.won:
+        # Koi aur jeet gaya.
         db.rollback()
         if lock_taken_here:
             release_seat_lock(payload.seat_id, user.id)

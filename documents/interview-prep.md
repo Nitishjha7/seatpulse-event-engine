@@ -565,7 +565,112 @@ Yahan ek achhi detail hai jo interviewer ko surprise karti hai:
 
 ---
 
-## 12. Traps — jahan "haan" bolna galat hai
+## 12. ⭐ Locking benchmark — "maine measure kiya, aur main galat tha"
+
+Ye section interview me **sabse zyada** kaam aayega, kyunki isme ek aisi
+baat hai jo bahut kam log bolte hain: *mera andaza galat nikla.*
+
+### "`SELECT ... FOR UPDATE` kyu nahi use kiya?"
+
+Purana jawab theory tha. Ab numbers hain:
+
+> "Maine dono implement kiye aur same load pe chalaye. Teen cheezein mili,
+> aur teeno interesting hain.
+>
+> **Pehli:** Redis layer on ho to ye sawaal hi bekaar ho jata hai. 1433
+> contended requests me se sirf **1** database tak pahunchi — baaki 1432
+> Redis lock pe hi ruk gayi. Production config me DB strategy ka code
+> chalta hi nahi hai.
+>
+> **Doosri:** Redis hata ke maapa to pessimistic **5-7% tez** nikla, dhima
+> nahi. Ye mere andaze ke ulta tha.
+>
+> **Teesri, aur asli jawab:** ek booking request **33 SQL statements** hai.
+> Locking strategy unme se **ek** badalti hai. Isliye farak dikhna hi nahi
+> tha — jo 5% dikha wo run-to-run variance jitna hi hai."
+
+### "Pessimistic tez kaise ho gaya?"
+
+Ye follow-up zaroor aayega. Jawab code me hai:
+
+> "Seat book hone ke baad aane wale losers ke liye:
+>
+> - **optimistic** — `UPDATE ... WHERE version=?` chalta hai, 0 rows match
+>   karte hain, phir rollback. Write statement fir bhi chali.
+> - **pessimistic** — `SELECT ... FOR UPDATE` (lock free hai, turant
+>   milta hai), status check karo, `booked` mila, return. **Koi UPDATE hi
+>   nahi.**
+>
+> Yaani losers ke liye pessimistic path me kam kaam hota hai. Blocking
+> hoti hi nahi, kyunki jeetne wala millisecond me commit kar deta hai."
+
+### ⭐⭐ "To phir optimistic kyu rakha?"
+
+**Ye is poore section ka sabse important jawab hai.** Yahan galti ye hoti
+hai ki log numbers ko ghuma ke apna faisla sahi sabit karne lagte hain.
+Ussey ulta karo:
+
+> "Speed ki wajah se nahi — numbers ne speed ka farak dikhaya hi nahi.
+> **Failure mode** ki wajah se.
+>
+> Optimistic me haarne wali request turant nikal jati hai aur apna DB
+> connection chhod deti hai. Pessimistic me wo qataar me khadi rehti hai
+> aur connection **pakde** rehti hai. Pool me 40 connections hain.
+>
+> Ye mere benchmark me nahi dikha, aur main dikhane ka daawa bhi nahi
+> karta — kyunki jeetne wali transaction ~2ms me commit kar deti hai, to
+> koi rukta hi nahi. Pessimistic ka kharcha us waqt ke saath badhta hai
+> jitni der lock pakda jata hai.
+>
+> Khatra ye hai ki wo waqt badh sakta hai — ek external call, ek slow
+> query, ek badi report transaction me aa gayi. Tab pessimistic seedha
+> pool exhaustion me badal jayega, jabki optimistic ka behaviour waisa hi
+> rahega.
+>
+> Ek line me: maine optimistic isliye nahi choose kiya ki wo aaj tez hai —
+> wo nahi hai. Isliye choose kiya ki wo kal bura nahi hoga."
+
+### "Benchmark me koi bug mila?"
+
+Ye khud bata do — ye sabse strong cheez hai jo is section me hai:
+
+> "Haan, aur usne mujhe poori tarah galat conclusion likhne se bachaya.
+>
+> Pehle micro-benchmark run me maine rate limit buckets clear karne ka
+> code likha tha galat prefix ke saath — `ratelimit:*`, jabki asli prefix
+> `rl:` hai. Buckets clear hote hi nahi the, aur chauthe round se har
+> request 429 khaane lagti thi. Wo 429 latency numbers me ghul rahe the.
+>
+> Isse mere `errors` column ne pakda — jo maine sirf sanity ke liye rakha
+> tha. Agar main bas p50/p99 chhapta, to numbers **bilkul theek dikhte**
+> aur main us par doc likh deta.
+>
+> Sabak: benchmark me hamesha ek invariant check rakho — 'har round me
+> theek ek booking jeetni chahiye' — sirf timing mat chhapo."
+
+### "Aur kuch mila?"
+
+> "Query counting ne ek asli inefficiency pakdi jiska locking se koi lena
+> dena nahi tha: `pricing_state()` har booking me **do baar** chalta hai —
+> ek baar price nikalne me, ek baar WebSocket broadcast me. Matlab har
+> booking me 6 faaltu queries.
+>
+> Maine wo abhi fix nahi kiya kyunki fix karne se saare benchmark numbers
+> badal jate. Roadmap me follow-up ke roop me likha hai."
+
+### Rapid fire
+
+| Sawaal | Ek-line jawab |
+|---|---|
+| Benchmark ne production code chalaya ya copy? | Wahi `_perform_booking()`. Alag endpoint banata to us cheez ko maapta jo deploy hi nahi hoti |
+| Strategy switch production me expose hai? | Nahi. `BENCHMARK_MODE=false` pe query param chupchaap ignore hota hai — ek param jo locking semantics badle wo footgun hai |
+| Redis off karna cheating nahi? | Wahi ek tareeka hai DB layer ko akela dekhne ka. Aur "Redis 1432/1433 rok deta hai" khud ek finding hai |
+| Ordering bias check kiya? | Haan — order ulta karke chalaya, wahi nateeja |
+| Deadlock ka risk? | Yahan nahi, ek hi row lock hoti hai. Multi-seat booking add karta to consistent order me lock lena padta |
+
+---
+
+## 13. Traps — jahan "haan" bolna galat hai
 
 ### "Kafka use kar sakte the na?"
 
@@ -589,7 +694,7 @@ Yahan ek achhi detail hai jo interviewer ko surprise karti hai:
 
 ---
 
-## 13. Rapid fire
+## 14. Rapid fire
 
 | Sawaal | Ek-line jawab |
 |---|---|
@@ -609,7 +714,7 @@ Yahan ek achhi detail hai jo interviewer ko surprise karti hai:
 
 ---
 
-## 14. Whiteboard — architecture aise banao
+## 15. Whiteboard — architecture aise banao
 
 Isi order me banao, bolte hue:
 
@@ -630,7 +735,7 @@ Bolte waqt teen baatein zaroor:
 
 ---
 
-## 15. Tum kya poochho
+## 16. Tum kya poochho
 
 Interview do-tarfa hai. Ye poochne se pata chalta hai ki tum production ke bare me sochte ho:
 
@@ -662,4 +767,5 @@ Aur ek line jo kabhi mat bhoolna:
 - [Phase 6 — Load Testing](phases/06-load-testing.md) — load test aur pehla bug
 - [Phase 7 — Auth + Google OAuth](phases/07-auth-google-oauth.md) — auth + baaki do bug
 - [Phase 14 — Dynamic Pricing](phases/14-dynamic-pricing.md) — price lock ka poora design
+- [Phase 15 — Locking Benchmark](phases/15-locking-benchmark.md) — poore numbers aur method
 - [testing.md](reference/testing.md) — sab kuch demo karne ke commands

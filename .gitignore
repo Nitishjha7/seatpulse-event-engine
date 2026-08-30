@@ -55,3 +55,7 @@ desktop.ini
 logs/
 *.log
 tickets/
+
+# Benchmark ke CSV outputs — har run pe naye bante hain.
+# Asli numbers documents/phases/15-locking-benchmark.md me likhe hain.
+loadtest/results/

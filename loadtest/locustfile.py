@@ -42,6 +42,29 @@ USER_POOL_SIZE = int(os.getenv("USER_POOL_SIZE", "499"))
 # seed.py sab test users ko yahi password deta hai
 PASSWORD = os.getenv("SEED_PASSWORD", "demo1234")
 
+# ---- Phase 15: locking benchmark ke knobs ----
+#
+# Ye tabhi asar karte hain jab backend BENCHMARK_MODE=true se chal raha ho.
+# Warna server inhe chupchaap ignore kar deta hai aur normal (optimistic +
+# Redis) path chalta hai.
+#
+#   BOOKING_STRATEGY=optimistic|pessimistic
+#   USE_REDIS_LOCK=1|0
+#
+# USE_REDIS_LOCK=0 kyu chahiye: Redis layer 500 me se 499 requests ko
+# database tak pahunchne hi nahi deti. Uske rehte dono DB strategies
+# bilkul ek jaisi dikhti hain — kyunki unpe contention aata hi nahi.
+# Farak dekhne ke liye Redis hatana padta hai.
+BOOKING_STRATEGY = os.getenv("BOOKING_STRATEGY", "optimistic")
+USE_REDIS_LOCK = os.getenv("USE_REDIS_LOCK", "1") != "0"
+
+# Query string jo har booking request ke saath jayegi
+_BOOK_QS = f"?strategy={BOOKING_STRATEGY}&redis_lock={'on' if USE_REDIS_LOCK else 'off'}"
+
+# Locust ki report me har scenario alag naam se dikhe, warna chaar runs
+# ka comparison karna namumkin ho jata
+_BOOK_NAME = f"POST /bookings [{BOOKING_STRATEGY}, redis={'on' if USE_REDIS_LOCK else 'off'}]"
+
 _user_nums = itertools.cycle(range(1, USER_POOL_SIZE + 1))
 
 
@@ -98,33 +121,41 @@ class FlashSaleUser(AuthedUser):
     def grab_the_seat(self):
         # Step 1 — seat hold karne ki koshish (Redis lock)
         # user_id body me nahi jata — token se aata hai (AuthedUser.on_start)
-        with self.client.post(
-            f"/api/seats/{TARGET_SEAT_ID}/lock",
-            name="POST /seats/{id}/lock",
-            catch_response=True,
-        ) as res:
-            if res.status_code == 200:
-                res.success()
-                got_lock = True
-            elif res.status_code == 409:
-                # Expected — seat kisi aur ke paas hai
-                res.success()
-                got_lock = False
-            else:
-                res.failure(f"Unexpected {res.status_code}: {res.text[:100]}")
+        #
+        # Benchmark me USE_REDIS_LOCK=0 ho to ye step poora skip hota hai
+        # aur har request seedha database pe jaati hai.
+        if USE_REDIS_LOCK:
+            with self.client.post(
+                f"/api/seats/{TARGET_SEAT_ID}/lock",
+                name="POST /seats/{id}/lock",
+                catch_response=True,
+            ) as res:
+                if res.status_code == 200:
+                    res.success()
+                    got_lock = True
+                elif res.status_code == 409:
+                    # Expected — seat kisi aur ke paas hai
+                    res.success()
+                    got_lock = False
+                else:
+                    res.failure(f"Unexpected {res.status_code}: {res.text[:100]}")
+                    return
+
+            if not got_lock:
                 return
 
-        if not got_lock:
-            return
-
-        # Step 2 — lock mila to turant book karo
+        # Step 2 — book karo
         with self.client.post(
-            "/api/bookings",
+            f"/api/bookings{_BOOK_QS}",
             json={"seat_id": TARGET_SEAT_ID},
-            name="POST /bookings",
+            name=_BOOK_NAME,
             catch_response=True,
         ) as res:
             if res.status_code in (201, 409):
+                res.success()
+            elif res.status_code == 429:
+                # Rate limiter ne roka — ye load ka natija hai, server ka
+                # bug nahi. Alag se ginte hain taki numbers me na ghule.
                 res.success()
             else:
                 res.failure(f"Unexpected {res.status_code}: {res.text[:100]}")
