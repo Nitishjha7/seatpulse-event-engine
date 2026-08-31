@@ -2103,7 +2103,11 @@ class _FakeSeat:
         self.section = section
 
 
-def _row(label, count, *, taken=(), price=1000, section=None, start_id=1):
+# ⚠️ `_seat_row`, `_row` nahi — Phase 18 ke layout tests me pehle se ek
+# `_row()` helper hai jiska signature alag hai. Dono ek hi module me hain,
+# to same naam rakhne par baad wali definition pehli ko chupchaap overwrite
+# kar deti hai aur 8 purane tests TypeError se fail hone lagte hain.
+def _seat_row(label, count, *, taken=(), price=1000, section=None, start_id=1):
     return [
         _FakeSeat(
             start_id + i,
@@ -2118,7 +2122,7 @@ def _row(label, count, *, taken=(), price=1000, section=None, start_id=1):
 
 
 def test_single_seat_search_returns_cheapest_first():
-    seats = _row("A", 3, price=2000, start_id=1) + _row("B", 3, price=500, start_id=10)
+    seats = _seat_row("A", 3, price=2000, start_id=1) + _seat_row("B", 3, price=500, start_id=10)
     found = seat_search.find(seats, quantity=1)
 
     assert found[0].total_price == 500
@@ -2128,7 +2132,7 @@ def test_single_seat_search_returns_cheapest_first():
 def test_together_needs_consecutive_seats():
     """Beech me ek booked seat ho to wo 'saath' nahi hai."""
     # A: seats 1,2,[3 booked],4,5  -> 3 saath wali seats nahi milengi
-    seats = _row("A", 5, taken=(3,))
+    seats = _seat_row("A", 5, taken=(3,))
 
     assert seat_search.find(seats, quantity=3, together=True) == []
     # 2 saath wali mil jaayengi (1-2 aur 4-5)
@@ -2141,7 +2145,7 @@ def test_together_false_returns_individual_seats():
 
     Unhe artificially group karke dikhana jhooth hoga.
     """
-    seats = _row("A", 5, taken=(3,))
+    seats = _seat_row("A", 5, taken=(3,))
     found = seat_search.find(seats, quantity=3, together=False)
 
     assert len(found) == 4                        # 4 available seats
@@ -2158,7 +2162,7 @@ def test_aisle_breaks_togetherness():
     Bina is check ke search "saath wali seats" bata deta jo asal me saath
     hoti hi nahi, aur wo galti user ko venue pahunch kar pata chalti.
     """
-    seats = _row("A", 6)
+    seats = _seat_row("A", 6)
     layout = {
         "sections": [
             {"name": "X", "price": 1000, "rows": [{"label": "A", "seats": 6, "aisles_after": [2]}]}
@@ -2175,7 +2179,7 @@ def test_aisle_breaks_togetherness():
 
 
 def test_price_filters():
-    seats = _row("A", 2, price=500, start_id=1) + _row("B", 2, price=3000, start_id=10)
+    seats = _seat_row("A", 2, price=500, start_id=1) + _seat_row("B", 2, price=3000, start_id=10)
 
     cheap = seat_search.find(seats, quantity=1, max_price=1000)
     assert {m.row_label for m in cheap} == {"A"}
@@ -2186,8 +2190,8 @@ def test_price_filters():
 
 def test_section_filter_is_case_insensitive():
     seats = (
-        _row("A", 2, section="Ground", start_id=1)
-        + _row("B", 2, section="Balcony", start_id=10)
+        _seat_row("A", 2, section="Ground", start_id=1)
+        + _seat_row("B", 2, section="Balcony", start_id=10)
     )
     found = seat_search.find(seats, quantity=1, section="ground")
 
@@ -2200,7 +2204,7 @@ def test_row_preference_beats_price():
 
     Row A stage ke sabse paas hai — wahi convention Phase 3 se hai.
     """
-    seats = _row("A", 2, price=3000, start_id=1) + _row("Z", 2, price=100, start_id=10)
+    seats = _seat_row("A", 2, price=3000, start_id=1) + _seat_row("Z", 2, price=100, start_id=10)
 
     front = seat_search.find(seats, quantity=1, row_preference="front")
     assert front[0].row_label == "A"
@@ -2214,13 +2218,13 @@ def test_row_preference_beats_price():
 
 
 def test_booked_seats_never_appear():
-    seats = _row("A", 3, taken=(1, 2, 3))
+    seats = _seat_row("A", 3, taken=(1, 2, 3))
     assert seat_search.find(seats, quantity=1) == []
 
 
 def test_quantity_is_clamped():
     """Model ya user kuch bhi bhej de — 10 se zyada nahi."""
-    seats = _row("A", 40)
+    seats = _seat_row("A", 40)
     assert seat_search.find(seats, quantity=999, together=True) != []
 
 

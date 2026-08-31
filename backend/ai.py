@@ -45,8 +45,16 @@ from redis_client import redis_client
 
 logger = logging.getLogger(__name__)
 
-# Flash model — ye kaam chhota hai (ek line ko JSON me badalna), iske liye
-# bada model use karna sirf paisa aur latency kharab karna hai.
+# ⭐ LITE model — aur ye maap ke choose kiya gaya hai, andaze se nahi.
+#
+# Same query, same output, alag models:
+#
+#     gemini-3.5-flash        8.5s
+#     gemini-3.1-flash-lite   1.7s     <- yahi
+#
+# Kaam hai "ek line ko JSON me badalna". Uske liye bada (thinking) model
+# use karna sirf 5x latency aur zyada paisa hai — output bilkul wahi
+# aata hai. User search box me baitha hai; 8 second wahan bahut lamba hai.
 #
 # ⚠️ Version PIN kiya hai, `gemini-flash-latest` nahi.
 #
@@ -56,12 +64,13 @@ logger = logging.getLogger(__name__)
 #
 # Kaunse models available hain wo key ke hisaab se badalta hai:
 #     GET https://generativelanguage.googleapis.com/v1beta/models
-MODEL = "gemini-3.5-flash"
+MODEL = "gemini-3.1-flash-lite"
 ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
-# 6 second. User search box me baitha hai — isse zyada wait karane se
-# behtar hai haar maan ke normal filters dikha dena.
-TIMEOUT_SECONDS = 6.0
+# Maapi hui latency ~1.7-3.5s hai, to 8 second me kaafi headroom hai.
+# Isse zyada wait karane se behtar hai haar maan ke normal filters
+# dikha dena — user search box me baitha hai.
+TIMEOUT_SECONDS = 8.0
 
 # Same query ka jawab 1 ghanta cache. "2 seats under 1000" bahut log
 # likhte hain, aur uska matlab kabhi badalta nahi.
