@@ -1089,6 +1089,57 @@ Imaandari se haan bolo:
 | Query max 200 chars | Iske aage koi asli search nahi hoti — sirf prompt me kachra bharne ki koshish |
 | Login zaroori | Seats public hain, par rate limit per-user lagti hai aur kharcha kisi ke naam hona chahiye |
 
+
+### ⭐ "AI se event ki copy bhi likhwate ho — wo galat likh de to?"
+
+Ye Phase 20 ka sawaal hai, aur jawab me do cheezein hain:
+
+> "**Pehli:** AI publish button tak pahunchta hi nahi. Endpoint kuch save
+> nahi karta — wo sirf draft lautata hai jo organizer ke form me bhar
+> jata hai, aur wo edit karke khud publish karta hai.
+>
+> Wajah: event ka description ticket kharidne wale ke liye ek **waada**
+> hai. Us par ek insaan ka haath hona zaroori hai. Iska ek test bhi hai —
+> draft maangne se events ki ginti nahi badhni chahiye.
+>
+> **Doosri:** prompt me model ko facts gadhne se saaf mana kiya hai —
+> lineup, duration, price, ratings, awards, 'sold out'. Ye list yun hi
+> nahi banayi: **yahi wo cheezein hain jo ek marketing LLM sabse pehle
+> gadhta hai**, kyunki wo 'achhi listing' jaisi lagti hain.
+>
+> Aur UI me saaf likha hai ki ye ek mashin ne likha hai aur publish se
+> pehle padhna hai."
+
+### "temperature kya rakha?"
+
+Ye achha follow-up hai kyunki jawab do jagah alag hai:
+
+> "Search parser me **0**, copy draft me **0.8**.
+>
+> Parser me ek input ka hamesha ek hi jawab aana chahiye — randomness
+> wahan bug hai. Copy me ulta hai: do baar dabane par alag options milna
+> faayda hai.
+>
+> Dono ek hi file me hain aur dono ke reasons likhe hain, warna kal koi
+> 'consistency' ke naam par dono ko ek jaisa kar dega."
+
+### ⚠️ "Poster generator bhi banaya tha na?"
+
+**Yahan sach bolna hi sabse achha jawab hai:**
+
+> "Nahi. Plan me tha, par Gemini ke free tier me image generation ka quota
+> hai hi nahi — maine paanchon image models try kiye, sab 429 dete hain,
+> jabki text models usi key se theek chalte hain.
+>
+> To do raaste the: feature likh ke 'ban gaya' bol dena, ya na banana aur
+> wajah likhna. Maine doosra chuna, aur README me wo explicitly 'not
+> built' likha hai us wajah ke saath.
+>
+> Ek aisa feature jo maine kabhi chalte hue dekha hi nahi, wo demo me
+> pehli hi baar fail hoga — aur tab sirf feature nahi, baaki README pe
+> bhi shak jata hai."
+
+
 ### Rapid fire
 
 | Sawaal | Ek-line jawab |
@@ -1098,6 +1149,8 @@ Imaandari se haan bolo:
 | Follow-up query ("aur sasti dikhao")? | Nahi banaya — uske liye session state chahiye aur cache ka matlab khatam ho jata |
 | AI seedha book kar sakta hai? | Nahi. Result pe click se seat SELECT hoti hai; book user karta hai. AI ko paisa kaatne wale raaste me nahi daala |
 | Model galat filters de to? | Pydantic clamp karta hai (quantity 1-10, price bounds). Aur filters user ko dikhte hain, to galti turant pakdi jaati hai |
+| AI copy publish kar sakti hai? | Nahi — draft form me bharta hai, publish organizer karta hai. Description attendee se kiya waada hai |
+| Poster generator? | Nahi bana — free tier me image quota hai hi nahi (429). README me wajah ke saath "not built" likha hai |
 
 ---
 
@@ -1203,4 +1256,5 @@ Aur ek line jo kabhi mat bhoolna:
 - [Phase 17 — Group Booking](phases/17-group-booking.md) — "sab ya koi nahi" ka poora design
 - [Phase 18 — Seat Layout](phases/18-seat-layout.md) — nullable columns aur backwards compatibility
 - [Phase 19 — NL Seat Search](phases/19-nl-seat-search.md) — AI ki boundary aur key leak wala bug
+- [Phase 20 — AI Event Copy](phases/20-ai-event-copy.md) — "facts mat gadho", aur poster kyu nahi bana
 - [testing.md](reference/testing.md) — sab kuch demo karne ke commands

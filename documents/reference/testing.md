@@ -642,6 +642,7 @@ Aakhir me browser me ek round: login → seat hold → book → cancel → logou
 | Group booking (browser) | seat hold karo → HoldCard me **"Sabka alag-alag payment"** |
 | Layout builder (browser) | organizer → **Create Event** → Seat layout card me **"Layout builder"** tab |
 | NL search (browser) | dashboard → "Seats dhoondo" box (key na ho to dikhta hi nahi) |
+| AI event draft (browser) | organizer → **Create Event** → upar "✨ AI se draft banao" |
 | AI on hai? | `curl -s localhost:8000/api/auth/config` -> `ai_search_enabled` |
 | Layout DB me | `docker compose exec db psql -U seatpulse -d seatpulse -c "SELECT id, name, layout IS NOT NULL AS has_layout FROM events ORDER BY id DESC LIMIT 5;"` |
 | Group ki DB state | `docker compose exec db psql -U seatpulse -d seatpulse -c "SELECT g.id, g.status, g.expires_at, count(s.id) FROM group_bookings g JOIN group_shares s ON s.group_id=g.id GROUP BY g.id;"` |
@@ -680,6 +681,41 @@ sabse important bug hai.
 | Charge quote se match kiya | `bookings.amount` = 1000 |
 
 **Automated version:** `pytest -k "price or surge"` (13 tests).
+
+---
+
+## AI event draft manually test karna
+
+1. Organizer se login → **Create Event**
+2. Upar "✨ AI se draft banao" box me likho:
+   `Zakir Khan standup comedy, Delhi, January`
+3. **Draft** dabao → name, description, category apne aap bhar jaayenge
+4. Amber warning aani chahiye: *"publish se pehle padh lo"*
+
+**⭐ Ye check karo — draft ne event BANAYA to nahi:**
+
+```bash
+docker compose exec db psql -U seatpulse -d seatpulse -c "SELECT count(*) FROM events;"
+```
+
+Draft se pehle aur baad me ginti **same** honi chahiye. AI kuch save nahi
+karta — wo sirf form bharta hai.
+
+**⭐⭐ Facts gadhe to nahi:**
+
+Description padho. Inme se kuch bhi nahi hona chahiye jab tak tumne brief
+me na likha ho:
+- lineup / guest artists
+- show ki duration ya timing
+- ticket price ya offers
+- ratings, "sold out", "trending"
+- awards ya past shows
+
+Ye prompt me explicitly mana hai. Kuch aisa dikhe to wo bug hai — aur uska
+fix prompt me hoga (`COPY_PROMPT` in `backend/ai.py`), code me nahi.
+
+**RBAC:** attendee account se wo box dikhna hi nahi chahiye (aur API seedha
+hit karo to `403`).
 
 ---
 
@@ -939,6 +975,7 @@ Poore results aur unka matlab: [Phase 15](../phases/15-locking-benchmark.md).
 - [Phase 17 — Group Booking](../phases/17-group-booking.md) — split payment ka design aur race
 - [Phase 18 — Seat Layout](../phases/18-seat-layout.md) — layout validation aur backwards compatibility
 - [Phase 19 — NL Seat Search](../phases/19-nl-seat-search.md) — AI boundary, model choice, key handling
+- [Phase 20 — AI Event Copy](../phases/20-ai-event-copy.md) — draft flow aur "facts mat gadho"
 - [postgres-commands.md](postgres-commands.md) — DB queries
 - [docker-commands.md](docker-commands.md) — container commands
 - [roadmap.md](../roadmap.md) — poora plan

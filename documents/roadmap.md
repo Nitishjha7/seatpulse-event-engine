@@ -54,6 +54,7 @@ React ka kaam har phase me thoda-thoda hua hai, isliye ye index:
 | **Group share page** — polling, countdown, per-share pay | `pages/GroupBooking.jsx` | [Phase 17](phases/17-group-booking.md) |
 | **Layout builder** + live preview (form, drag-drop nahi) | `components/LayoutBuilder.jsx` | [Phase 18](phases/18-seat-layout.md) |
 | **NL search box** — key na ho to render hi nahi hota | `components/SeatSearch.jsx` | [Phase 19](phases/19-nl-seat-search.md) |
+| **AI draft box** + "publish se pehle padh lo" warning | `components/AiDraft.jsx` | [Phase 20](phases/20-ai-event-copy.md) |
 | Interpretation chips — query ka kya matlab nikala | `components/SeatSearch.jsx` | [Phase 19](phases/19-nl-seat-search.md) |
 | Grid me sections + aisles, purane events ka fallback | `components/SeatGrid.jsx` | [Phase 18](phases/18-seat-layout.md) |
 | `startGroup()` — saath wali seats khud chunta hai | `booking/BookingContext.jsx` | [Phase 17](phases/17-group-booking.md) |
@@ -90,6 +91,8 @@ React ka kaam har phase me thoda-thoda hua hai, isliye ye index:
 | 17 | Group booking + split payment | ✅ Done — [Phase 17 — Group Booking](phases/17-group-booking.md) |
 | 18 | Visual seat layout builder | ✅ Done — [Phase 18 — Seat Layout](phases/18-seat-layout.md) |
 | 19 | Natural-language seat search | ✅ Done — [Phase 19 — NL Seat Search](phases/19-nl-seat-search.md) |
+| 20 | AI event copy | ✅ Done — [Phase 20 — AI Event Copy](phases/20-ai-event-copy.md) |
+| — | **Poster generator NAHI bana** — Gemini free tier me image quota hai hi nahi (saare image models 429). Paid tier chahiye. |
 | — | **Follow-up:** `pricing_state()` har booking me do baar chalta hai (6 faaltu queries). Phase 15 ki query-count ne pakda. |
 
 ---

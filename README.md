@@ -151,6 +151,16 @@ Because the multiplier is one number for the whole event, a booking broadcasts a
 
 Verified end to end: one user held a seat at Rs.1000, four more bookings pushed the market to Rs.1400, and the held seat still charged exactly Rs.1000.
 
+### AI-drafted event copy
+
+An organizer types one line — *"Arijit Singh concert, DY Patil Mumbai, December"* — and gets a draft name, description and category. The endpoint **saves nothing**: the draft lands in the form fields, and the organizer edits and publishes it themselves.
+
+That boundary is the feature's whole design. An event description is a promise to whoever buys a ticket, so the prompt explicitly forbids inventing lineups, running times, prices, ratings or awards — the exact things a marketing model reaches for first because they make a listing *sound* complete. The UI says plainly that a machine wrote it and it should be read before publishing, and a test asserts that drafting never creates an event.
+
+Temperature is 0.8 here and 0 for the search parser in the previous phase, for opposite reasons: a parser must return the same filters every time, while a copy draft is more useful when pressing the button twice gives you two options.
+
+The **poster generator was not built.** Every Gemini image model returns 429 on the free tier while text models work fine on the same key, and shipping a feature that was never seen working would make this README untrue. Adding it on a paid tier is the same HTTP call with an `inlineData` response. Details: [documents/phases/20-ai-event-copy.md](documents/phases/20-ai-event-copy.md).
+
 ### Natural-language seat search
 
 Typing *"3 seats together under ₹1500 near the stage"* finds them. The interesting decision was how little to give the model: it converts the sentence into a **validated filter object** and stops there. Everything after that — matching, ranking, checking availability — is ordinary code.
@@ -236,6 +246,7 @@ The frontend hides organizer and admin navigation by role, but that is **UX only
 | `GET` | `/api/bookings` | Your bookings, each with its ticket status |
 | `GET` | `/api/bookings/{id}/ticket` | Download the PDF ticket (owner only) |
 | `POST` | `/api/checkin` | Scan a QR at the gate — admits exactly once |
+| `POST` | `/api/organizer/events/draft` | Draft a listing from a one-line brief — saves nothing |
 | `POST` | `/api/events/{id}/seats/search` | Find seats by sentence or by explicit filters |
 | `POST` | `/api/groups` | Hold N seats and get a shareable split-payment link |
 | `GET` | `/api/groups/{share_token}` | Group state — who claimed what, who has paid |
@@ -330,7 +341,7 @@ docker compose --profile loadtest run --rm locust \
     --host http://backend:8000
 
 docker compose exec backend python verify_integrity.py
-docker compose exec backend pytest tests/ -v         # 105 tests: auth, RBAC, payments, tickets, check-in, pricing, locking, groups, layout, search, concurrency
+docker compose exec backend pytest tests/ -v         # 110 tests: auth, RBAC, payments, tickets, check-in, pricing, locking, groups, layout, search, concurrency
 ```
 
 ### What load testing actually caught
@@ -383,12 +394,13 @@ Result on the same 200-user flash sale: **1,250 requests with 58 failures and a 
 - [x] Group booking with split payment — a shareable link where each person pays their own share, confirmed all-or-nothing against a deadline, with the confirm/expire race verified over 60 concurrent runs
 - [x] Visual seat layout builder — sections, per-row seat counts and aisles, validated server-side and expanded into seats atomically, with events created before it left untouched
 - [x] Natural-language seat search — an LLM turns a sentence into validated filters, and an ordinary search runs them; every test for it passes without an API key
+- [x] AI event copy — a one-line brief drafts a listing that the organizer edits before publishing; the prompt forbids inventing facts, and nothing is saved without a human in the loop
 
 ### Planned
 
 Ordered by dependency — each item leans on the ones above it. None of these are built yet.
 
-- [ ] **AI event copy + poster generator** — draft title, description and banner from a short prompt, always editable before publishing
+- [ ] **AI poster generator** — not built: Gemini's free tier has no image quota (every image model returns 429). The text half shipped; this needs a paid tier
 - [ ] Screenshots / demo GIF, and a deployed live demo
 - [ ] **Demand forecasting** — base price and sell-out prediction from booking velocity. Last on purpose: without real historical data this produces a plausible-looking number rather than a useful one
 
