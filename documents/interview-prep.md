@@ -979,7 +979,129 @@ Ye sawaal aayega, aur "time nahi tha" galat jawab hai:
 
 ---
 
-## 16. Traps — jahan "haan" bolna galat hai
+## 16. ⭐ AI feature — "LLM ko kitna kaam dena chahiye"
+
+Aajkal har jagah AI hai, aur interviewer aksar shak se poochta hai. Iska
+jawab achha ho to bahut acha lagta hai.
+
+### "AI kahan use kiya?"
+
+> "Sirf ek chhoti jagah: natural language ko filters me badalne me.
+>
+>     '3 seats together under 1500 near the stage'
+>              |
+>              v   <- sirf itna LLM karta hai
+>     SeatFilters(quantity=3, together=True, max_price=1500,
+>                 row_preference='front')
+>
+> Uske baad ka poora search normal code hai — matching, ranking,
+> availability. Koi model nahi."
+
+### ⭐⭐ "LLM se seedha SQL kyu nahi likhwaya?"
+
+**Ye sawaal aayega, aur jawab teen hisso me hai:**
+
+> "**Security.** Model ka output kabhi SQL nahi banta. Wo ek validated
+> Pydantic object banta hai, aur query parameterised rehti hai. Isliye
+> prompt injection zyada se zyada ajeeb FILTERS bana sakti hai — jo user
+> ko waise bhi dikh jaate hain — data leak ya SQL injection nahi. Maine
+> do injection queries test ki, dono 'samajh nahi aaya' me gir gayi.
+>
+> **Testability.** Is feature ke 15 me se ek bhi test ko API key ki
+> zaroorat nahi. Ye zaroori hai kyunki key na hone par wo tests SKIP ho
+> jaate — aur skipped tests CI me green dikhte hain.
+>
+> **Reliability.** Key na ho, model down ho, timeout ho — normal filters
+> phir bhi chalte hain. Search box bas dikhta nahi."
+
+### "Structured output kaise handle kiya?"
+
+> "Gemini ka `responseSchema` use kiya — schema do, model ko usi shape me
+> jawab dena padta hai.
+>
+> 'Please return JSON' wali prompt-engineering kabhi na kabhi tootti hai:
+> model markdown fence laga deta hai ya explanation jod deta hai, aur phir
+> parsing failures handle karne padte hain. Wo bekaar ka code hai jab API
+> khud guarantee de sakti hai.
+>
+> Aur `temperature: 0` — ye creative kaam nahi hai. Ek input ka hamesha
+> ek hi jawab aana chahiye."
+
+### ⭐ "Kaunsa model, aur kyu?"
+
+Yahan measurement wala jawab dena:
+
+> "Maine dono naape:
+>
+>     gemini-3.5-flash        8.5s
+>     gemini-3.1-flash-lite   1.7s     <- yahi choose kiya
+>
+> Output bilkul same tha. Kaam hai 'ek line ko JSON me badalna' — uske
+> liye bada thinking model 5x latency aur zyada paisa hai, faayda zero.
+>
+> Aur version pin kiya hai, `-latest` nahi — wo apne aap naye model pe
+> chala jata hai aur tab prompt ka behaviour bina deploy ke badal sakta
+> hai."
+
+### ⚠️ "Koi security bug mila?"
+
+**Ye khud bata do — ye is section ka sabse strong jawab hai:**
+
+> "Haan, aur wo maine hi banaya tha. Pehla version API key query param me
+> bhejta tha. Phir ek galat model name se 404 aaya aur log me ye chhapa:
+>
+>     Client error '404 Not Found' for url
+>     'https://...:generateContent?key=AQ.Ab8RN6...'
+>
+> **API key seedha log me.** httpx ke exception message me poora URL hota
+> hai — yaani koi bhi error key ko log file me likh deta, aur logs
+> aggregators me jaate hain, backup hote hain, aur unhe alag se secure
+> nahi kiya jata.
+>
+> Do jagah fix kiya: key ab header me jaati hai, aur exception object log
+> hi nahi karta — sirf status code. Dusra fix pehle ke bina bhi zaroori
+> hai, kyunki kal koi param wapas jod sakta hai.
+>
+> Sabak: secret URL me daalna hamesha galat hai, chahe HTTPS ho. Wo
+> browser history, proxy logs, access logs — sab me dikhta hai."
+
+### "Model ne kabhi galat samjha?"
+
+Imaandari se haan bolo:
+
+> "Haan. 'do seat chahiye sabse sasti' ko usne `min_price=800` bana diya.
+>
+> 'Sabse sasti' ek **sort preference** hai, filter nahi — aur results
+> waise bhi sasti pehle aate hain. min_price lagana bilkul ulta asar
+> karta hai.
+>
+> Fix prompt me hua, code me nahi — ek explicit rule jodna pada. Ye LLM
+> features ki asli haqeeqat hai: 'kaam kar raha hai' aur 'sahi kaam kar
+> raha hai' alag baatein hain, aur iska pata sirf asli queries chala ke
+> chalta hai."
+
+### "Kharcha control kaise kiya?"
+
+| Cheez | Kyu |
+|---|---|
+| Rate limit per-user | Har query ek paid call hai. Bina limit ke koi loop chala ke quota khatam kar de — aur feature **sabke liye** band |
+| Redis cache 1 ghanta | "2 seats under 1000" bahut log likhte hain, matlab kabhi badalta nahi. Repeat query 0.0s |
+| Query max 200 chars | Iske aage koi asli search nahi hoti — sirf prompt me kachra bharne ki koshish |
+| Login zaroori | Seats public hain, par rate limit per-user lagti hai aur kharcha kisi ke naam hona chahiye |
+
+### Rapid fire
+
+| Sawaal | Ek-line jawab |
+|---|---|
+| AI down ho to? | Search chalta rehta hai — filters AI ke bina bhi lagte hain. Sirf NL input band hota hai |
+| Confidence score? | Nahi. Gemini deta hi nahi, aur khud ka score gadhna jhooth hota |
+| Follow-up query ("aur sasti dikhao")? | Nahi banaya — uske liye session state chahiye aur cache ka matlab khatam ho jata |
+| AI seedha book kar sakta hai? | Nahi. Result pe click se seat SELECT hoti hai; book user karta hai. AI ko paisa kaatne wale raaste me nahi daala |
+| Model galat filters de to? | Pydantic clamp karta hai (quantity 1-10, price bounds). Aur filters user ko dikhte hain, to galti turant pakdi jaati hai |
+
+---
+
+## 17. Traps — jahan "haan" bolna galat hai
 
 ### "Kafka use kar sakte the na?"
 
@@ -1003,7 +1125,7 @@ Ye sawaal aayega, aur "time nahi tha" galat jawab hai:
 
 ---
 
-## 17. Rapid fire
+## 18. Rapid fire
 
 | Sawaal | Ek-line jawab |
 |---|---|
@@ -1023,7 +1145,7 @@ Ye sawaal aayega, aur "time nahi tha" galat jawab hai:
 
 ---
 
-## 18. Whiteboard — architecture aise banao
+## 19. Whiteboard — architecture aise banao
 
 Isi order me banao, bolte hue:
 
@@ -1044,7 +1166,7 @@ Bolte waqt teen baatein zaroor:
 
 ---
 
-## 19. Tum kya poochho
+## 20. Tum kya poochho
 
 Interview do-tarfa hai. Ye poochne se pata chalta hai ki tum production ke bare me sochte ho:
 
@@ -1080,4 +1202,5 @@ Aur ek line jo kabhi mat bhoolna:
 - [Phase 16 — Multi-Worker + CI](phases/16-multiworker-ci.md) — deploy config aur teen bugs
 - [Phase 17 — Group Booking](phases/17-group-booking.md) — "sab ya koi nahi" ka poora design
 - [Phase 18 — Seat Layout](phases/18-seat-layout.md) — nullable columns aur backwards compatibility
+- [Phase 19 — NL Seat Search](phases/19-nl-seat-search.md) — AI ki boundary aur key leak wala bug
 - [testing.md](reference/testing.md) — sab kuch demo karne ke commands
