@@ -47,7 +47,16 @@ logger = logging.getLogger(__name__)
 
 # Flash model — ye kaam chhota hai (ek line ko JSON me badalna), iske liye
 # bada model use karna sirf paisa aur latency kharab karna hai.
-MODEL = "gemini-2.0-flash"
+#
+# ⚠️ Version PIN kiya hai, `gemini-flash-latest` nahi.
+#
+# `-latest` apne aap naye model pe chala jata hai, aur tab prompt ka
+# behaviour bina kisi deploy ke badal sakta hai. Ek parser ke liye wo
+# bura sauda hai — hume predictable output chahiye, naya output nahi.
+#
+# Kaunse models available hain wo key ke hisaab se badalta hai:
+#     GET https://generativelanguage.googleapis.com/v1beta/models
+MODEL = "gemini-3.5-flash"
 ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 # 6 second. User search box me baitha hai — isse zyada wait karane se
@@ -163,7 +172,21 @@ def parse_query(query: str, *, event_id: int, sections: list[str], price_range: 
     try:
         res = httpx.post(
             ENDPOINT.format(model=MODEL),
-            params={"key": settings.GEMINI_API_KEY},
+            # ⚠️ Key HEADER me, query param me NAHI.
+            #
+            # Ye ek asli bug tha jo yahin pakda gaya. `?key=...` bhejne par
+            # httpx ke error messages me poora URL aata hai — aur wo seedha
+            # logs me chala jata hai:
+            #
+            #   Client error '404 Not Found' for url
+            #   'https://...:generateContent?key=AQ.Ab8RN6...'
+            #
+            # Yaani ek galat model name ya network glitch se API key log
+            # file me likhi jaati. Logs aksar aggregators me jaate hain,
+            # backup hote hain, aur inhe alag se secure nahi kiya jata.
+            #
+            # Header me bhejne se wo kabhi URL ka hissa banti hi nahi.
+            headers={"x-goog-api-key": settings.GEMINI_API_KEY},
             timeout=TIMEOUT_SECONDS,
             json={
                 "systemInstruction": {"parts": [{"text": prompt}]},
@@ -180,10 +203,18 @@ def parse_query(query: str, *, event_id: int, sections: list[str], price_range: 
         res.raise_for_status()
         text = res.json()["candidates"][0]["content"]["parts"][0]["text"]
         parsed = json.loads(text)
+    except httpx.HTTPStatusError as exc:
+        # ⚠️ Sirf status code log karte hain, `exc` nahi.
+        #
+        # httpx ka exception message me poora URL hota hai. Key ab header
+        # me hai, par ye aadat rakhna zaroori hai — kal koi param wapas
+        # jod de to ye line usse chupchaap log me likhwa degi.
+        logger.warning("Gemini ne %s diya", exc.response.status_code)
+        return None
     except Exception as exc:
         # Log karke chup ho jao. User ko "AI fail ho gaya" dikhane ka koi
         # faayda nahi — usse sirf ye chahiye ki search kaam kare.
-        logger.warning("Gemini parse fail (%s): %s", type(exc).__name__, exc)
+        logger.warning("Gemini call fail: %s", type(exc).__name__)
         return None
 
     if not parsed.get("understood"):
