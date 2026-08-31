@@ -238,3 +238,100 @@ def parse_query(query: str, *, event_id: int, sections: list[str], price_range: 
         pass
 
     return parsed
+
+
+# ---------------------------------------------------------------------------
+# Event copy — organizer ke liye draft
+# ---------------------------------------------------------------------------
+
+# ⚠️ Ye prompt ka sabse zaroori hissa hai, aur iski wajah cosmetic nahi hai.
+#
+# Event ka description ticket kharidne wale ke liye ek WAADA hai. Model
+# "featuring special guests" ya "3-hour show with intermission" gadh de,
+# aur organizer bina padhe publish kar de — to wo jhooth attendee tak
+# pahunch jata hai, aur uska zimmedar organizer hota hai, AI nahi.
+#
+# Isliye model ko saaf mana kiya gaya hai ki wo koi FACT na banaye.
+COPY_PROMPT = """\
+Tum ek event listing ke liye draft likh rahe ho.
+
+⚠️ SABSE ZAROORI NIYAM: koi bhi fact MAT gadho.
+
+Sirf wahi cheezein likho jo user ne batayi hain. Ye sab MANA hai:
+- lineup, guest artists, opening acts
+- show ki duration, interval, timing
+- ticket price, offers, discounts
+- ratings, "sold out", "trending", ya koi bhi ginti
+- awards, past shows, reviews
+
+Tum sirf jo BATAYA gaya hai usse ek saaf, aakarshak listing bana sakte ho.
+Jo nahi bataya, uske baare me chup raho — andaza mat lagao.
+
+Style:
+- ⚠️ Brief JIS BHASHA me hai, usi bhasha me likho. English brief ka jawab
+  English me, Hindi ka Hindi me. Ye listing public hai — organizer ne
+  jis bhasha me socha hai, uske audience bhi wahi padhte hain.
+- name: chhota, 60 character se kam
+- description: 2 chhote paragraph, 500 character se kam. Doosra paragraph
+  practical ho (venue, kya expect karein) — par sirf di gayi jaankari se.
+- category: in me se ek — Music, Comedy, Sports, Theatre, Conference
+"""
+
+COPY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"},
+        "description": {"type": "string"},
+        "category": {
+            "type": "string",
+            "enum": ["Music", "Comedy", "Sports", "Theatre", "Conference"],
+        },
+    },
+    "required": ["name", "description", "category"],
+}
+
+
+def draft_event_copy(brief: str) -> dict | None:
+    """
+    Organizer ke chhote brief se event listing ka draft.
+
+    ⚠️ Ye DRAFT hai, final nahi. Route ise seedha save nahi karta —
+    organizer ko form me dikhta hai aur wo edit karke hi publish karta
+    hai. AI ko publish button tak pahunchne hi nahi dete.
+
+    `parse_query` ki tarah ye bhi kabhi raise nahi karta.
+    """
+    if not is_enabled():
+        return None
+
+    brief = brief.strip()[:MAX_QUERY_CHARS]
+    if not brief:
+        return None
+
+    try:
+        res = httpx.post(
+            ENDPOINT.format(model=MODEL),
+            headers={"x-goog-api-key": settings.GEMINI_API_KEY},
+            timeout=TIMEOUT_SECONDS * 2,      # copy likhna parse se lamba hai
+            json={
+                "systemInstruction": {"parts": [{"text": COPY_PROMPT}]},
+                "contents": [{"parts": [{"text": brief}]}],
+                "generationConfig": {
+                    "responseMimeType": "application/json",
+                    "responseSchema": COPY_SCHEMA,
+                    # Yahan thodi creativity chahiye — parse_query se ulta,
+                    # jahan temperature 0 tha. Do baar chalane par alag
+                    # options milna yahan FAAYDA hai, bug nahi.
+                    "temperature": 0.8,
+                },
+            },
+        )
+        res.raise_for_status()
+        text = res.json()["candidates"][0]["content"]["parts"][0]["text"]
+        return json.loads(text)
+    except httpx.HTTPStatusError as exc:
+        logger.warning("Copy draft: Gemini ne %s diya", exc.response.status_code)
+        return None
+    except Exception as exc:
+        logger.warning("Copy draft fail: %s", type(exc).__name__)
+        return None
