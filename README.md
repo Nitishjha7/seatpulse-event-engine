@@ -151,6 +151,16 @@ Because the multiplier is one number for the whole event, a booking broadcasts a
 
 Verified end to end: one user held a seat at Rs.1000, four more bookings pushed the market to Rs.1400, and the held seat still charged exactly Rs.1000.
 
+### Natural-language seat search
+
+Typing *"3 seats together under ₹1500 near the stage"* finds them. The interesting decision was how little to give the model: it converts the sentence into a **validated filter object** and stops there. Everything after that — matching, ranking, checking availability — is ordinary code.
+
+That boundary buys three things. The model's output never becomes SQL, so a prompt injection can at worst produce odd filters, which are displayed back to the user anyway; both injection attempts tried during development came back as "not understood" and the search fell through to its defaults. Every one of the fifteen tests for this feature runs **without an API key**, which matters because a test that skips without one still reports green. And when the key is missing, the model is down, or the request times out, price and section filters keep working — the search box simply isn't rendered.
+
+Two things came out of building it. A first version passed the key as a query parameter, and a 404 from a wrong model name printed the full URL — API key included — straight into the logs; the key now travels in a header and the exception object is never logged. And the model was chosen by measurement rather than assumption: `gemini-3.5-flash` took 8.5s for this task where `gemini-3.1-flash-lite` took 1.7s and returned the same filters.
+
+Aisles matter here too. Two seats either side of a walkway have consecutive numbers but are not *together*, and the layout data from the previous phase is what makes that distinction possible. Details, including the key-leak bug and a prompt fix for a real mis-parse: [documents/phases/19-nl-seat-search.md](documents/phases/19-nl-seat-search.md).
+
 ### Seat layouts
 
 Events were previously a uniform grid — N rows of M seats, priced in tiers. Real venues have aisles, named sections, and rows of differing widths, so an organizer can now describe the venue instead: sections with their own price, per-row seat counts, and aisle positions, built through a form with a live preview of exactly what an attendee will see.
@@ -226,6 +236,7 @@ The frontend hides organizer and admin navigation by role, but that is **UX only
 | `GET` | `/api/bookings` | Your bookings, each with its ticket status |
 | `GET` | `/api/bookings/{id}/ticket` | Download the PDF ticket (owner only) |
 | `POST` | `/api/checkin` | Scan a QR at the gate — admits exactly once |
+| `POST` | `/api/events/{id}/seats/search` | Find seats by sentence or by explicit filters |
 | `POST` | `/api/groups` | Hold N seats and get a shareable split-payment link |
 | `GET` | `/api/groups/{share_token}` | Group state — who claimed what, who has paid |
 | `POST` | `/api/groups/{share_token}/shares/{id}/claim` | Take one open seat in the group |
@@ -319,7 +330,7 @@ docker compose --profile loadtest run --rm locust \
     --host http://backend:8000
 
 docker compose exec backend python verify_integrity.py
-docker compose exec backend pytest tests/ -v         # 90 tests: auth, RBAC, payments, tickets, check-in, pricing, locking, groups, layout, concurrency
+docker compose exec backend pytest tests/ -v         # 105 tests: auth, RBAC, payments, tickets, check-in, pricing, locking, groups, layout, search, concurrency
 ```
 
 ### What load testing actually caught
@@ -371,12 +382,12 @@ Result on the same 200-user flash sale: **1,250 requests with 58 failures and a 
 - [x] Multi-worker deployment and CI — a production compose running 4 uvicorn workers behind a built frontend, a GitHub Actions pipeline that boots the real stack for every push, and a test proving WebSocket broadcasts cross process boundaries
 - [x] Group booking with split payment — a shareable link where each person pays their own share, confirmed all-or-nothing against a deadline, with the confirm/expire race verified over 60 concurrent runs
 - [x] Visual seat layout builder — sections, per-row seat counts and aisles, validated server-side and expanded into seats atomically, with events created before it left untouched
+- [x] Natural-language seat search — an LLM turns a sentence into validated filters, and an ordinary search runs them; every test for it passes without an API key
 
 ### Planned
 
 Ordered by dependency — each item leans on the ones above it. None of these are built yet.
 
-- [ ] **Natural-language seat finder** — an LLM turns *"3 seats together under ₹1500, centred on the stage"* into structured filters that run as an ordinary query
 - [ ] **AI event copy + poster generator** — draft title, description and banner from a short prompt, always editable before publishing
 - [ ] Screenshots / demo GIF, and a deployed live demo
 - [ ] **Demand forecasting** — base price and sell-out prediction from booking velocity. Last on purpose: without real historical data this produces a plausible-looking number rather than a useful one

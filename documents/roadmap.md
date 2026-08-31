@@ -53,6 +53,8 @@ React ka kaam har phase me thoda-thoda hua hai, isliye ye index:
 | **Camera QR scan** — native BarcodeDetector, no library | `pages/gate/GatePortal.jsx` | [Phase 13](phases/13-gate-checkin.md) Step 6 |
 | **Group share page** — polling, countdown, per-share pay | `pages/GroupBooking.jsx` | [Phase 17](phases/17-group-booking.md) |
 | **Layout builder** + live preview (form, drag-drop nahi) | `components/LayoutBuilder.jsx` | [Phase 18](phases/18-seat-layout.md) |
+| **NL search box** — key na ho to render hi nahi hota | `components/SeatSearch.jsx` | [Phase 19](phases/19-nl-seat-search.md) |
+| Interpretation chips — query ka kya matlab nikala | `components/SeatSearch.jsx` | [Phase 19](phases/19-nl-seat-search.md) |
 | Grid me sections + aisles, purane events ka fallback | `components/SeatGrid.jsx` | [Phase 18](phases/18-seat-layout.md) |
 | `startGroup()` — saath wali seats khud chunta hai | `booking/BookingContext.jsx` | [Phase 17](phases/17-group-booking.md) |
 | **Live surge banner** + honest "N seats left at this price" | `components/PricingBanner.jsx` | [Phase 14](phases/14-dynamic-pricing.md) |
@@ -87,6 +89,7 @@ React ka kaam har phase me thoda-thoda hua hai, isliye ye index:
 | 16 | Multi-worker deploy + CI | ✅ Done — [Phase 16 — Multi-Worker + CI](phases/16-multiworker-ci.md) |
 | 17 | Group booking + split payment | ✅ Done — [Phase 17 — Group Booking](phases/17-group-booking.md) |
 | 18 | Visual seat layout builder | ✅ Done — [Phase 18 — Seat Layout](phases/18-seat-layout.md) |
+| 19 | Natural-language seat search | ✅ Done — [Phase 19 — NL Seat Search](phases/19-nl-seat-search.md) |
 | — | **Follow-up:** `pricing_state()` har booking me do baar chalta hai (6 faaltu queries). Phase 15 ki query-count ne pakda. |
 
 ---

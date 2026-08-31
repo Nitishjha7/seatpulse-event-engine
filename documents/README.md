@@ -51,7 +51,8 @@ documents/
 │   ├── 15-locking-benchmark.md
 │   ├── 16-multiworker-ci.md
 │   ├── 17-group-booking.md
-│   └── 18-seat-layout.md
+│   ├── 18-seat-layout.md
+│   └── 19-nl-seat-search.md
 │
 └── reference/             ← command cheatsheets
     ├── docker-commands.md
@@ -96,6 +97,7 @@ Har phase ka format ek jaisa hai: **problem → approach → steps → ✅ proof
 | 16 | [Multi-Worker + CI](phases/16-multiworker-ci.md) | ⭐ Phase 5 ka daawa aakhirkar verify hua. Clean state ne 3 chhupe bug nikale |
 | 17 | [Group Booking](phases/17-group-booking.md) | ⭐ "Sab ya koi nahi" — N payments par atomicity. Jahan optimistic locking kaam nahi aayi |
 | 18 | [Seat Layout](phases/18-seat-layout.md) | Sections + aisles. Purane events na tootein — nullable columns ka poora point |
+| 19 | [NL Seat Search](phases/19-nl-seat-search.md) | ⭐ LLM ko kitna kaam dena chahiye. Aur ek API key log me leak ho gayi thi |
 
 > **Interview ke liye sabse zaroori:** 04, 06, 07, 11, 13. Wahan teeno defence layers aur load test se mile teen bug hain.
 
