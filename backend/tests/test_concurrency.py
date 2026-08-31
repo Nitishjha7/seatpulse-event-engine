@@ -2313,3 +2313,96 @@ def test_config_exposes_ai_flag(client):
     body = client.get("/api/auth/config").json()
     assert "ai_search_enabled" in body
     assert isinstance(body["ai_search_enabled"], bool)
+
+
+# ---------------------------------------------------------------------------
+# Phase 20 — AI event copy
+#
+# In tests ko bhi API key ki zaroorat nahi. Jo cheezein test ho rahi hain —
+# RBAC, validation, aur "AI off ho to saaf 503" — wo sab AI ke bina bhi
+# sach honi chahiye.
+#
+# AI ka OUTPUT test nahi kiya ja sakta (model har baar alag likhta hai,
+# aur likhna hi chahiye). Isliye yahan uske AASPAAS ka contract test hota
+# hai, andar ka content nahi.
+# ---------------------------------------------------------------------------
+
+def test_draft_needs_organizer_role(client, tokens, role_tokens):
+    """Attendee event nahi bana sakta, to draft bhi nahi maang sakta."""
+    res = client.post(
+        "/api/organizer/events/draft",
+        headers=_headers(role_tokens["attendee"]),
+        json={"brief": "some music event in mumbai"},
+    )
+    assert res.status_code == 403
+
+
+def test_draft_needs_auth(client):
+    res = client.post(
+        "/api/organizer/events/draft", json={"brief": "some music event in mumbai"}
+    )
+    assert res.status_code == 401
+
+
+def test_draft_rejects_empty_or_huge_briefs(client, role_tokens):
+    token = role_tokens["organizer"]
+
+    assert client.post(
+        "/api/organizer/events/draft", headers=_headers(token), json={"brief": "hi"}
+    ).status_code == 422
+
+    assert client.post(
+        "/api/organizer/events/draft",
+        headers=_headers(token),
+        json={"brief": "x" * 500},
+    ).status_code == 422
+
+
+def test_draft_returns_the_three_form_fields(client, role_tokens):
+    """
+    Draft me wahi teen fields aane chahiye jo form bharta hai.
+
+    ⚠️ Content check NAHI karte — model har baar alag likhega, aur likhna
+    hi chahiye. Contract test karte hain, prose nahi.
+
+    AI off ho to 503 milta hai, aur wo bhi valid outcome hai — is test ka
+    matlab hai "endpoint sahi shape deta hai YA saaf mana karta hai",
+    kabhi 500 nahi.
+    """
+    res = client.post(
+        "/api/organizer/events/draft",
+        headers=_headers(role_tokens["organizer"]),
+        json={"brief": "Arijit Singh concert, DY Patil Mumbai, December"},
+    )
+
+    assert res.status_code in (200, 502, 503), res.text
+
+    if res.status_code == 200:
+        body = res.json()
+        assert set(body) == {"name", "description", "category"}
+        assert body["category"] in {"Music", "Comedy", "Sports", "Theatre", "Conference"}
+        assert body["name"].strip()
+        assert body["description"].strip()
+
+
+def test_draft_does_not_create_an_event(client, role_tokens):
+    """
+    ⭐ Sabse zaroori test.
+
+    AI draft kuch SAVE nahi karta. Organizer ko form me dikhta hai aur wo
+    edit karke khud publish karta hai.
+
+    Event ka description attendee se kiya gaya waada hai — us par insaan
+    ka haath hona chahiye. AI ko publish button tak pahunchne nahi dete.
+    """
+    token = role_tokens["organizer"]
+    before = len(client.get("/api/organizer/events", headers=_headers(token)).json())
+
+    client.post(
+        "/api/organizer/events/draft",
+        headers=_headers(token),
+        json={"brief": "Some test event at a test venue in December"},
+    )
+
+    after = len(client.get("/api/organizer/events", headers=_headers(token)).json())
+    assert after == before, "draft ne event bana diya — ye kabhi nahi hona chahiye"

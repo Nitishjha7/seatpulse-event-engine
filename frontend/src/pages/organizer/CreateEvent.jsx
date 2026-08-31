@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { createEvent } from '../../api'
+import AiDraft from '../../components/AiDraft'
 import LayoutBuilder, { emptyLayout, validateLayout } from '../../components/LayoutBuilder'
 import { IconClose, IconTicket } from '../../layout/icons'
 
@@ -133,6 +134,17 @@ export default function CreateEvent() {
       </header>
 
       <form onSubmit={handleSubmit} className="space-y-5">
+        <AiDraft
+          onDraft={(d) =>
+            setForm((f) => ({
+              ...f,
+              name: d.name,
+              description: d.description,
+              category: d.category,
+            }))
+          }
+        />
+
         <Card title="Event details">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Name" required>

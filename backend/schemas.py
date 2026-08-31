@@ -367,6 +367,26 @@ class SeatFilters(BaseModel):
     row_preference: Literal["front", "middle", "back"] | None = None
 
 
+class EventDraftRequest(BaseModel):
+    """Organizer ka chhota brief — "Arijit Singh, DY Patil Mumbai, December"."""
+    brief: str = Field(..., min_length=5, max_length=200)
+
+
+class EventDraftOut(BaseModel):
+    """
+    AI ka draft.
+
+    ⚠️ Ye kabhi seedha save nahi hota. Organizer ke form me bhar jata hai
+    aur wo edit karke hi publish karta hai.
+
+    Event ka description ticket kharidne wale ke liye ek WAADA hai —
+    us par ek insaan ka haath hona zaroori hai.
+    """
+    name: str
+    description: str
+    category: str
+
+
 class SeatSearchRequest(BaseModel):
     # Natural language. AI off ho to ye ignore hota hai.
     query: str | None = Field(None, max_length=200)

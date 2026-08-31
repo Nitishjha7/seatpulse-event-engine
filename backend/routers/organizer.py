@@ -24,7 +24,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from auth import require_role
+import ai
 from database import get_db
+from rate_limit import BOOKING, limit_user
 # `layout` naam local variables me bhi use hota, isliye alias —
 # warna shadowing ke bugs aate hain.
 import layout as seat_layout
@@ -41,7 +43,7 @@ from models import (
     Seat,
     User,
 )
-from schemas import EventCreate, EventUpdate, OrganizerEventOut
+from schemas import EventDraftOut, EventDraftRequest, EventCreate, EventUpdate, OrganizerEventOut
 
 router = APIRouter(prefix="/api/organizer", tags=["organizer"])
 
@@ -104,6 +106,43 @@ def _event_stats(db: Session, event_ids: list[int]) -> dict[int, dict]:
         stats[event_id]["revenue"] = float(revenue)
 
     return stats
+
+
+@router.post(
+    "/events/draft",
+    response_model=EventDraftOut,
+    # AI call rate limited — har draft ek paid API call hai
+    dependencies=[Depends(limit_user(BOOKING))],
+)
+def draft_event(
+    payload: EventDraftRequest,
+    user: User = Depends(require_role(ROLE_ORGANIZER, ROLE_ADMIN)),
+):
+    """
+    Chhote brief se event listing ka draft banao.
+
+    ⚠️ Ye kuch SAVE nahi karta. Sirf suggestion lautata hai, jo organizer
+    ke form me bhar jati hai. Publish wahi karta hai, edit karne ke baad.
+
+    AI ko publish button tak pahunchne hi nahi dete — kyunki description
+    attendee se kiya gaya waada hai, aur uska zimmedar organizer hai.
+    """
+    if not ai.is_enabled():
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "AI draft abhi available nahi hai — GEMINI_API_KEY set karo",
+        )
+
+    draft = ai.draft_event_copy(payload.brief)
+    if draft is None:
+        # Model fail hua ya samajh nahi aaya. 500 nahi dete — ye server ki
+        # galti nahi hai, aur organizer form haath se bhar sakta hai.
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Draft nahi ban paya — thoda aur detail likh ke try karo",
+        )
+
+    return EventDraftOut(**draft)
 
 
 @router.post("/events", response_model=OrganizerEventOut, status_code=status.HTTP_201_CREATED)

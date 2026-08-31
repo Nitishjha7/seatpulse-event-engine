@@ -138,6 +138,18 @@ export const unlockSeat = (seatId) =>
 
 export const getMyEvents = () => request("/api/organizer/events");
 
+/**
+ * Chhote brief se event listing ka draft.
+ *
+ * Ye kuch save nahi karta — sirf suggestion lauta ke form bhar deta hai.
+ * Publish organizer hi karta hai, edit karne ke baad.
+ */
+export const draftEvent = (brief) =>
+  request("/api/organizer/events/draft", {
+    method: "POST",
+    body: JSON.stringify({ brief }),
+  });
+
 export const createEvent = (payload) =>
   request("/api/organizer/events", {
     method: "POST",
