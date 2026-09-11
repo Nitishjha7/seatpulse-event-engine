@@ -1,4 +1,4 @@
-"""Events ke routes."""
+"""Event routes."""
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
@@ -14,18 +14,18 @@ router = APIRouter(prefix="/api/events", tags=["events"])
 
 @router.get("", response_model=list[EventOut])
 def list_events(db: Session = Depends(get_db)):
-    """Saare events, jo pehle shuru ho raha hai wo upar."""
+    """List all events, ordered by start time."""
     return db.scalars(select(Event).order_by(Event.starts_at)).all()
 
 
 @router.get("/{event_id}", response_model=EventDetail)
 def get_event(event_id: int, db: Session = Depends(get_db)):
-    """Ek event + uski seats ka count status ke hisaab se."""
+    """Retrieve event details and seat counts by status."""
     event = db.get(Event, event_id)
     if event is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Event nahi mila")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
 
-    # Ek hi query me saare counts — har status ke liye alag query nahi maarni.
+    # Aggregate counts in a single query to minimize database round trips.
     counts = dict(
         db.execute(
             select(Seat.status, func.count(Seat.id))
@@ -34,8 +34,7 @@ def get_event(event_id: int, db: Session = Depends(get_db)):
         ).all()
     )
 
-    # Price range — detail page pe "₹800 – ₹2500" dikhane ke liye.
-    # min aur max ek hi query me, do round trips ki zaroorat nahi.
+    # Fetch price range in a single query for detail view.
     price_range = db.execute(
         select(func.min(Seat.price), func.max(Seat.price)).where(Seat.event_id == event_id)
     ).one()

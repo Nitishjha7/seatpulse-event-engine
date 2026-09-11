@@ -1,99 +1,86 @@
 # Phase 18 — Visual Seat Layout Builder
 
-> Ab tak har event ek grid tha: N rows × M seats, sab barabar.
-> Asli venue aisa nahi hota — usme aisles hoti hain, sections hote hain,
-> aur har row me barabar seats nahi hoti.
+> Previously, every event was a grid: N rows × M seats, all uniform.
+> Real venues are not like that — they have aisles, sections, and rows with varying seat counts.
 
 ---
 
 ## Problem
 
-Phase 10 se organizer `price_tiers` se event banata hai:
+Since Phase 10, organizers have created events using `price_tiers`:
 
 ```json
 { "seats_per_row": 10, "price_tiers": [{"rows": 2, "price": 2500}, ...] }
 ```
 
-Simple hai aur zyadatar events ke liye kaafi bhi. Par ye teen cheezein
-nahi kar sakta:
+This is simple and sufficient for most events. However, it cannot handle these three requirements:
 
-| Chahiye | Kyu nahi hota |
+| Requirement | Why it fails |
 |---|---|
-| Beech me **aisle** (chalne ka raasta) | Har row me seats lagatar hain |
-| Alag **sections** (Ground, Balcony) | Sirf "tier 1, tier 2" hai, naam nahi |
-| Har row me **alag seats** | `seats_per_row` poore event ke liye ek hai |
+| **Aisles** (walkways) in between | Seats in every row are contiguous |
+| Distinct **sections** (Ground, Balcony) | Only "tier 1, tier 2" exists, no names |
+| **Different seat counts** per row | `seats_per_row` is global for the event |
 
 ---
 
-## ⭐ Faisla 1 — purana raasta HATAYA nahi
+## ⭐ Decision 1 — The old path was NOT removed
 
-Sabse aasan rasta hota `price_tiers` ko nikaal ke sirf layout rakhna. Wo
-galat hota:
+The easiest path would have been to remove `price_tiers` and keep only the layout. That would be wrong:
 
-1. **17 phases ka data usi se bana hai.** Seed, tests, demo — sab toot
-   jaate.
-2. **Zyadatar events ko naksha chahiye hi nahi.** "5 rows, 10 seats, ek
-   price" ke liye layout banwana user ko sataana hai.
+1. **Data from 17 phases depends on it.** Seeds, tests, and demos would all break.
+2. **Most events do not need a map.** Forcing a layout builder on a user for a "5 rows, 10 seats, one price" event is unnecessary friction.
 
-To dono raaste hain, **par ek hi generator**:
+So both paths exist, **but there is only one generator**:
 
 ```
-layout diya      ->  naksha waise ka waisa
-price_tiers diya ->  usse layout BANAYA jata hai
+layout provided      ->  map remains as-is
+price_tiers provided ->  layout is GENERATED from it
                           |
                           v
-                  seat_layout.expand()      <- ek hi jagah
+                  seat_layout.expand()      <- single source of truth
                           |
                           v
                      bulk insert
 ```
 
-`from_price_tiers()` purane input ko layout ke shape me badal deta hai.
-Do alag generators rakhne ka matlab hota **do jagah bugs** — aur wo
-dheere-dheere alag behave karne lagte.
+`from_price_tiers()` converts the old input into the layout shape. Maintaining two separate generators would lead to **bugs in two places** — and they would eventually behave differently.
 
-Faayda: `price_tiers` se bana event bhi ab `layout` store karta hai, to
-grid har event ko ek hi tarah render kar sakta hai.
+Benefit: Events created via `price_tiers` now store a `layout`, allowing the grid to render every event consistently.
 
 📁 [`backend/layout.py`](../../backend/layout.py)
 
 ---
 
-## ⭐⭐ Faisla 2 — purane events ka kya
+## ⭐⭐ Decision 2 — Handling legacy events
 
-Ye is phase ka sabse zaroori hissa hai.
+This is the most critical part of this phase.
 
-`Event.layout` aur `Seat.section` dono **nullable** hain:
+`Event.layout` and `Seat.section` are both **nullable**:
 
 ```python
 layout: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 section: Mapped[str | None] = mapped_column(String(40), nullable=True)
 ```
 
-`NULL` ka matlab hai "purana uniform event" — aur frontend usse bilkul
-waise render karta hai jaise pehle karta tha:
+`NULL` signifies a "legacy uniform event" — and the frontend renders it exactly as it did before:
 
 ```js
 function aisleMap(layout) {
   const map = new Map()
-  if (!layout?.sections) return map     // <- purana event, khali Map
+  if (!layout?.sections) return map     // <- legacy event, empty Map
   ...
 }
 ```
 
-Section headings bhi tabhi dikhte hain jab **ek se zyada** section ho.
-Ek hi section wale event me "Ground" likhna sirf shor hai.
+Section headings are only displayed if there is **more than one** section. Showing "Ground" for a single-section event is just noise.
 
-> Test `test_old_events_without_a_layout_still_work` seedha isi ko pakadta
-> hai: seed wala event 1, `layout: null`, 100 seats, har seat ka
-> `section: null` — aur baaki sab fields waise ke waise.
+> Test `test_old_events_without_a_layout_still_work` targets this specifically: the seed event 1, `layout: null`, 100 seats, each seat `section: null` — with all other fields remaining as they were.
 
-Ye woh cheez hai jo naya column add karte waqt sabse aasani se tootti hai,
-aur us tootne ka pata bahut baad me chalta hai.
+This is the area most prone to breaking when adding new columns, and such breakages are often discovered too late.
 
 ---
 
-## Layout ka shape
+## Layout shape
 
 ```json
 {
@@ -111,18 +98,15 @@ aur us tootne ka pata bahut baad me chalta hai.
 }
 ```
 
-### Aisle sirf DIKHNE ki cheez hai
+### Aisles are purely VISUAL
 
-`aisles_after: [4]` matlab seat 4 ke **baad** ek gap.
+`aisles_after: [4]` means a gap **after** seat 4.
 
-**Koi seat nahi banti. Numbering nahi rukti.** Ye `seats` table me hai hi
-nahi — sirf layout JSON me, kyunki wo purely presentation hai.
+**No seat is created. Numbering does not stop.** This is not in the `seats` table — only in the layout JSON, as it is purely for presentation.
 
-Ye aasan galti hai: aisle ko ek "khali seat" bana dena, ya uske baad
-numbering skip kar dena. Dono galat hain — attendee "seat 5" maangta hai
-aur usse seat 6 mil jati.
+A common mistake is to create a "blank seat" for an aisle or to skip numbering. Both are wrong — an attendee requesting "seat 5" should not be given seat 6.
 
-Test isi ko lock karta hai:
+The test locks this behavior:
 
 ```python
 with_aisle = expand(... _row("A", 6, [3]))
@@ -133,80 +117,65 @@ assert [p.seat_number for p in with_aisle] == [1, 2, 3, 4, 5, 6]
 
 ---
 
-## Validation — seats banane se PEHLE
+## Validation — BEFORE creating seats
 
 ```
 Pydantic (schemas.py)  ->  shape: types, lengths, ranges
 layout.py              ->  business rules: duplicate labels, seat cap, aisle position
 ```
 
-Ye bantwara jaan-boojh ke hai. Shape rules schema me likhna aasan hai, par
-"do sections me same row label nahi ho sakta" jaise rules ko **poore layout
-ka context** chahiye — aur unhe DB ke bina test karna aasan hona chahiye.
+This separation is intentional. Shape rules are easy to write in a schema, but rules like "the same row label cannot exist in two sections" require **context of the entire layout** — and they should be testable without a database.
 
-### ⭐ Sabse zaroori rule: row label poore event me unique
+### ⭐ Most important rule: row label must be unique across the event
 
 ```python
 if label in seen_labels:
-    raise LayoutError(f"Row '{label}' do jagah hai — ...")
+    raise LayoutError(f"Row '{label}' exists in two places — ...")
 ```
 
-`seats` par `UNIQUE(event_id, row_label, seat_number)` hai (Phase 2 se).
-Ye check na hota to expansion **500 seats insert karne ke baad**
-`IntegrityError` se marta.
+`seats` has a `UNIQUE(event_id, row_label, seat_number)` constraint (from Phase 2). Without this check, expansion would fail with an `IntegrityError` **after inserting 500 seats**.
 
-Aur wo constraint section ko jaanta hi nahi — isliye label poore event me
-unique hona chahiye, sirf section me nahi.
+The constraint is unaware of sections — hence, the label must be unique across the entire event, not just within a section.
 
-### expand() DB ko haath nahi lagata
+### expand() does not touch the DB
 
 ```python
 def expand(layout: dict) -> list[PlannedSeat]:
     validate(layout)
     ...
-    return seats        # sirf list, koi insert nahi
+    return seats        # list only, no inserts
 ```
 
-Caller ise ek transaction me bulk insert karta hai. Agar `expand` khud
-likhta, to "aadhi seats ban gayi phir error" wali haalat mumkin ho jati.
+The caller performs a bulk insert within a transaction. If `expand` performed the writes itself, a partial failure ("half the seats created") would be possible.
 
-Test `test_bad_layout_creates_no_event` isi ko check karta hai: galat
-layout ke baad organizer ke events ki ginti wahi rehni chahiye.
+Test `test_bad_layout_creates_no_event` verifies this: after an invalid layout, the organizer's event count must remain unchanged.
 
 ---
 
 ## Frontend
 
-### Builder ek FORM hai, drag-and-drop canvas nahi
+### The builder is a FORM, not a drag-and-drop canvas
 
-Ye ulta lag sakta hai, par soch ke liya gaya faisla hai:
+This might seem counter-intuitive, but it is a deliberate decision:
 
-> Asli venue rows aur sections me hi bana hota hai. "Row C me 12 seats,
-> seat 4 ke baad aisle" **type** karna maus se 12 boxes ghaseetne se tez
-> bhi hai aur galti-proof bhi.
+> Real venues are built in rows and sections. Typing "12 seats in Row C, aisle after seat 4" is faster and more error-proof than dragging 12 boxes with a mouse.
 
-Aur drag-and-drop apne saath pointer-events, undo/redo, snapping, aur
-touch handling ka poora pahaad laata hai — us feature ke liye jo saal me
-kuch baar use hota hai.
+Drag-and-drop introduces a mountain of complexity: pointer-events, undo/redo, snapping, and touch handling — for a feature used only a few times a year.
 
-Iske badle **live preview** hai: bilkul wahi shape jo attendee ko dikhega.
-Yahi builder ka asli point hai — 40 seats aur 4 aisles ko numbers me
-sochna mushkil hai, dekh ke turant samajh aata hai.
+Instead, there is a **live preview**: the exact shape the attendee will see. This is the real purpose of the builder — it is difficult to visualize 40 seats and 4 aisles as numbers, but it is immediately clear when viewed.
 
 📁 [`frontend/src/components/LayoutBuilder.jsx`](../../frontend/src/components/LayoutBuilder.jsx)
 
-### Client-side validation duplicate hai, aur wo theek hai
+### Client-side validation is duplicated, and that is fine
 
-`validateLayout()` server ke rules ki copy hai. Duplication jaan-boojh ke:
+`validateLayout()` is a copy of the server's rules. The duplication is intentional:
 
-- Server par ye rules **hone hi chahiye** — koi bhi API seedha hit kar
-  sakta hai, aur builder ek UI convenience hai
-- Par user ko submit dabane se **pehle** pata chalna chahiye ki do rows ka
-  label same hai. Wo round-trip bekaar hai.
+- These rules **must exist** on the server — any API can be hit directly, and the builder is just a UI convenience.
+- However, the user should know if two rows have the same label **before** clicking submit. A round-trip is unnecessary.
 
-Server hi asli faisla karta hai; client sirf jaldi feedback deta hai.
+The server makes the final decision; the client only provides fast feedback.
 
-### Ek chhoti si detail jo bug banti
+### A small detail that becomes a bug
 
 ```js
 r.aisles_after = e.target.value
@@ -215,13 +184,11 @@ r.aisles_after = e.target.value
   .filter((x) => Number.isInteger(x) && x > 0)
 ```
 
-`filter` ke bina: user "4," type kar raha hota hai (abhi 8 likhna baaki
-hai) aur `parseInt("")` → `NaN` aa jata hai, jisse har keystroke pe
-validation error flash karta hai.
+Without `filter`: if a user types "4," (intending to type more), `parseInt("")` returns `NaN`, causing validation errors to flash on every keystroke.
 
-### Grid me sections aur aisles
+### Sections and aisles in the grid
 
-Aisle ek khali `<span>` hai — koi seat nahi, koi interaction nahi:
+An aisle is an empty `<span>` — no seat, no interaction:
 
 ```jsx
 {gaps?.has(seat.seat_number) && (
@@ -229,39 +196,39 @@ Aisle ek khali `<span>` hai — koi seat nahi, koi interaction nahi:
 )}
 ```
 
-`aria-hidden` isliye ki screen reader ke liye ye cheez hai hi nahi.
+`aria-hidden` is used because this element does not exist for screen readers.
 
 ---
 
 ## Proof
 
 ```
-=== A. LAYOUT se ===
+=== A. From LAYOUT ===
 201 30 seats
  sections: Counter({'Ground': 18, 'Balcony': 12})
  A row prices: {2500.0}
  C row prices: {900.0}
  layout stored: True | aisles A: [4]
 
-=== B. Purana price_tiers raasta (backwards compat) ===
+=== B. Legacy price_tiers path (backwards compat) ===
 201 12 seats
  sections: Counter({'Tier 2': 8, 'Tier 1': 4})
- layout auto-generate hua: {"sections": [{"name": "Tier 1", "price": 1500.0, ...
+ layout auto-generated: {"sections": [{"name": "Tier 1", "price": 1500.0, ...
 
-=== C. Galat layouts reject hone chahiye ===
-  duplicate row label      -> 422  Row 'A' do jagah hai — har row label poore event me alag hona chahiye
-  aisle row ke bahar       -> 422  Row 'A': aisle position 9 row ke andar honi chahiye (1-4)
-  duplicate section name   -> 422  Do sections ka naam ek hi hai: X
+=== C. Invalid layouts must be rejected ===
+  duplicate row label      -> 422  Row 'A' exists in two places — row labels must be unique across the event
+  aisle outside row        -> 422  Row 'A': aisle position 9 must be within row (1-4)
+  duplicate section name   -> 422  Two sections have the same name: X
 
-=== D. Purane events (layout NULL) abhi bhi chalte hain ===
+=== D. Legacy events (layout NULL) still work ===
  event 1: layout=None, 100 seats, section=None
 ```
 
 ### Tests
 
-**90/90 pass** (79 pehle ke + 11 naye).
+**90/90 passed** (79 previous + 11 new).
 
-*Pure functions (koi DB nahi):*
+*Pure functions (no DB):*
 - `test_expand_produces_every_seat`
 - ⭐ `test_aisles_do_not_create_or_skip_seats`
 - ⭐ `test_duplicate_row_label_across_sections_is_rejected`
@@ -282,68 +249,53 @@ docker compose exec backend python -m pytest tests/ -q -k "layout or aisle"
 
 ---
 
-## Kya toota
+## What broke
 
-Is phase me koi bada bug nahi mila — aur wo khud batane layak hai.
+No major bugs were found in this phase — which is worth noting.
 
-Wajah shayad ye hai ki `layout.py` **pure functions** hai. Koi DB nahi,
-koi network nahi, koi state nahi. Aise code ko test karna itna sasta hai
-ki galtiyan likhte-likhte hi pakdi jaati hain, chalane se pehle.
+The reason is likely that `layout.py` consists of **pure functions**. No DB, no network, no state. Testing such code is so inexpensive that errors are caught while writing, before execution.
 
-Do chhoti cheezein zaroor thi:
+Two minor things occurred:
 
-**Migration is baar `NOT NULL` par nahi phansi.** Dono naye columns
-nullable hain, to woh purana pattern ([Phase 14](14-dynamic-pricing.md),
-16 me chauthi baar) laga hi nahi. Nullable rakhna sirf backwards
-compatibility ke liye nahi tha — migration bhi usse aasan ho gayi.
+**Migration did not get stuck on `NOT NULL`.** Both new columns are nullable, so the old pattern ([Phase 14](14-dynamic-pricing.md), 16) was not required. Keeping them nullable was not just for backwards compatibility — it also simplified the migration.
 
-**`layout` naam shadow kar raha tha.** Module ka naam `layout` hai aur
-route me local variable bhi `layout` chahiye tha. `import layout as
-seat_layout` se saaf kiya — warna wo bug baad me milta aur samajh nahi
-aata.
+**`layout` name shadowing.** The module is named `layout` and the route required a local variable named `layout`. Cleared by `import layout as seat_layout` — otherwise, this would have been a difficult bug to track down later.
 
 ---
 
-## Jo jaan-boojh ke NAHI banaya
+## What was intentionally NOT built
 
-- **Layout edit nahi hota.** Event banne ke baad naksha badalna matlab
-  seats badalna, aur unpe bookings ho sakti hain. Wahi asool jo base
-  price ka hai ([Phase 14](14-dynamic-pricing.md)): bik chuki cheez ka
-  reference nahi badalte.
-- **Curved / angled rows nahi.** Stadium me rows seedhi nahi hoti. Uske
-  liye har seat ka x/y coordinate chahiye hota — poora alag data model.
-- **Templates nahi.** "Ye layout save karke agle event me use karo" —
-  ab layout JSON store hota hai, to ye jodna aasan hoga.
-- **Blocked/broken seats nahi.** Asli venue me kuch seats bikti hi nahi
-  (pillar ke peeche, camera position). Uske liye ek aur seat status
-  chahiye.
+- **Layout editing.** Changing a map after an event is created means changing seats, which may already have bookings. The same principle as base pricing applies ([Phase 14](14-dynamic-pricing.md)): do not change references to items already sold.
+- **Curved / angled rows.** Rows in stadiums are not straight. That would require x/y coordinates for every seat — an entirely different data model.
+- **Templates.** "Save this layout to use in the next event" — now that layout JSON is stored, adding this will be easy.
+- **Blocked/broken seats.** In real venues, some seats are not for sale (behind pillars, camera positions). That requires an additional seat status.
 
 ---
 
 ## Files
 
-**Naye:**
-| File | Kya |
+**New:**
+| File | Purpose |
 |---|---|
 | `backend/layout.py` | Validation + expansion, pure functions |
 | `frontend/src/components/LayoutBuilder.jsx` | Builder + live preview |
 
-**Badle:**
-| File | Kya |
+**Modified:**
+| File | Purpose |
 |---|---|
-| `backend/models.py` | `Event.layout` (JSON), `Seat.section` — dono nullable |
+| `backend/models.py` | `Event.layout` (JSON), `Seat.section` — both nullable |
 | `backend/schemas.py` | `SeatLayout`, `LayoutSection`, `LayoutRow`; `EventCreate.layout` optional |
-| `backend/routers/organizer.py` | Dono raaste ek hi expansion se |
-| `backend/routers/events.py` | Detail me `layout` |
+| `backend/routers/organizer.py` | Both paths use the same expansion |
+| `backend/routers/events.py` | `layout` in detail |
 | `backend/routers/seats.py` | `SeatOut.section` |
-| `frontend/src/components/SeatGrid.jsx` | Sections + aisles render |
+| `frontend/src/components/SeatGrid.jsx` | Render sections + aisles |
 | `frontend/src/pages/organizer/CreateEvent.jsx` | Simple / Layout builder toggle |
 
 ---
 
 ## Related
 
-- [Phase 02 — Postgres + Models](02-postgres-models.md) — wo unique constraint jo validation ki wajah hai
-- [Phase 10 — RBAC + Organizer](10-rbac-organizer.md) — `price_tiers` wala purana raasta
-- [Phase 14 — Dynamic Pricing](14-dynamic-pricing.md) — "bik chuki cheez ka reference nahi badalte"
+- [Phase 02 — Postgres + Models](02-postgres-models.md) — the unique constraint that necessitates validation
+- [Phase 10 — RBAC + Organizer](10-rbac-organizer.md) — the legacy `price_tiers` path
+- [Phase 14 — Dynamic Pricing](14-dynamic-pricing.md) — "do not change references to items already sold"
 - [testing.md](../reference/testing.md) — commands

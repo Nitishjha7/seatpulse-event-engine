@@ -1,14 +1,15 @@
 """
-Ticket generation — QR code, PDF, aur email.
+Ticket generation — QR code, PDF, and email.
 
-⭐ Ye teeno kaam JAAN-BOOJH KE request ke bahar hote hain.
+⭐ These tasks are intentionally performed outside the request cycle.
 
-Kyu: QR banana + PDF render karna + email bhejna mila ke 2-3 second lagta
-hai. Wo checkout request ke andar karte to user ko lagta ki payment atak
-gaya — jabki uska paisa kat chuka hota aur booking ban chuki hoti.
+Reason: QR generation, PDF rendering, and email dispatch take 2-3 seconds.
+Performing these during checkout would make the payment appear to hang,
+even after the transaction is successful and the booking is created.
 
-Ab API turant "confirmed" bolti hai, aur ticket background me banti hai.
-User ko "ticket ban raha hai" dikhta hai, jo sach bhi hai.
+The API now returns "confirmed" immediately, and tickets are generated
+in the background. The user sees a "ticket generating" status, which
+accurately reflects the process.
 """
 
 import io
@@ -25,28 +26,28 @@ from reportlab.pdfgen import canvas
 
 logger = logging.getLogger(__name__)
 
-# PDF aur "bheje gaye" emails kahan jaate hain.
-# Docker me ye ek volume hai, to worker aur API dono dekh sakte hain.
+# Storage location for PDFs and outgoing emails.
+# Configured as a Docker volume so both the API and worker can access it.
 TICKET_DIR = Path("/app/tickets")
 OUTBOX_DIR = Path("/app/tickets/outbox")
 
 
 def new_qr_token() -> str:
     """
-    QR ke liye random token.
+    Generates a random token for the QR code.
 
-    ⚠️ Booking id NAHI use karte — wo sequential hai. Koi bhi 1, 2, 3...
-    ka QR bana ke gate pe chala jata. `token_urlsafe(24)` se 32 characters
-    aate hain, guess karna practically namumkin.
+    ⚠️ Do not use the booking ID, as it is sequential. A user could guess
+    subsequent IDs to access other tickets. `token_urlsafe(24)` provides
+    32 characters, making it practically impossible to guess.
     """
     return secrets.token_urlsafe(24)
 
 
 def make_qr_png(token: str) -> bytes:
-    """Token ka QR code, PNG bytes me."""
+    """Generates a QR code for the token as PNG bytes."""
     qr = qrcode.QRCode(
-        version=None,                       # size khud tay karo content ke hisaab se
-        error_correction=qrcode.constants.ERROR_CORRECT_M,   # 15% damage tolerate
+        version=None,                       # Size determined by content
+        error_correction=qrcode.constants.ERROR_CORRECT_M,   # 15% damage tolerance
         box_size=8,
         border=2,
     )
@@ -70,10 +71,10 @@ def make_ticket_pdf(
     attendee: str,
 ) -> bytes:
     """
-    Ek page ka PDF ticket.
+    Generates a single-page PDF ticket.
 
-    Landscape A5 — asli tickets isi shape ke hote hain, aur phone pe
-    dikhane layak bhi rehta hai.
+    Uses landscape A5 format, which is standard for physical tickets
+    and optimized for mobile screen display.
     """
     buf = io.BytesIO()
     width, height = landscape(A5)
@@ -147,7 +148,7 @@ def make_ticket_pdf(
         width - qr_size / 2 - 15 * mm, height - 92 * mm, "Scan at the gate"
     )
 
-    # Footer — perforated line ka feel
+    # Footer — perforated line feel
     c.setStrokeColor(HexColor("#d1d5db"))
     c.setDash(2, 3)
     c.line(15 * mm, 18 * mm, width - 15 * mm, 18 * mm)
@@ -178,18 +179,14 @@ def ticket_path(booking_id: int) -> Path:
 
 def send_ticket_email(*, to: str, subject: str, body: str, pdf: bytes, booking_id: int) -> None:
     """
-    "Email bhejo."
+    Sends the ticket email.
 
-    ⚠️ Yahan asli SMTP nahi hai — koi credentials nahi hain, aur ek portfolio
-    project se asli emails bhejna waise bhi galat hai.
+    ⚠️ No actual SMTP integration is implemented here.
+    Uses an **outbox** pattern: emails are written to disk for processing.
+    This mimics Django's console/file email backend used in development.
 
-    Iski jagah **outbox** pattern: email disk par likh dete hain aur log
-    karte hain. Django ka console/file email backend bilkul aisa hi karta
-    hai development me.
-
-    Asli SMTP lagana ho to sirf ye function badalna hai — baaki poora flow
-    (queue, retry, status) waisa ka waisa rahega. Yahi wajah hai ki isse
-    alag function rakha hai.
+    To implement real SMTP, only this function needs modification; the
+    surrounding flow (queue, retry, status) remains unchanged.
     """
     OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
 

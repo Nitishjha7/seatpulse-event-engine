@@ -1,18 +1,16 @@
 """
-Group booking ke routes.
+Group booking routes.
 
-Business logic `groups.py` me hai — yahan sirf HTTP ka kaam hai:
-auth, ownership, aur GroupError ko sahi status code me badalna.
+Business logic resides in `groups.py`. This module handles HTTP concerns:
+authentication, ownership, and mapping `GroupError` to appropriate status codes.
 
 ---- Access model ----
 
-Group ko `share_token` se dhoondhte hain, id se nahi. Jiske paas link hai
-wo dekh sakta hai aur ek khaali share le sakta hai. Sequential id se
-dhoondhte to koi bhi `/api/groups/1`, `/2`, `/3` chala ke doosron ke groups
-me ghus jata.
+Groups are accessed via `share_token` rather than ID. This allows anyone with
+the link to view and claim a share. Using sequential IDs (e.g., `/api/groups/1`)
+would allow unauthorized access to other groups.
 
-Login phir bhi zaroori hai — share claim karne ke liye pata hona chahiye
-ki kaun le raha hai, aur baad me ticket kiska hai.
+Login is required to claim a share to track ownership and ensure accountability.
 """
 
 from datetime import timedelta
@@ -74,10 +72,9 @@ def _to_out(db: Session, group: GroupBooking) -> GroupOut:
         event_id=group.event_id,
         status=group.status,
         expires_at=group.expires_at,
-        # Frontend countdown isse chalata hai. Negative bhi ho sakta hai —
-        # deadline nikal chuki ho par expiry job abhi na chala ho. Wo
-        # honesty jaan-boojh ke hai: hum "0" dikha ke ye nahi jataana chahte
-        # ki cleanup ho chuka hai jab wo abhi hua hi nahi.
+        # Used for frontend countdown. Can be negative if the deadline passed
+        # but the cleanup job hasn't run. We show the actual remaining time
+        # rather than "0" to avoid implying cleanup has already occurred.
         seconds_left=remaining,
         total_shares=len(shares),
         paid_shares=sum(1 for s in shares if s.status == "paid"),
@@ -102,7 +99,7 @@ def _load(db: Session, share_token: str) -> GroupBooking:
         select(GroupBooking).where(GroupBooking.share_token == share_token)
     )
     if group is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Group nahi mila")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Group not found")
     return group
 
 
@@ -117,18 +114,18 @@ def create(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """N seats hold karo aur shareable link banao."""
+    """Hold N seats and generate a shareable link."""
     seats = db.scalars(select(Seat).where(Seat.id.in_(payload.seat_ids))).all()
     if len(seats) != len(set(payload.seat_ids)):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Kuch seats nahi mili")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Some seats not found")
 
     if len({s.event_id for s in seats}) > 1:
         raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "Saari seats ek hi event ki honi chahiye"
+            status.HTTP_400_BAD_REQUEST, "All seats must belong to the same event"
         )
 
-    # Price ab freeze ho jata hai — group me 30 minute lag sakte hain aur
-    # us beech surge badal sakta hai (Phase 14). Jo quote kiya wahi lagega.
+    # Price is frozen at creation to protect against surge pricing changes
+    # during the group booking window (Phase 14).
     quoted = {s.id: price_now(db, s) for s in seats}
 
     try:
@@ -151,7 +148,7 @@ def get_group(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Link se group dekho — kisne kya liya, kitna paisa aaya, kitna time bacha."""
+    """Retrieve group details via link."""
     return _to_out(db, _load(db, share_token))
 
 
@@ -162,19 +159,18 @@ def claim(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Ek khaali seat apne naam karo."""
+    """Claim an available seat."""
     group = _load(db, share_token)
     if group.status != GROUP_COLLECTING:
         raise HTTPException(
-            status.HTTP_409_CONFLICT, f"Ye group ab '{group.status}' hai"
+            status.HTTP_409_CONFLICT, f"Group status is '{group.status}'"
         )
 
     share = db.get(GroupShare, share_id)
     if share is None or share.group_id != group.id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Share nahi mila")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Share not found")
 
-    # Ek banda ek hi seat le — warna ek hi user poora group claim kar leta
-    # aur "split" ka matlab hi khatam
+    # Prevent a single user from claiming multiple seats in the same group.
     mine = db.scalar(
         select(GroupShare.id).where(
             GroupShare.group_id == group.id, GroupShare.claimed_by == user.id
@@ -182,7 +178,7 @@ def claim(
     )
     if mine is not None:
         raise HTTPException(
-            status.HTTP_409_CONFLICT, "Tumne is group me pehle se ek seat li hui hai"
+            status.HTTP_409_CONFLICT, "You have already claimed a seat in this group"
         )
 
     try:
@@ -200,20 +196,19 @@ def cancel(
     user: User = Depends(get_current_user),
 ):
     """
-    Group cancel karo — sirf banane wala.
+    Cancel the group (creator only).
 
-    Jo paise aa chuke hain wo refund ho jaate hain (`break_group` sambhalta
-    hai). Isliye ye "delete" nahi hai — record rehta hai, sirf status badalta
-    hai. Paise ke record kabhi delete nahi karte.
+    Refunds are handled by `break_group`. This does not delete the record;
+    it updates the status to maintain financial audit trails.
     """
     group = _load(db, share_token)
     if group.created_by != user.id:
-        # 404, 403 nahi — wahi pattern jo baaki project me hai
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Group nahi mila")
+        # Return 404 to maintain consistency with project-wide security patterns.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Group not found")
 
     if not break_group(db, group, GROUP_CANCELLED):
         raise HTTPException(
-            status.HTTP_409_CONFLICT, "Group already settle ho chuka hai"
+            status.HTTP_409_CONFLICT, "Group already settled"
         )
 
     db.refresh(group)
@@ -225,7 +220,7 @@ def my_groups(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Mere banaye hue + jinme maine seat li hai."""
+    """List groups created by or joined by the user."""
     joined = select(GroupShare.group_id).where(GroupShare.claimed_by == user.id)
     groups = db.scalars(
         select(GroupBooking)
@@ -248,35 +243,32 @@ def pay_share(
     user: User = Depends(get_current_user),
 ):
     """
-    Apne hisse ka checkout session banao.
+    Create a checkout session for a specific share.
 
-    ⚠️ Ye `/api/payments/checkout` se alag hai kyunki wo SEAT ke liye hai.
-    Yahan seat pehle se group ke hold me hai — hume usse dobara claim nahi
-    karna, sirf paisa lena hai. Isliye `Payment.seat_id` set hota hai par
-    seat ka status **nahi** badalta: wo `group_held` hi rehta hai jab tak
-    poora group settle na ho.
+    ⚠️ Distinct from `/api/payments/checkout` which is for individual seats.
+    Here, the seat is already held by the group. We do not re-claim the seat;
+    we only process payment. The seat status remains `group_held` until the
+    entire group is settled.
     """
     group = _load(db, share_token)
     if group.status != GROUP_COLLECTING:
-        raise HTTPException(status.HTTP_409_CONFLICT, f"Ye group ab '{group.status}' hai")
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Group status is '{group.status}'")
 
     if group.expires_at < utcnow():
-        # Deadline nikal chuki hai par expiry job abhi nahi chala. Paisa
-        # lena galat hoga — refund karna padta.
-        raise HTTPException(status.HTTP_409_CONFLICT, "Group ki deadline nikal chuki hai")
+        # Prevent payment if the deadline has passed but the cleanup job is pending.
+        raise HTTPException(status.HTTP_409_CONFLICT, "Group deadline has passed")
 
     share = db.get(GroupShare, share_id)
     if share is None or share.group_id != group.id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Share nahi mila")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Share not found")
 
     if share.claimed_by != user.id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Ye seat tumne claim nahi ki")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You have not claimed this seat")
 
     if share.status != SHARE_UNPAID:
-        raise HTTPException(status.HTTP_409_CONFLICT, f"Ye hissa already '{share.status}' hai")
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Share status is '{share.status}'")
 
-    # Pehle se ek pending payment hai? Wahi wapas do — double click par do
-    # sessions nahi banne chahiye.
+    # Return existing pending payment to prevent duplicate sessions.
     existing = db.scalar(
         select(Payment).where(
             Payment.group_share_id == share.id, Payment.status == PAYMENT_PENDING
@@ -297,16 +289,14 @@ def pay_share(
         seat_id=share.seat_id,
         event_id=group.event_id,
         group_share_id=share.id,
-        # Amount share se aata hai, seat se nahi — wo group banate waqt
-        # freeze hua tha aur wahi waada hai.
+        # Use the frozen amount from the group creation.
         amount=float(share.amount),
         currency=settings.CURRENCY,
         provider=provider.name,
         status=PAYMENT_PENDING,
         expires_at=min(
             utcnow() + timedelta(seconds=settings.PAYMENT_TTL_SECONDS),
-            # Payment window group deadline se aage nahi ja sakta — warna
-            # user deadline ke baad pay kar deta aur seedha refund me jata
+            # Payment window cannot exceed group deadline.
             group.expires_at,
         ),
     )

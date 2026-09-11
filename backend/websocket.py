@@ -1,30 +1,30 @@
 """
 WebSocket connections + real-time broadcasting.
 
-⭐ Phase 5 ka core.
+⭐ Core of Phase 5.
 
-Problem jo ye solve karta hai:
-  User A seat hold karta hai -> User B ko wo seat tab tak hari dikhti rehti
-  hai jab tak wo refresh na kare. B click karta hai, 409 milta hai, bura
-  experience. Ab B ko turant peeli dikhegi.
+Problem solved:
+  When User A holds a seat, User B sees it as available until they refresh.
+  If B clicks, they receive a 409 error, resulting in a poor experience.
+  Now, B will see the seat status update immediately.
 
-Architecture — Redis Pub/Sub kyu, seedha broadcast kyu nahi:
+Architecture — Why Redis Pub/Sub instead of direct broadcasting:
 
-  Ek backend server ho to seedha broadcast kaafi hai. Par production me
-  do-teen uvicorn workers chalte hain, aur har worker ke paas apne alag
-  WebSocket connections hote hain:
+  Direct broadcasting suffices for a single backend server. However, in
+  production, multiple Uvicorn workers run, each maintaining its own
+  WebSocket connections:
 
-      Worker 1: User A, User C ke sockets
-      Worker 2: User B ka socket
+      Worker 1: User A, User C sockets
+      Worker 2: User B socket
 
-  User A ka lock Worker 1 pe process hua. Agar wo sirf apne local sockets
-  ko batayega to User B ko kabhi pata hi nahi chalega.
+  User A's lock is processed on Worker 1. If it only notifies local sockets,
+  User B will never be informed.
 
-  Isliye: har worker Redis channel pe PUBLISH karta hai, aur har worker
-  usi channel ko SUBSCRIBE karke apne local sockets ko bhejta hai.
-  Redis message bus ban jata hai.
+  Therefore: Each worker PUBLISHES to a Redis channel, and every worker
+  SUBSCRIBES to that channel to notify its local sockets. Redis acts as
+  the message bus.
 
-  Bonus: Redis pehle se hai (Phase 4 se) — koi nayi service nahi lagi.
+  Bonus: Redis is already in use (since Phase 4) — no new services required.
 """
 
 import asyncio
@@ -39,8 +39,8 @@ from redis_client import redis_client
 
 logger = logging.getLogger(__name__)
 
-# Har event ka apna channel — "seatpulse:event:1"
-# Isse event 1 ke updates event 2 ke users tak nahi jaate.
+# Each event has a dedicated channel — "seatpulse:event:1"
+# This ensures updates for event 1 do not reach users of event 2.
 CHANNEL_PREFIX = "seatpulse:event:"
 
 
@@ -50,15 +50,15 @@ def channel_for(event_id: int) -> str:
 
 class ConnectionManager:
     """
-    Kaun sa socket kis event ko sun raha hai, iska hisaab rakhta hai.
+    Tracks which sockets are listening to which event.
 
     Structure: { event_id: {socket1, socket2, ...} }
-    Set isliye (list nahi) — remove O(1) me ho jata hai aur duplicates nahi hote.
+    Uses a set instead of a list for O(1) removal and to prevent duplicates.
     """
 
     def __init__(self) -> None:
         self._rooms: dict[int, set[WebSocket]] = {}
-        # Lock isliye: ek saath do connect/disconnect aayein to dict corrupt na ho
+        # Lock prevents dictionary corruption during concurrent connect/disconnect events.
         self._lock = asyncio.Lock()
 
     async def connect(self, websocket: WebSocket, event_id: int) -> None:
@@ -72,7 +72,7 @@ class ConnectionManager:
             room = self._rooms.get(event_id)
             if room:
                 room.discard(websocket)
-                # Khali room dict me pada na rahe
+                # Remove empty rooms to keep the dictionary clean.
                 if not room:
                     self._rooms.pop(event_id, None)
 
@@ -80,15 +80,15 @@ class ConnectionManager:
         return len(self._rooms.get(event_id, ()))
 
     def rooms(self) -> list[int]:
-        """Kaunse events ke rooms abhi khule hain (admin stats ke liye)."""
+        """Returns active event rooms (for admin stats)."""
         return list(self._rooms.keys())
 
     async def broadcast_local(self, event_id: int, message: dict) -> None:
         """
-        Is worker ke sockets ko message bhejo.
+        Sends a message to sockets connected to this worker.
 
-        Dead connections ko jama karke baad me hatate hain — set ke upar
-        loop chalate hue usme se remove karna error deta hai.
+        Collects dead connections to remove later, as modifying a set while
+        iterating over it raises an error.
         """
         async with self._lock:
             sockets = list(self._rooms.get(event_id, ()))
@@ -101,8 +101,8 @@ class ConnectionManager:
             try:
                 await ws.send_json(message)
             except Exception:
-                # Client ja chuka hai par disconnect handler nahi chala.
-                # Aisa network tootne par hota hai.
+                # Client disconnected without triggering the disconnect handler,
+                # usually due to a network failure.
                 dead.append(ws)
 
         if dead:
@@ -117,35 +117,34 @@ manager = ConnectionManager()
 
 def publish(event_id: int, message: dict) -> None:
     """
-    Message Redis channel pe bhejo — SYNC function.
+    Publishes a message to the Redis channel — SYNC function.
 
-    Sync isliye ki hamare routes bhi sync hain (`def`, `async def` nahi).
-    Ye ek fire-and-forget hai, ~0.1ms lagta hai.
+    Synchronous because routes are defined as `def` (not `async def`).
+    This is a fire-and-forget operation taking ~0.1ms.
 
-    Yahan se message seedha kisi socket pe nahi jata. Wo kaam
-    _subscriber_loop karta hai, jo har worker me chal raha hota hai.
+    This does not send messages directly to sockets; that is handled by
+    the _subscriber_loop running in each worker.
     """
     try:
         redis_client.publish(channel_for(event_id), json.dumps(message, default=str))
     except Exception as exc:
-        # Broadcast fail hone se booking fail nahi honi chahiye.
-        # Real-time update ek "nice to have" hai — booking "must have" hai.
+        # Broadcast failure should not block booking.
+        # Real-time updates are "nice to have"; booking is "must have".
         logger.warning("Broadcast publish fail: %s", exc)
 
 
 async def _subscriber_loop() -> None:
     """
-    Redis channels ko sunta rehta hai aur local sockets ko forward karta hai.
+    Listens to Redis channels and forwards messages to local sockets.
 
-    App start hote hi ek background task ki tarah chalta hai aur band
-    hone tak chalta rehta hai.
+    Runs as a background task for the duration of the application lifecycle.
     """
     while True:
         try:
             conn = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
             pubsub = conn.pubsub()
-            # psubscribe = pattern subscribe. Har event ka channel alag hai,
-            # isliye "seatpulse:event:*" pattern se sab ek saath sun lete hain.
+            # psubscribe = pattern subscribe. Since each event has a unique channel,
+            # "seatpulse:event:*" allows listening to all events simultaneously.
             await pubsub.psubscribe(f"{CHANNEL_PREFIX}*")
             logger.info("Redis pub/sub subscriber ready")
 
@@ -159,11 +158,11 @@ async def _subscriber_loop() -> None:
                     logger.warning("Bad pubsub message: %s", exc)
 
         except asyncio.CancelledError:
-            # App band ho raha hai — normal exit
+            # Normal application shutdown.
             raise
         except Exception as exc:
-            # Redis restart ho gaya ya network gira. 2 sec baad dobara try karo.
-            logger.warning("Subscriber gira, 2s me retry: %s", exc)
+            # Redis restart or network failure. Retry after 2 seconds.
+            logger.warning("Subscriber failed, retrying in 2s: %s", exc)
             await asyncio.sleep(2)
 
 

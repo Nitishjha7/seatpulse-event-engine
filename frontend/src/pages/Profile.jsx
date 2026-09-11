@@ -12,7 +12,7 @@ export default function Profile() {
     <div className="animate-rise max-w-2xl space-y-5">
       <header>
         <h1 className="text-xl font-semibold text-slate-100">Profile</h1>
-        <p className="mt-1 text-sm text-slate-500">Account aur session details</p>
+        <p className="mt-1 text-sm text-slate-500">Account and session details</p>
       </header>
 
       <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
@@ -41,9 +41,8 @@ export default function Profile() {
       <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
         <h2 className="text-sm font-medium text-slate-300">Session</h2>
         <p className="mt-1 text-xs leading-relaxed text-slate-500">
-          Access token sirf memory me hai — localStorage me nahi, taki XSS use
-          padh na sake. Refresh token ek httpOnly cookie me hai aur har refresh
-          par rotate hota hai.
+          Access tokens are stored in memory, not localStorage, to mitigate XSS risks.
+          Refresh tokens are stored in httpOnly cookies and rotated on every refresh.
         </p>
 
         <button
@@ -68,7 +67,7 @@ export default function Profile() {
   )
 }
 
-/** Role ka rang — admin sabse alag dikhna chahiye */
+/** Role-based styling to distinguish administrative accounts */
 function RoleBadge({ role }) {
   const style =
     {

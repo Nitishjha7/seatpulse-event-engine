@@ -1,37 +1,37 @@
 """
-Group booking ka core — jahan "sab ya koi nahi" ka faisla hota hai.
+Core group booking logic — handles the "all or nothing" decision.
 
-Routes se alag file isliye ki yahi logic teen jagah se chalta hai:
-  - HTTP route (aakhri banda pay karta hai)
-  - payment webhook (gateway confirm karta hai)
-  - background job (deadline nikal jati hai)
+Separated from routes because this logic is triggered by three sources:
+  - HTTP route (final user payment)
+  - Payment webhook (gateway confirmation)
+  - Background job (deadline expiry)
 
----- Asli problem ----
+---- The Problem ----
 
-Ek seat ki booking me "exactly once" ka matlab saaf hai: ek seat, ek
-booking. Group me wo sawaal badal jata hai:
+In single-seat bookings, "exactly once" is straightforward: one seat, one booking.
+In groups, the requirement changes:
 
-    4 log, 4 alag payments. 3 ka paisa aa chuka hai. Deadline aa gayi.
-    Ab kya?
+    4 people, 4 separate payments. 3 have paid. The deadline is reached.
+    What now?
 
-Jawab: **sab ya koi nahi.** Teen logon ko seat dena aur chauthe ko nahi,
-poore group ka maqsad hi khatam kar deta hai (wo saath baithne aaye the).
-To group tootta hai, seats chhootti hain, aur teeno ka paisa wapas jata hai.
+Answer: **All or nothing.** Giving seats to three people while denying the fourth
+defeats the purpose of a group (they intended to sit together). Therefore, the
+group is dissolved, seats are released, and the three payments are refunded.
 
----- Sabse mushkil race ----
+---- The Race Condition ----
 
-    Thread A: aakhri banda pay kar raha hai       -> group confirm karna hai
-    Thread B: expiry job chal raha hai            -> group todna hai
+    Thread A: Final user paying      -> confirm group
+    Thread B: Expiry job running    -> dissolve group
 
-Dono theek us ek second me. Exactly EK ko jeetna chahiye, aur haarne wale
-ko haar maan ke sahi cleanup karna chahiye.
+Both occur simultaneously. Exactly one must succeed, and the loser must perform
+the correct cleanup.
 
-Hal wahi hai jo poore project me hai — ek atomic conditional UPDATE:
+The solution is an atomic conditional UPDATE:
 
     UPDATE group_bookings SET status = ? WHERE id = ? AND status = 'collecting'
 
-rowcount 1 = maine faisla kiya. rowcount 0 = kisi aur ne pehle kar diya.
-Koi lock nahi, koi wait nahi.
+rowcount 1 = I made the decision. rowcount 0 = Someone else beat me to it.
+No locks, no waiting.
 """
 
 import logging
@@ -69,8 +69,8 @@ from models import (
 
 logger = logging.getLogger(__name__)
 
-# Group hold kitni der. Single seat hold 5 min ka hai; group me logon ko
-# link bhejna, unhe kholna aur pay karna hota hai — 5 minute bahut kam hai.
+# Group hold duration. Single seat holds are 5 minutes; groups require
+# sharing links and coordinating payments, so 5 minutes is insufficient.
 DEFAULT_DEADLINE_MINUTES = 30
 MAX_DEADLINE_MINUTES = 120
 MAX_GROUP_SEATS = 10
@@ -78,41 +78,41 @@ MAX_GROUP_SEATS = 10
 
 def new_share_token() -> str:
     """
-    Link ka secret.
+    Generates a secret for the share link.
 
-    `secrets` module, `random` nahi — `random` predictable hai aur ek token
-    guess kar lena matlab kisi aur ke group me ghus jaana. Wahi wajah jo
-    Phase 12 me ticket QR token ke liye thi.
+    Uses `secrets` instead of `random` to prevent predictability, which would
+    allow unauthorized access to other groups. Same rationale as the ticket
+    QR token in Phase 12.
     """
     return secrets.token_urlsafe(24)
 
 
 # ---------------------------------------------------------------------------
-# Banana
+# Creation
 # ---------------------------------------------------------------------------
 
 class GroupError(Exception):
-    """Business rule toota — routes ise 409/400 me badalte hain."""
+    """Business rule violation — routes map this to 409/400 responses."""
 
 
 def create_group(
     db: Session, *, user, seat_ids: list[int], deadline_minutes: int, quoted: dict[int, float]
 ) -> GroupBooking:
     """
-    N seats ek saath hold karo aur group banao.
+    Holds N seats and initializes a group.
 
-    ⚠️ Ye poora ek transaction hai, aur ye jaan-boojh ke hai.
+    ⚠️ This is a single transaction by design.
 
-    Ek bhi seat na mile to POORA group nahi banna chahiye — warna user ko
-    3 seats mil jaati aur wo 4th ka intezaar karta rehta, jabki 4th kabhi
-    milegi hi nahi. Aadhi hold kisi ke kaam ki nahi.
+    If any seat is unavailable, the entire group must fail. Otherwise, a user
+    might hold 3 seats while waiting indefinitely for a 4th that will never
+    become available. Partial holds are not useful.
     """
     if not seat_ids:
-        raise GroupError("Kam se kam ek seat chuno")
+        raise GroupError("At least one seat must be selected.")
     if len(seat_ids) > MAX_GROUP_SEATS:
-        raise GroupError(f"Ek group me max {MAX_GROUP_SEATS} seats")
+        raise GroupError(f"Maximum {MAX_GROUP_SEATS} seats allowed per group.")
     if len(set(seat_ids)) != len(seat_ids):
-        raise GroupError("Ek hi seat do baar bheji gayi hai")
+        raise GroupError("Duplicate seat selection detected.")
 
     minutes = max(5, min(deadline_minutes, MAX_DEADLINE_MINUTES))
 
@@ -127,9 +127,8 @@ def create_group(
     db.flush()
 
     for seat_id in seat_ids:
-        # Har seat par wahi atomic claim jo single booking me hai.
-        # `locked` bhi allow hai kyunki user ne aksar seats grid me select
-        # (hold) ki hoti hain, phir group banata hai.
+        # Atomic claim similar to single bookings. `locked` status is allowed
+        # because users often select seats in the grid before forming a group.
         result = db.execute(
             update(Seat)
             .where(
@@ -147,10 +146,9 @@ def create_group(
             .execution_options(synchronize_session=False)
         )
         if result.rowcount == 0:
-            # Rollback poore group ko wapas le jata hai — jo seats abhi
-            # abhi hold ki thi wo bhi chhoot jaati hain. Yahi chahiye.
+            # Rollback releases all seats held in this transaction.
             db.rollback()
-            raise GroupError(f"Seat {seat_id} ab available nahi hai")
+            raise GroupError(f"Seat {seat_id} is no longer available.")
 
         db.add(
             GroupShare(
@@ -158,7 +156,6 @@ def create_group(
                 seat_id=seat_id,
                 amount=quoted[seat_id],
                 status=SHARE_UNPAID,
-                # Banane wala pehli seat khud le leta hai — wo to aayega hi
                 claimed_by=user.id if seat_id == seat_ids[0] else None,
             )
         )
@@ -173,15 +170,15 @@ def create_group(
 
 
 # ---------------------------------------------------------------------------
-# Share claim karna
+# Claiming a share
 # ---------------------------------------------------------------------------
 
 def claim_share(db: Session, share: GroupShare, user) -> GroupShare:
     """
-    Ek khaali share apne naam karo.
+    Claims an empty share.
 
-    Do log ek hi share par ek saath click karein to ek hi ko milna chahiye.
-    Wahi atomic conditional UPDATE — `WHERE claimed_by IS NULL`.
+    Uses an atomic conditional UPDATE (`WHERE claimed_by IS NULL`) to ensure
+    only one user can claim a specific share.
     """
     result = db.execute(
         update(GroupShare)
@@ -191,7 +188,7 @@ def claim_share(db: Session, share: GroupShare, user) -> GroupShare:
     )
     if result.rowcount == 0:
         db.rollback()
-        raise GroupError("Ye seat kisi aur ne le li")
+        raise GroupError("This seat has already been claimed.")
 
     db.commit()
     db.refresh(share)
@@ -199,55 +196,48 @@ def claim_share(db: Session, share: GroupShare, user) -> GroupShare:
 
 
 # ---------------------------------------------------------------------------
-# ⭐ Paisa aana aur faisla
+# ⭐ Payment and Decision
 # ---------------------------------------------------------------------------
 
 def mark_share_paid(db: Session, payment: Payment) -> None:
     """
-    Ek share ka paisa aa gaya.
+    Marks a share as paid.
 
-    Payment webhook se aata hai, isliye IDEMPOTENT hona zaroori hai —
-    gateway wahi event do baar bhej sakta hai.
+    Must be idempotent to handle duplicate webhook events from the gateway.
     """
     share = db.get(GroupShare, payment.group_share_id)
     if share is None:
-        logger.error("Payment %s ka group share hi nahi mila", payment.id)
+        logger.error("Group share not found for payment %s", payment.id)
         return
 
-    # ⭐⭐ Yahan group ki row par PESSIMISTIC LOCK lete hain.
+    # ⭐⭐ Uses a PESSIMISTIC LOCK on the group row.
     #
-    # Poore project me hum optimistic locking use karte hain, aur Phase 15
-    # ke benchmark me dono barabar nikle the. Ye us niyam ka jaan-boojh ke
-    # liya gaya apwaad hai — aur wajah speed nahi, correctness hai.
-    #
-    # Bina lock ke ye race hoti hai (test me asal me hui thi):
+    # While the project generally uses optimistic locking, this is an intentional
+    # exception for correctness. Without this lock, a race condition exists:
     #
     #   payment thread          expiry job
     #   --------------          ----------
-    #   group.status padha
+    #   read group status
     #     -> 'collecting'
-    #                           group ko 'expired' kiya
-    #                           shares padhe -> ye share abhi 'unpaid' hai
-    #                           -> refund nahi kiya
-    #   share ko 'paid' kiya
+    #                           set group to 'expired'
+    #                           read shares -> share is 'unpaid'
+    #                           -> no refund triggered
+    #   set share to 'paid'
     #
-    #   Nateeja: expired group me ek 'paid' share. Us bande ka paisa kat
-    #   gaya, seat mili nahi, aur refund bhi nahi hua.
+    # Result: A 'paid' share in an 'expired' group. The user is charged, but
+    # the seat is not booked and no refund is issued.
     #
-    # Optimistic pattern yahan kaam nahi karta kyunki do transactions ALAG
-    # rows chhoo rahi hain (ek group, doosri share). Ek row ka conditional
-    # UPDATE doosri row ki race nahi rok sakta. Inhe serialize karna PADTA
-    # hai, aur `FOR UPDATE` bilkul wahi karta hai.
+    # Optimistic patterns fail here because two different rows (group and share)
+    # are involved. `FOR UPDATE` serializes these operations.
     group = db.execute(
         select(GroupBooking).where(GroupBooking.id == share.group_id).with_for_update()
     ).scalar_one()
 
-    # Ab ye padhai bharosemand hai — expiry job ya to pehle commit kar
-    # chuka hai (aur hume 'expired' dikhega), ya wo hamare commit ka
-    # intezaar kar raha hai.
+    # Now the read is reliable; the expiry job has either committed or is
+    # waiting for our transaction to finish.
     if group.status != GROUP_COLLECTING:
         logger.warning(
-            "Share %s ka paisa aaya par group %s ab '%s' hai — refund",
+            "Payment received for share %s, but group %s is now '%s' — refunding.",
             share.id, group.id, group.status,
         )
         _refund_share(db, share, payment)
@@ -264,9 +254,9 @@ def mark_share_paid(db: Session, payment: Payment) -> None:
 
 def _try_confirm(db: Session, group: GroupBooking) -> bool:
     """
-    Sab paid ho gaye? Tab group confirm karo aur bookings banao.
+    Checks if all shares are paid. If so, confirms the group and creates bookings.
 
-    Return: True agar isi call ne confirm kiya.
+    Returns: True if this call performed the confirmation.
     """
     unpaid = db.scalar(
         select(GroupShare.id)
@@ -274,13 +264,12 @@ def _try_confirm(db: Session, group: GroupBooking) -> bool:
         .limit(1)
     )
     if unpaid is not None:
-        return False        # abhi kuch log baaki hain
+        return False
 
-    # ⭐ YAHAN faisla hota hai.
+    # ⭐ The decision point.
     #
-    # Do payments aakhri ho sakti hain (dono ne ek saath paid dekha), ya
-    # expiry job bhi isi waqt group todh raha ho. Ye ek UPDATE tay karta
-    # hai ki asal me kaun jeeta.
+    # Multiple payments might trigger this simultaneously, or an expiry job
+    # might be running. This UPDATE determines the winner.
     result = db.execute(
         update(GroupBooking)
         .where(GroupBooking.id == group.id, GroupBooking.status == GROUP_COLLECTING)
@@ -289,9 +278,9 @@ def _try_confirm(db: Session, group: GroupBooking) -> bool:
     )
     if result.rowcount == 0:
         db.rollback()
-        return False        # koi aur pehle kar chuka
+        return False
 
-    # Yahan tak sirf EK caller pahunchta hai — ab bookings banana safe hai
+    # Only one caller reaches this point.
     shares = db.scalars(
         select(GroupShare).where(GroupShare.group_id == group.id)
     ).all()
@@ -322,29 +311,27 @@ def _try_confirm(db: Session, group: GroupBooking) -> bool:
 
     db.commit()
 
-    # Commit ke BAAD — tickets aur broadcast. Pehle karte to fail hone par
-    # tickets ban chuke hote bina bookings ke.
+    # Broadcast and enqueue tickets AFTER commit to ensure data integrity.
     for share in shares:
         broadcast_seat_update(db, share.seat_id, "booked")
     for booking in bookings:
         enqueue_ticket(booking.id)
 
-    logger.info("Group %s confirmed — %s bookings", group.id, len(bookings))
+    logger.info("Group %s confirmed — %s bookings created.", group.id, len(bookings))
     return True
 
 
 # ---------------------------------------------------------------------------
-# Todna — deadline ya cancel
+# Dissolution — deadline or cancellation
 # ---------------------------------------------------------------------------
 
 def break_group(db: Session, group: GroupBooking, reason: str) -> bool:
     """
-    Group todo — seats chhodo, jo paise aaye the wo wapas.
+    Dissolves a group, releases seats, and refunds payments.
 
-    `reason` = GROUP_EXPIRED ya GROUP_CANCELLED.
+    `reason` = GROUP_EXPIRED or GROUP_CANCELLED.
 
-    Return: True agar isi call ne toda. False matlab koi aur pehle kar
-    chuka tha (confirm ho gaya ho, ya doosra job).
+    Returns: True if this call performed the dissolution.
     """
     result = db.execute(
         update(GroupBooking)
@@ -364,17 +351,11 @@ def break_group(db: Session, group: GroupBooking, reason: str) -> bool:
         if share.status == SHARE_PAID and share.payment_id:
             _refund_share(db, share, db.get(Payment, share.payment_id))
 
-        # ⚠️ Jo PENDING payments latke hue hain unhe bhi band karna zaroori hai.
+        # ⚠️ Must also invalidate pending payments.
         #
-        # Ye test likhte waqt pakda gaya. Chhod dete to do dikkatein hoti:
-        #
-        #  1. `uq_one_pending_payment_per_seat` (Phase 11 ka partial unique
-        #     index) us seat par naya checkout banne hi nahi deta. Seat
-        #     'available' dikhti par khareedi nahi ja sakti — sabse bura
-        #     kism ka bug, kyunki UI me sab theek lagta hai.
-        #
-        #  2. User abhi bhi wo purana checkout page complete kar sakta hai
-        #     aur ek aise group ko paisa de deta jo mar chuka hai.
+        # 1. Prevents `uq_one_pending_payment_per_seat` (Phase 11) from blocking
+        #    new checkouts on these seats.
+        # 2. Prevents users from completing a checkout for a dissolved group.
         db.execute(
             update(Payment)
             .where(
@@ -385,9 +366,7 @@ def break_group(db: Session, group: GroupBooking, reason: str) -> bool:
             .execution_options(synchronize_session=False)
         )
 
-        # Seat sirf tab chhodo jab wo abhi bhi IS group ke hold me ho.
-        # WHERE me status check zaroori hai — bina iske ek purani job
-        # kisi aur ki booked seat ko available kar sakti thi.
+        # Release seat only if it is still held by this group.
         db.execute(
             update(Seat)
             .where(Seat.id == share.seat_id, Seat.status == SEAT_GROUP_HELD)
@@ -406,21 +385,17 @@ def break_group(db: Session, group: GroupBooking, reason: str) -> bool:
     for share in shares:
         broadcast_seat_update(db, share.seat_id, "released")
 
-    logger.info("Group %s %s — %s seats chhodi", group.id, reason, len(shares))
+    logger.info("Group %s %s — %s seats released.", group.id, reason, len(shares))
     return True
 
 
 def _refund_share(db: Session, share: GroupShare, payment: Payment | None) -> None:
     """
-    Ek share ka paisa wapas.
+    Refunds a share.
 
-    ⚠️ Mock provider me ye sirf status likhta hai. Asli gateway me yahan
-    refund API call hoti aur uska confirmation bhi WEBHOOK se aata — bilkul
-    waise hi jaise payment ka aata hai. Yaani `refund_pending` naam ka ek
-    aur state chahiye hota.
-
-    Maine wo abhi nahi banaya, aur ise "ho gaya" bhi nahi keh raha — ye
-    jaan-boojh ke chhoda gaya hissa hai.
+    ⚠️ In the mock provider, this only updates the status. In production, this
+    would trigger an API call to the gateway, requiring a `refund_pending`
+    state to handle the asynchronous confirmation webhook.
     """
     share.status = SHARE_REFUNDED
     if payment is not None:
@@ -430,17 +405,11 @@ def _refund_share(db: Session, share: GroupShare, payment: Payment | None) -> No
 
 def expire_due_groups(db: Session) -> int:
     """
-    Jinki deadline nikal gayi un sab groups ko todo.
+    Dissolves all groups past their deadline.
 
-    Ye background job se chalta hai, kisi request se nahi.
-
-    Wajah: seat hold expire karna aur REFUND karna do alag kaam hain.
-    Baaki jagah hum "lazy cleanup" karte hain (koi seats padhe to expired
-    locks saaf ho jaate hain) — par wo yahan nahi chalega. Agar kisi ne
-    is event ka page hi na khola, to lazy cleanup kabhi chalta hi nahi,
-    aur log apne paise ka intezaar karte rehte.
-
-    Paisa wapas karna kisi ke page kholne par nirbhar nahi ho sakta.
+    Triggered by a background job. Unlike "lazy cleanup" (which only runs when
+    a user visits a page), this ensures refunds are processed promptly even if
+    the user never returns to the site.
     """
     due = db.scalars(
         select(GroupBooking).where(
@@ -455,8 +424,7 @@ def expire_due_groups(db: Session) -> int:
             if break_group(db, group, GROUP_EXPIRED):
                 broken += 1
         except Exception:
-            # Ek group fail ho to baaki mat rok — har group apne me alag hai
             db.rollback()
-            logger.exception("Group %s expire karte waqt fail", group.id)
+            logger.exception("Failed to expire group %s.", group.id)
 
     return broken

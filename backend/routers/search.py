@@ -1,16 +1,16 @@
 """
-Seat search ka route.
+Seat search route.
 
-Yahan teen cheezein judti hain:
+The process integrates three components:
 
     query (NL)  --ai.py-->  filters  --seat_search.py-->  matches
                    ^                        ^
                    |                        |
-              optional                 hamesha chalta hai
+              optional                 always active
 
-AI band ho, fail ho jaye, ya query samajh na aaye — filters phir bhi
-lagte hain aur search phir bhi chalta hai. Sirf natural language wala
-input band hota hai.
+If the AI is disabled, fails, or cannot interpret the query, the system
+falls back to standard filters to ensure search functionality remains
+available.
 """
 
 import logging
@@ -38,11 +38,11 @@ router = APIRouter(prefix="/api/events", tags=["search"])
 @router.post(
     "/{event_id}/seats/search",
     response_model=SeatSearchOut,
-    # ⭐ Rate limited, aur ye AI wali wajah se aur zaroori hai.
+    # ⭐ Rate limiting is critical due to AI costs.
     #
-    # Har NL query ek paid API call hai. Bina limit ke koi bhi loop
-    # chala ke quota khatam kar sakta hai — aur uska matlab sirf paisa
-    # nahi, feature sabke liye band ho jana hai.
+    # Each NL query triggers a paid API call. Rate limiting prevents
+    # quota exhaustion from automated loops, which would otherwise
+    # disable the feature for all users.
     dependencies=[Depends(limit_user(SEAT_LOCK))],
 )
 def search_seats(
@@ -52,26 +52,25 @@ def search_seats(
     user: User = Depends(get_current_user),
 ):
     """
-    Seats dhoondo — natural language se ya seedhe filters se.
+    Search seats via natural language or explicit filters.
 
-    Login zaroori hai. Ye sirf isliye nahi ki data private hai (seats
-    public hain), balki isliye ki rate limit per-user lagti hai aur AI
-    calls ka kharcha kisi ke naam hona chahiye.
+    Authentication is required to enforce per-user rate limits and
+    attribute AI costs accurately, even though seat data is public.
     """
     event = db.get(Event, event_id)
     if event is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Event nahi mila")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
 
-    # Search se pehle expired holds saaf — warna jo seats asal me free ho
-    # chuki hain wo results me aati hi nahi
+    # Clear expired holds before searching to ensure only truly available
+    # seats are returned.
     release_expired_locks(db, event_id)
 
     seats = db.scalars(
         select(Seat).where(Seat.event_id == event_id).order_by(Seat.row_label, Seat.seat_number)
     ).all()
 
-    # Dynamic pricing on ho to filter CURRENT price par lagna chahiye —
-    # wahi user ko dikh raha hai. `seat.price` base hai (Phase 14).
+    # Apply dynamic pricing to the current view. `seat.price` is the base
+    # value (Phase 14).
     info = pricing_state(db, event)
     for seat in seats:
         seat._display_price = current_price(float(seat.price), info)
@@ -110,13 +109,11 @@ def _resolve_filters(
     payload: SeatSearchRequest, event: Event, seats: list, event_id: int
 ) -> tuple[SeatFilters, bool]:
     """
-    Kaunse filters lagenge — aur wo AI se aaye ya user se.
+    Determine filter source (user-provided vs. AI-interpreted).
 
-    Priority: user ke apne filters HAMESHA jeetenge.
-
-    Wajah: agar user ne query likhne ke baad dropdown se kuch badla hai,
-    to uska matlab hai ki AI ki samajh galat thi. Us par AI ka jawab
-    thopna user ko ladne pe majboor karta hai apne hi search box se.
+    User-provided filters always take precedence. If a user manually
+    adjusts filters after a query, the AI's interpretation is considered
+    incorrect and overridden to prevent UX friction.
     """
     if payload.filters is not None:
         return payload.filters, False
@@ -134,17 +131,15 @@ def _resolve_filters(
         price_range=(min(prices), max(prices)),
     )
     if parsed is None:
-        # Samajh nahi aaya ya call fail hui — khali filters ke saath sab
-        # available seats dikha do. Ye "kuch nahi mila" se behtar hai.
+        # Fallback to default filters if AI fails or cannot parse the query.
         return SeatFilters(), False
 
     try:
-        # ⭐ Yahi wo jagah hai jahan model ka output validate hota hai.
-        # `understood` hamara apna field hai, filters ka nahi.
+        # ⭐ Validate model output. `understood` is internal metadata,
+        # not a valid filter field.
         parsed.pop("understood", None)
         return SeatFilters(**parsed), True
     except Exception as exc:
-        # Model ne schema ke bawajood kuch ajeeb bhej diya. Ye hona nahi
-        # chahiye, par "nahi hona chahiye" aur "nahi hoga" alag baatein hain.
-        logger.warning("AI filters validate nahi hue: %s", exc)
+        # Handle unexpected model output schema deviations.
+        logger.warning("AI filter validation failed: %s", exc)
         return SeatFilters(), False

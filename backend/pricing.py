@@ -1,24 +1,23 @@
 """
-Dynamic pricing — demand ke hisaab se price.
+Dynamic pricing based on demand.
 
-Airlines, Uber, aur concert tickets sab yahi karte hain: jaise-jaise
-inventory khatam hoti hai, price badhta hai.
+Airlines, Uber, and concert tickets use this model: prices increase as
+inventory depletes.
 
----- Design ka sabse important faisla ----
+---- Design Decision ----
 
-Seat ka `price` column **kabhi nahi badalta**. Wo BASE price hai.
+The `price` column in the seats table is immutable; it represents the BASE price.
 
-Current price hamesha calculate hota hai:  base × multiplier
+The current price is calculated as: base × multiplier
 
-Kyu: agar hum seats.price ko update karte rehte, to
-  - purani bookings ka reference toot jata (unhone alag price di thi)
-  - har booking par 100 rows update karni padti
-  - "base price kya tha" ka jawab kahin nahi bachta
-  - do parallel bookings price update pe hi race karti
+Rationale for immutability:
+  - Preserves historical booking references (original price paid).
+  - Avoids updating thousands of rows per booking.
+  - Maintains a clear audit trail of the base price.
+  - Prevents race conditions during concurrent booking updates.
 
-Ab base immutable hai, multiplier ek chhota calculation hai, aur har
-booking apni `amount` khud store karti hai. History bhi safe, aur
-performance bhi.
+By keeping the base immutable and calculating the multiplier dynamically,
+we ensure data integrity and high performance.
 
 ---- Formula ----
 
@@ -28,48 +27,47 @@ performance bhi.
 
     current_price = round(base × multiplier)
 
-demand_factor = 0.5 ka matlab: 100% bik jaane par price 1.5× ho jayega.
-Beech me linear badhta hai.
+A demand_factor of 0.5 means the price increases by 1.5× when 100% sold.
+The increase is linear.
 
-Ye jaan-boojh ke SIMPLE hai. Asli surge pricing me time-to-event, booking
-velocity, aur historical demand bhi hota hai — par wo sab bina asli data
-ke sirf andaza hoga. Ye formula transparent hai: user ko exactly bata
-sakte hain ki price kyu badha.
+This implementation is intentionally simple. Real-world surge pricing
+incorporates time-to-event, booking velocity, and historical demand, but
+those require significant data to avoid guesswork. This formula is
+transparent, allowing us to explain price changes clearly to users.
 """
 
 from dataclasses import dataclass
 
-# Price kis multiple me round karein.
-# ₹10 pe round karte hain — ₹827.43 jaisa price bhaddha lagta hai aur
-# user ko lagta kuch gadbad hai.
+# Rounding increment.
+# Prices are rounded to ₹10 to avoid awkward figures like ₹827.43,
+# which can erode user trust.
 ROUND_TO = 10
 
 
 @dataclass(frozen=True)
 class PricingInfo:
-    """Ek event ki abhi ki pricing state."""
+    """Current pricing state for an event."""
 
     enabled: bool
     multiplier: float
     sold_ratio: float
     sold: int
     total: int
-    # Agli price badhne se pehle kitni seats bachi hain.
-    # None = pricing off hai, ya max surge pe pahunch chuke hain.
+    # Seats remaining before the next price increase.
+    # None if pricing is disabled or max surge is reached.
     seats_until_increase: int | None
 
     @property
     def surge_percent(self) -> int:
-        """Kitne percent upar hai base se — UI me dikhane ke liye."""
+        """Percentage increase over base price for UI display."""
         return round((self.multiplier - 1) * 100)
 
 
 def multiplier_for(sold: int, total: int, demand_factor: float, max_surge: float) -> float:
     """
-    Demand se multiplier.
+    Calculates the multiplier based on demand.
 
-    Alag function isliye ki ise test kar sakein aur "kitni seats me price
-    badhega" wala calculation isi ko baar-baar call kar sake.
+    Isolated to facilitate testing and reuse in seat-threshold calculations.
     """
     if total <= 0:
         return 1.0
@@ -80,16 +78,14 @@ def multiplier_for(sold: int, total: int, demand_factor: float, max_surge: float
 
 def apply(base_price: float, multiplier: float) -> float:
     """
-    Base price pe multiplier lagao aur round karo.
+    Applies the multiplier to the base price and rounds the result.
 
-    Python ka round() banker's rounding karta hai: 100.5 -> 100, 101.5 -> 102.
-    Yaani theek beech me atke price kabhi upar kabhi neeche jate hain.
-    Ye theek hai -- surge me tie par user ke haq me jhukna behtar hai, aur
-    lambe samay me ye upar-neeche balance ho jata hai.
+    Python's round() uses banker's rounding (e.g., 100.5 -> 100, 101.5 -> 102).
+    This balances out over time.
 
-    Iska ek natija hai: multiplier thoda badhne par bhi FINAL price wahi
-    reh sakta hai. Isiliye `_seats_until_increase` andaza nahi lagata --
-    wo asli price ko aage badha kar dekhta hai kab badalta hai.
+    Note: Due to rounding, the final price may remain constant even if the
+    multiplier increases slightly. Therefore, _seats_until_increase
+    simulates price changes rather than estimating them.
     """
     raw = base_price * multiplier
     return float(round(raw / ROUND_TO) * ROUND_TO)
@@ -105,16 +101,15 @@ def _seats_until_increase(
     sold: int, total: int, demand_factor: float, max_surge: float, sample_base: float
 ) -> int | None:
     """
-    Kitni aur seats bikne par price badhega.
+    Calculates how many more seats must be sold before the price increases.
 
-    ⚠️ Ye ek ANDAZA hai, ek sample base price par. Alag price tiers alag
-    points par badhenge (₹800 wali pehle, ₹2500 wali baad me). UI me isse
-    "N seats left at this price" ki tarah dikhate hain — jo is tier ke
-    liye sach hai.
+    ⚠️ This is an estimate based on a sample base price. Different price
+    tiers will trigger increases at different points. Used in the UI to
+    display "N seats left at this price."
 
-    Loop bounded hai (bachi hui seats tak), aur seats 2000 tak hi ho sakti
-    hain, to ye sasta hai. Har request pe chalta hai, koi cache nahi —
-    kyunki galat cached price dikhana isse kahin bura hoga.
+    The loop is bounded by remaining inventory and is computationally
+    inexpensive. Calculated on-demand to ensure accuracy, as cached
+    pricing data could be misleading.
     """
     if total <= 0 or sold >= total:
         return None
@@ -126,7 +121,7 @@ def _seats_until_increase(
         if later > now:
             return extra
 
-    # Max surge pe pahunch gaye, ya rounding ki wajah se price aur nahi badhega
+    # Reached max surge or price is stable due to rounding.
     return None
 
 
@@ -139,7 +134,7 @@ def pricing_for_event(
     max_surge: float,
     sample_base: float = 1000.0,
 ) -> PricingInfo:
-    """Event ki poori pricing state ek jagah."""
+    """Aggregates the complete pricing state for an event."""
     if not enabled:
         return PricingInfo(
             enabled=False,

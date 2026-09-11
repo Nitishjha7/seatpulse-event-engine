@@ -1,22 +1,22 @@
 # SeatPulse — Documentation
 
-Is project ka poora build log — har feature kaise bana aur **kyu aise** bana.
+This is the complete build log for the project — detailing how every feature was built and **why it was built that way**.
 
-> Ye folder ab repo ka hissa hai (pehle gitignored tha). Isme koi asli credential nahi hai — sirf demo values (`demo1234`, `seatpulse_dev_password`) jo `.env.example` me waise bhi hain.
+> This folder is now part of the repository (previously gitignored). It contains no real credentials — only demo values (`demo1234`, `seatpulse_dev_password`) which are already present in `.env.example`.
 
 ---
 
-## Kahan se shuru karein
+## Getting Started
 
-| Mujhe ye chahiye | Yahan jao |
+| I need... | Go to |
 |---|---|
-| Project me ab tak kya bana, aage kya | [roadmap.md](roadmap.md) |
-| Kuch bhi test/demo karna hai | [reference/testing.md](reference/testing.md) |
-| Interview ki tayyari | [interview-prep.md](interview-prep.md) |
-| Naye project me ye hi tareeka dohrana hai | [agent-working-prompt.md](agent-working-prompt.md) |
-| Zero se project setup karna hai | [setup/](setup/) |
-| Koi feature kaise bana, kyu aise bana | [phases/](phases/) |
-| Docker / Postgres command bhool gaya | [reference/](reference/) |
+| Project progress and future roadmap | [roadmap.md](roadmap.md) |
+| To run tests or demos | [reference/testing.md](reference/testing.md) |
+| Interview preparation | [interview-prep.md](interview-prep.md) |
+| To reuse this workflow for a new project | [agent-working-prompt.md](agent-working-prompt.md) |
+| To set up the project from scratch | [setup/](setup/) |
+| To understand how a feature was built | [phases/](phases/) |
+| Docker / Postgres commands | [reference/](reference/) |
 
 ---
 
@@ -24,16 +24,16 @@ Is project ka poora build log — har feature kaise bana aur **kyu aise** bana.
 
 ```
 documents/
-├── README.md              ← ye file
+├── README.md              ← this file
 ├── roadmap.md             ← progress tracker + frontend index
-├── interview-prep.md      ← 50+ Q&A, asli numbers ke saath
-├── agent-working-prompt.md ← naye project me kisi bhi AI agent ko dene wala prompt
+├── interview-prep.md      ← 50+ Q&A, with real metrics
+├── agent-working-prompt.md ← prompt for AI agents in new projects
 │
-├── setup/                 ← zero se project khada karna
+├── setup/                 ← project setup from scratch
 │   ├── 01-docker-setup.md
 │   └── 02-git-and-github.md
 │
-├── phases/                ← har feature: kaise bana + KYU aise bana
+├── phases/                ← every feature: how it was built + WHY
 │   ├── 01-frontend-backend-connect.md
 │   ├── 02-postgres-models.md
 │   ├── 03-api-and-seat-grid.md
@@ -65,70 +65,70 @@ documents/
 
 ## 🚀 Setup
 
-Naya machine pe project khada karna ho:
+To set up the project on a new machine:
 
-| # | File | Kya |
+| # | File | Description |
 |---|---|---|
-| 01 | [setup/01-docker-setup.md](setup/01-docker-setup.md) | Docker se FastAPI + React skeleton. Har Dockerfile line explain ki hui hai |
-| 02 | [setup/02-git-and-github.md](setup/02-git-and-github.md) | `.gitignore`, `.dockerignore`, git init, GitHub push |
+| 01 | [setup/01-docker-setup.md](setup/01-docker-setup.md) | FastAPI + React skeleton via Docker. Includes line-by-line Dockerfile explanation |
+| 02 | [setup/02-git-and-github.md](setup/02-git-and-github.md) | `.gitignore`, `.dockerignore`, git init, and GitHub push |
 
 ---
 
 ## 🧱 Phases
 
-Har phase ka format ek jaisa hai: **problem → approach → steps → ✅ proof → common problems → files**.
+Every phase follows a consistent format: **problem → approach → steps → ✅ proof → common problems → files**.
 
-| # | Phase | Isme sabse important kya hai |
+| # | Phase | Key Takeaway |
 |---|---|---|
-| 01 | [Frontend ↔ Backend](phases/01-frontend-backend-connect.md) | Tailwind v4, `usePolling` (Docker+Windows me hot reload) |
-| 02 | [Postgres + Models](phases/02-postgres-models.md) | ⭐ `version` column aur partial unique index — poore project ki neev |
-| 03 | [API + Seat Grid](phases/03-api-and-seat-grid.md) | Pydantic schemas, optimistic locking pehli baar |
+| 01 | [Frontend ↔ Backend](phases/01-frontend-backend-connect.md) | Tailwind v4, `usePolling` (for hot reload in Docker+Windows) |
+| 02 | [Postgres + Models](phases/02-postgres-models.md) | ⭐ `version` column and partial unique index — the foundation of the project |
+| 03 | [API + Seat Grid](phases/03-api-and-seat-grid.md) | Pydantic schemas, introduction to optimistic locking |
 | 04 | [Redis Locking](phases/04-redis-locking.md) | ⭐ `SET NX EX`, Lua release script, TTL |
-| 05 | [WebSockets](phases/05-websockets.md) | ⭐ Redis pub/sub — multi-worker pe kyu zaroori hai |
-| 06 | [Load Testing](phases/06-load-testing.md) | ⭐ Locust + integrity checks. Yahan pehla asli bug mila |
-| 07 | [Auth + Google OAuth](phases/07-auth-google-oauth.md) | ⭐ Token strategy, aur do aur bug (pool exhaustion) |
-| 08 | [Dashboard UI](phases/08-dashboard-ui.md) | Routing, shared context, ek hi WebSocket |
-| 09 | [Rate Limit + Idempotency](phases/09-rate-limit-idempotency.md) | Token bucket Lua me, per-user (per-IP nahi) |
-| 10 | [RBAC + Organizer](phases/10-rbac-organizer.md) | ⭐ Role ≠ ownership. 403 vs 404 ka farak |
-| 11 | [Payments](phases/11-payments.md) | ⭐ Webhook source of truth, redirect nahi. Idempotent fulfilment |
-| 12 | [Background Tickets](phases/12-background-tickets.md) | ARQ worker, QR + PDF, outbox email. Kya background me jaana chahiye |
-| 13 | [Gate Check-in](phases/13-gate-checkin.md) | ⭐ Wahi exactly-once problem, alag kapdon me |
-| 14 | [Dynamic Pricing](phases/14-dynamic-pricing.md) | ⭐ Price lock — quote ek waada hai. Base price kabhi mat badlo |
-| 15 | [Locking Benchmark](phases/15-locking-benchmark.md) | ⭐ Optimistic vs `FOR UPDATE` maapa — aur andaza galat nikla |
-| 16 | [Multi-Worker + CI](phases/16-multiworker-ci.md) | ⭐ Phase 5 ka daawa aakhirkar verify hua. Clean state ne 3 chhupe bug nikale |
-| 17 | [Group Booking](phases/17-group-booking.md) | ⭐ "Sab ya koi nahi" — N payments par atomicity. Jahan optimistic locking kaam nahi aayi |
-| 18 | [Seat Layout](phases/18-seat-layout.md) | Sections + aisles. Purane events na tootein — nullable columns ka poora point |
-| 19 | [NL Seat Search](phases/19-nl-seat-search.md) | ⭐ LLM ko kitna kaam dena chahiye. Aur ek API key log me leak ho gayi thi |
-| 20 | [AI Event Copy](phases/20-ai-event-copy.md) | ⭐ "Facts mat gadho" — aur poster kyu nahi bana |
+| 05 | [WebSockets](phases/05-websockets.md) | ⭐ Redis pub/sub — necessity for multi-worker environments |
+| 06 | [Load Testing](phases/06-load-testing.md) | ⭐ Locust + integrity checks. Discovered the first real bug |
+| 07 | [Auth + Google OAuth](phases/07-auth-google-oauth.md) | ⭐ Token strategy, plus two additional bugs (pool exhaustion) |
+| 08 | [Dashboard UI](phases/08-dashboard-ui.md) | Routing, shared context, single WebSocket connection |
+| 09 | [Rate Limit + Idempotency](phases/09-rate-limit-idempotency.md) | Token bucket in Lua, per-user (not per-IP) |
+| 10 | [RBAC + Organizer](phases/10-rbac-organizer.md) | ⭐ Role ≠ ownership. Distinction between 403 and 404 |
+| 11 | [Payments](phases/11-payments.md) | ⭐ Webhook as source of truth, not redirect. Idempotent fulfillment |
+| 12 | [Background Tickets](phases/12-background-tickets.md) | ARQ worker, QR + PDF, outbox email. Determining background tasks |
+| 13 | [Gate Check-in](phases/13-gate-checkin.md) | ⭐ The exactly-once problem, in a different context |
+| 14 | [Dynamic Pricing](phases/14-dynamic-pricing.md) | ⭐ Price lock — a quote is a promise. Never modify base price |
+| 15 | [Locking Benchmark](phases/15-locking-benchmark.md) | ⭐ Measured optimistic vs `FOR UPDATE` — results were counter-intuitive |
+| 16 | [Multi-Worker + CI](phases/16-multiworker-ci.md) | ⭐ Verified Phase 5 claims. Clean state revealed 3 hidden bugs |
+| 17 | [Group Booking](phases/17-group-booking.md) | ⭐ "All or nothing" — atomicity across N payments. Where optimistic locking failed |
+| 18 | [Seat Layout](phases/18-seat-layout.md) | Sections + aisles. Ensuring legacy events don't break — the purpose of nullable columns |
+| 19 | [NL Seat Search](phases/19-nl-seat-search.md) | ⭐ Balancing LLM workload. Also, an API key was leaked in logs |
+| 20 | [AI Event Copy](phases/20-ai-event-copy.md) | ⭐ "Don't hallucinate facts" — and why the poster wasn't generated |
 
-> **Interview ke liye sabse zaroori:** 04, 06, 07, 11, 13. Wahan teeno defence layers aur load test se mile teen bug hain.
+> **Crucial for interviews:** 04, 06, 07, 11, 13. These cover the three defense layers and the three bugs found via load testing.
 
 ---
 
 ## 📖 Reference
 
-| File | Kab kaam aayegi |
+| File | Purpose |
 |---|---|
-| [reference/testing.md](reference/testing.md) | Sab kuch verify karna ho — commands ek jagah |
-| [reference/docker-commands.md](reference/docker-commands.md) | Container commands + "site khul hi nahi rahi" ka debug |
-| [reference/postgres-commands.md](reference/postgres-commands.md) | psql, users banana, queries, backup |
+| [reference/testing.md](reference/testing.md) | Centralized verification commands |
+| [reference/docker-commands.md](reference/docker-commands.md) | Container commands + debugging "site not loading" issues |
+| [reference/postgres-commands.md](reference/postgres-commands.md) | psql, user management, queries, and backups |
 
 ---
 
-## Rozmarra ke commands
+## Daily Commands
 
 ```bash
-# Sab theek hai?
+# Health check
 curl http://localhost:8000/api/health
 
-# Poora test suite
+# Run full test suite
 docker compose exec backend pytest tests/ -v
 
-# Fresh state
+# Reset to fresh state
 docker compose exec backend python reset_state.py
 
-# Data sahi hai? (load test ke baad hamesha)
+# Verify data integrity (always after load testing)
 docker compose exec backend python verify_integrity.py
 ```
 
-Baaki sab [reference/testing.md](reference/testing.md) me.
+Everything else is in [reference/testing.md](reference/testing.md).

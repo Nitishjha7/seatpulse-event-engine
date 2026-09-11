@@ -1,11 +1,10 @@
 import { IconCalendar, IconPin, IconUsers } from '../layout/icons'
 
 /**
- * Event ka banner.
+ * Event banner.
  *
- * Koi photo use nahi ki — external image CSP/offline me toot jati hai aur
- * repo bhaari karti hai. Ye poora CSS gradient + inline SVG hai: stage
- * lights ka effect, self-contained.
+ * Uses CSS gradients and inline SVG to avoid external image dependencies,
+ * preventing CSP issues, offline failures, and unnecessary repo bloat.
  */
 export default function EventHero({ event, totalSeats }) {
   if (!event) return null

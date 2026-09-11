@@ -1,18 +1,17 @@
 /**
- * Backend se baat karne ki ek hi jagah.
+ * Centralized API communication module.
  *
  * Token strategy:
- *   ACCESS token  -> is module ke variable me (RAM). Page reload pe chala jata hai.
- *   REFRESH token -> httpOnly cookie me. JavaScript use chhoo bhi nahi sakti.
+ *   ACCESS token  -> Stored in module variable (RAM). Cleared on page reload.
+ *   REFRESH token -> Stored in httpOnly cookie. Inaccessible to JavaScript.
  *
- * localStorage me token kyu nahi: koi bhi XSS (ya koi bhi npm package)
- * localStorage padh sakta hai. RAM me rakha token page ke saath hi mar jata
- * hai, aur reload pe cookie se naya le lete hain.
+ * Why not localStorage: Vulnerable to XSS. RAM-based tokens expire on reload,
+ * at which point we fetch a new one using the secure cookie.
  */
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
-// Sirf memory me. Jaan-boojh ke localStorage me nahi.
+// Stored in memory only. Intentionally avoiding localStorage.
 let accessToken = null;
 
 export function setAccessToken(token) {
@@ -23,11 +22,11 @@ export function getAccessToken() {
   return accessToken;
 }
 
-/** Refresh cookie se naya access token. Login page pe bheje bina. */
+/** Refresh access token using the cookie without redirecting to login. */
 async function tryRefresh() {
   const res = await fetch(`${API_URL}/api/auth/refresh`, {
     method: "POST",
-    credentials: "include",     // cookie bhejne ke liye zaroori
+    credentials: "include",     // Required to send cookies
   });
   if (!res.ok) return null;
 
@@ -44,17 +43,16 @@ async function rawRequest(path, options, token) {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     },
-    // Auth routes ko cookie chahiye. Baaki ko nahi, par bhejne me harj nahi.
+    // Auth routes require cookies; others don't, but sending them is safe.
     credentials: "include",
   });
 }
 
 /**
- * Saare requests yahin se.
+ * Centralized request handler.
  *
- * 401 aaya to EK BAAR refresh karke retry karte hain. Isse access token
- * beech kaam me expire ho jaye to bhi user ko pata hi nahi chalta —
- * usse dobara login nahi karna padta.
+ * On 401, attempts one refresh and retries. This allows seamless session
+ * recovery if the access token expires during use.
  */
 async function request(path, options = {}, { retry = true } = {}) {
   let res = await rawRequest(path, options, accessToken);
@@ -67,7 +65,7 @@ async function request(path, options = {}, { retry = true } = {}) {
   }
 
   if (!res.ok) {
-    // FastAPI errors { "detail": "..." } format me aate hain
+    // FastAPI errors follow { "detail": "..." } format
     let message = `${res.status} ${res.statusText}`;
     try {
       const body = await res.json();
@@ -76,12 +74,12 @@ async function request(path, options = {}, { retry = true } = {}) {
           typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
       }
     } catch {
-      /* response me JSON nahi tha */
+      /* Response was not JSON */
     }
     const error = new Error(message);
-    error.status = res.status;    // 409 ko UI me alag treat karna hai
+    error.status = res.status;    // 409 requires specific UI handling
 
-    // Rate limit hone par server batata hai kitni der ruko
+    // Handle rate limiting
     if (res.status === 429) {
       error.retryAfter = Number(res.headers.get("Retry-After")) || null;
     }
@@ -89,7 +87,7 @@ async function request(path, options = {}, { retry = true } = {}) {
     throw error;
   }
 
-  // 204 No Content (logout) me body hoti hi nahi
+  // 204 No Content (e.g., logout) has no body
   if (res.status === 204) return null;
   return res.json();
 }
@@ -116,7 +114,7 @@ export const logout = () => request("/api/auth/logout", { method: "POST" });
 
 export const getMe = () => request("/api/auth/me");
 
-/** Google login — full page redirect, fetch nahi (browser ko jaana hai) */
+/** Google login — full page redirect (browser-handled) */
 export const googleLoginUrl = () => `${API_URL}/api/auth/google/login`;
 
 // ---- Events / Seats ----
@@ -139,10 +137,10 @@ export const unlockSeat = (seatId) =>
 export const getMyEvents = () => request("/api/organizer/events");
 
 /**
- * Chhote brief se event listing ka draft.
+ * Draft event listing from a brief.
  *
- * Ye kuch save nahi karta — sirf suggestion lauta ke form bhar deta hai.
- * Publish organizer hi karta hai, edit karne ke baad.
+ * Does not persist data; returns suggestions to pre-fill the form.
+ * Publishing is handled separately by the organizer.
  */
 export const draftEvent = (brief) =>
   request("/api/organizer/events/draft", {
@@ -168,10 +166,10 @@ export const deleteEvent = (eventId) =>
 // ---- Gate check-in ----
 
 /**
- * QR token scan karke entry mark karo.
+ * Mark entry via QR token.
  *
- * ⚠️ Ye 200 lautata hai chahe check-in fail ho — `ok: false` ke saath.
- * Isliye yahan try/catch nahi, `result.ok` dekhna hai.
+ * ⚠️ Returns 200 even if check-in fails (with `ok: false`).
+ * Check `result.ok` instead of relying on try/catch.
  */
 export const checkIn = (token) =>
   request("/api/checkin", {
@@ -185,10 +183,9 @@ export const getCheckinStats = (eventId) =>
 // ---- Group booking (split payment) ----
 
 /**
- * N seats hold karke shareable link banao.
+ * Hold N seats and generate a shareable link.
  *
- * Wapas `share_token` milta hai, `id` nahi — group hamesha token se
- * address hota hai taki koi 1, 2, 3 chala ke doosron ke groups na dekh le.
+ * Returns a `share_token` instead of an `id` to prevent enumeration attacks.
  */
 export const createGroup = (seatIds, deadlineMinutes) =>
   request("/api/groups", {
@@ -212,10 +209,10 @@ export const cancelGroup = (shareToken) =>
 // ---- Seat search (Phase 19) ----
 
 /**
- * Seats dhoondo — natural language se ya seedhe filters se.
+ * Search seats via natural language or filters.
  *
- * `query` tabhi kaam karti hai jab server pe GEMINI_API_KEY ho.
- * `filters` hamesha chalte hain, AI on ho ya na ho.
+ * `query` requires GEMINI_API_KEY on the server.
+ * `filters` are always available.
  */
 export const searchSeats = (eventId, body) =>
   request(`/api/events/${eventId}/seats/search`, {
@@ -229,7 +226,7 @@ export const getAdminStats = () => request("/api/admin/stats");
 
 // ---- Payments ----
 
-/** Seat ke liye checkout session banao. Wapas checkout_url milta hai. */
+/** Create checkout session. Returns `checkout_url`. */
 export const startCheckout = (seatId) =>
   request("/api/payments/checkout", {
     method: "POST",
@@ -238,7 +235,7 @@ export const startCheckout = (seatId) =>
 
 export const getPayment = (paymentId) => request(`/api/payments/${paymentId}`);
 
-/** Sirf mock provider — asli gateway me ye webhook se hota hai. */
+/** Mock provider for testing; production uses webhooks. */
 export const simulatePayment = (paymentId, outcome) =>
   request(`/api/payments/${paymentId}/simulate`, {
     method: "POST",
@@ -250,15 +247,10 @@ export const simulatePayment = (paymentId, outcome) =>
 export const getMyBookings = () => request("/api/bookings");
 
 /**
- * Seat book karo.
+ * Book a seat.
  *
- * `Idempotency-Key` bhejte hain taki double-click ya network retry se
- * do bookings na banein. Wahi key dubara jaaye to server naya kaam nahi
- * karta — pehla wala jawab wapas de deta hai.
- *
- * Key har ATTEMPT ke liye nayi banti hai, har seat ke liye nahi — matlab
- * ek hi confirm click ka retry safe hai, par user jaan-boojh ke dubara
- * book karna chahe to wo alag request hai.
+ * Uses `Idempotency-Key` to prevent duplicate bookings from retries.
+ * The key is unique per attempt, ensuring safe retries for the same action.
  */
 export const createBooking = (seatId, idempotencyKey = crypto.randomUUID()) =>
   request("/api/bookings", {
@@ -268,14 +260,11 @@ export const createBooking = (seatId, idempotencyKey = crypto.randomUUID()) =>
   });
 
 /**
- * Ticket PDF download.
+ * Download ticket PDF.
  *
- * ⚠️ `request()` use nahi kar sakte — wo `res.json()` karta hai, aur yahan
- * binary blob chahiye.
- *
- * Aur `window.open` bhi kaam nahi karega: endpoint ko `Authorization`
- * header chahiye, par browser navigation me custom headers nahi jaate.
- * Isliye fetch karke blob banate hain aur ek chhupa hua <a> click karte hain.
+ * ⚠️ Cannot use `request()` as it expects JSON; we need a binary blob.
+ * Browser navigation doesn't support custom headers, so we fetch the blob
+ * and trigger a hidden <a> click.
  */
 export async function downloadTicket(bookingId) {
   const res = await fetch(`${API_URL}/api/bookings/${bookingId}/ticket`, {
@@ -284,7 +273,7 @@ export async function downloadTicket(bookingId) {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || "Ticket download nahi hua");
+    throw new Error(body.detail || "Ticket download failed");
   }
 
   return res.blob();

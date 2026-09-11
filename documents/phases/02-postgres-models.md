@@ -1,32 +1,32 @@
 # Phase 2 — PostgreSQL + SQLAlchemy Models
 
-[Phase 1 — Frontend ↔ Backend](01-frontend-backend-connect.md) ke baad ka kaam.
+Follows [Phase 1 — Frontend ↔ Backend](01-frontend-backend-connect.md).
 
-> ⚠️ **Ye poore project ka sabse important phase hai.** Bullet 2 ("overselling prevention") ka poora daawa in tables ke design par tikta hai — Redis par nahi. Yahan galti hui to Phase 4 me Redis lagane se bhi nahi bachega.
+> ⚠️ **This is the most important phase of the entire project.** The entire claim regarding "overselling prevention" (Bullet 2) relies on these table designs, not Redis. If you fail here, adding Redis in Phase 4 will not save you.
 
-**Kya banega:** Postgres container, 4 tables, migrations, aur 100 seats ka test data.
+**Deliverables:** Postgres container, 4 tables, migrations, and 100-seat test data.
 
 ---
 
-## Concept — Overselling kaise rukega (ye pehle samajh lo)
+## Concept — How to prevent overselling (understand this first)
 
-Teen layer hain. Upar wali sabse tez, neeche wali sabse pakki:
+There are three layers. The top one is the fastest, the bottom one is the most reliable:
 
-| # | Layer | Kab | Kaam |
+| # | Layer | When | Purpose |
 |---|---|---|---|
-| 1 | Redis lock | Phase 4 | **Speed** — 5000 me se 4999 request DB tak pahunchti hi nahi |
-| 2 | `version` column | **Phase 2** | **Detection** — do parallel update me ek fail hoga |
-| 3 | UNIQUE constraint | **Phase 2** | **Guarantee** — code me bug ho to bhi DB duplicate nahi hone dega |
+| 1 | Redis lock | Phase 4 | **Speed** — 4999 out of 5000 requests never reach the DB |
+| 2 | `version` column | **Phase 2** | **Detection** — one of two parallel updates will fail |
+| 3 | UNIQUE constraint | **Phase 2** | **Guarantee** — even with a code bug, the DB prevents duplicates |
 
-Phase 2 me layer **2 aur 3** ban rahi hain. Ye asli safety hain. Redis sirf inke upar ka speed layer hai.
+Phase 2 implements layers **2 and 3**. These are the true safety mechanisms. Redis is merely a speed layer on top of them.
 
-**Interview ka jawab:** "Sirf Redis se karta to Redis restart hone par overselling ho sakti thi. Sirf DB se karta to har request DB pe load daalti. Dono ek saath — Redis fast rejection ke liye, DB correctness ke liye."
+**Interview Answer:** "If I used only Redis, overselling could occur during a Redis restart. If I used only the DB, every request would load the DB. I use both: Redis for fast rejection, and the DB for correctness."
 
 ---
 
-## Step 1 — Root `.env` banao (compose ke liye)
+## Step 1 — Create root `.env` (for compose)
 
-Postgres ka username/password compose ko chahiye. Root me `.env.example`:
+Compose requires the Postgres username/password. Create `.env.example` in the root:
 
 ```
 POSTGRES_USER=seatpulse
@@ -35,7 +35,7 @@ POSTGRES_DB=seatpulse
 POSTGRES_PORT=5432
 ```
 
-Copy karke `.env` banao:
+Copy it to create `.env`:
 
 **PowerShell**
 ```powershell
@@ -47,11 +47,11 @@ Copy-Item .env.example .env
 cp .env.example .env
 ```
 
-> Ab teen `.env` files hain — root (compose ke liye), `backend/`, `frontend/`. Teeno alag kaam ke liye hain, teeno gitignored hain.
+> There are now three `.env` files — root (for compose), `backend/`, and `frontend/`. They serve different purposes and are all gitignored.
 
 ---
 
-## Step 2 — `docker-compose.yml` me Postgres add karo
+## Step 2 — Add Postgres to `docker-compose.yml`
 
 ```yaml
 services:
@@ -73,7 +73,7 @@ services:
       retries: 5
 
   backend:
-    # ... pehle jaisa ...
+    # ... same as before ...
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     depends_on:
@@ -84,19 +84,19 @@ volumes:
   postgres_data:
 ```
 
-| Line | Kyu |
+| Line | Why |
 |---|---|
-| `postgres_data:/var/lib/postgresql/data` | **Named volume.** Iske bina `docker compose down` pe poora database ud jayega. Iske saath data bacha rehta hai |
-| `healthcheck` + `pg_isready` | Postgres "start" hone aur "connections lene" me farak hai. Bina iske backend pehle start ho jata hai aur "connection refused" se crash hota hai |
-| `condition: service_healthy` | Phase 0 wala simple `depends_on` sirf **start order** deta tha. Ye actually **ready** hone ka wait karta hai |
-| `@db:5432` | `db` = compose service ka naam. **`localhost` yahan kaam nahi karega** — wo backend container ko khud ko point karta |
-| `${POSTGRES_PORT}:5432` | Host pe expose, taki pgAdmin/DBeaver se connect kar sako |
+| `postgres_data:/var/lib/postgresql/data` | **Named volume.** Without this, `docker compose down` wipes the entire database. This persists the data. |
+| `healthcheck` + `pg_isready` | There is a difference between Postgres "starting" and "accepting connections." Without this, the backend starts too early and crashes with "connection refused." |
+| `condition: service_healthy` | The simple `depends_on` from Phase 0 only controlled **start order**. This waits until it is actually **ready**. |
+| `@db:5432` | `db` = compose service name. **`localhost` will not work here** — it would point the backend container to itself. |
+| `${POSTGRES_PORT}:5432` | Expose to host so you can connect via pgAdmin/DBeaver. |
 
-> `postgresql+psycopg2://` — `+psycopg2` batata hai ki kaunsa driver use karna hai.
+> `postgresql+psycopg2://` — `+psycopg2` specifies the driver to use.
 
 ---
 
-## Step 3 — Packages add karo
+## Step 3 — Add packages
 
 `backend/requirements.txt`:
 
@@ -109,26 +109,26 @@ psycopg2-binary>=2.9.9
 alembic>=1.13.0
 ```
 
-| Package | Kaam |
+| Package | Purpose |
 |---|---|
-| `sqlalchemy` | Python classes ↔ SQL tables. Raw SQL nahi likhna padta |
-| `psycopg2-binary` | Asli Postgres driver. `-binary` = compile kiya hua, install fast |
-| `alembic` | Migrations — schema change ka version control |
+| `sqlalchemy` | Python classes ↔ SQL tables. Eliminates raw SQL. |
+| `psycopg2-binary` | The actual Postgres driver. `-binary` = pre-compiled, installs fast. |
+| `alembic` | Migrations — version control for schema changes. |
 
 ---
 
-## Step 4 — `config.py` me DB settings
+## Step 4 — DB settings in `config.py`
 
 ```python
 DATABASE_URL: str = "postgresql+psycopg2://seatpulse:seatpulse_dev_password@db:5432/seatpulse"
 DB_ECHO: bool = False
 ```
 
-> Default value isliye hai ki `.env` na ho to bhi app chale. Docker me compose ka `environment:` isko override kar dega — **environment variable ki priority `.env` file se zyada hoti hai**.
+> The default value allows the app to run without an `.env` file. In Docker, the compose `environment:` will override this — **environment variables have higher priority than `.env` files.**
 
 ---
 
-## Step 5 — `backend/database.py` banao
+## Step 5 — Create `backend/database.py`
 
 ```python
 from sqlalchemy import create_engine
@@ -158,29 +158,29 @@ def get_db():
         db.close()
 ```
 
-| Cheez | Kyu |
+| Item | Why |
 |---|---|
-| `pool_pre_ping=True` | Connection use karne se pehle check karo ki zinda hai. Bina iske DB restart hone par "stale connection" errors aate hain |
-| `pool_size=10, max_overflow=20` | Max 30 parallel connections. **Phase 6 me 500 users aayenge — tab ye numbers matter karenge** |
-| `autoflush=False` | SQLAlchemy khud-b-khud DB me na bheje. Phase 4 me locking ke waqt ye control chahiye |
-| `get_db()` generator | `finally: db.close()` — request error se marey tab bhi session band ho. Warna connections leak hote hain aur pool khatam ho jata hai |
+| `pool_pre_ping=True` | Check if the connection is alive before using it. Prevents "stale connection" errors after DB restarts. |
+| `pool_size=10, max_overflow=20` | Max 30 parallel connections. **These numbers will matter when 500 users arrive in Phase 6.** |
+| `autoflush=False` | Prevents SQLAlchemy from automatically pushing to the DB. Needed for locking control in Phase 4. |
+| `get_db()` generator | `finally: db.close()` — ensures the session closes even if the request fails. Otherwise, connections leak and the pool exhausts. |
 
 ---
 
-## Step 6 — `backend/models.py` — sabse important file
+## Step 6 — `backend/models.py` — the most important file
 
-Poora code: [../backend/models.py](../../backend/models.py)
+Full code: [../backend/models.py](../../backend/models.py)
 
 ### Tables
 
-| Table | Kya rakhta hai |
+| Table | Contents |
 |---|---|
 | `users` | id, email (unique), hashed_password, full_name |
 | `events` | id, name, venue, starts_at, total_seats |
 | `seats` | id, event_id, row_label, seat_number, price, **status**, **version**, locked_by, locked_until |
 | `bookings` | id, user_id, seat_id, event_id, status, amount |
 
-### `Seat` ke teen critical parts
+### Three critical parts of `Seat`
 
 **1. `version` — optimistic locking**
 
@@ -188,18 +188,18 @@ Poora code: [../backend/models.py](../../backend/models.py)
 version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 ```
 
-Kaise kaam karta hai:
+How it works:
 
 ```
 User A                          User B
 ─────────────────────────────────────────────────
-version=3 padha               version=3 padha
+Read version=3                Read version=3
 UPDATE ... WHERE version=3    UPDATE ... WHERE version=3
-✅ jeeta, version ab 4         ❌ WHERE match nahi -> rowcount 0
+✅ Success, version is now 4   ❌ WHERE match fails -> rowcount 0
                                  -> 409 Conflict
 ```
 
-Isko "**optimistic**" isliye kehte hain kyunki hum row ko **lock nahi karte** (jo dheema hota hai). Bas maan ke chalte hain ki clash kam hoga — aur clash hone par **detect** kar lete hain.
+This is called "**optimistic**" because we **do not lock** the row (which is slow). We assume clashes are rare — and **detect** them if they occur.
 
 **2. Unique seat position**
 
@@ -207,7 +207,7 @@ Isko "**optimistic**" isliye kehte hain kyunki hum row ko **lock nahi karte** (j
 UniqueConstraint("event_id", "row_label", "seat_number", name="uq_seat_position")
 ```
 
-Ek event me ek hi "A-12" ho sakti hai. Seed script me bug ho ya API me — duplicate seat ban hi nahi sakti.
+Only one "A-12" can exist per event. Whether there is a bug in the seed script or the API — duplicate seats cannot be created.
 
 **3. Status check constraint**
 
@@ -215,9 +215,9 @@ Ek event me ek hi "A-12" ho sakti hai. Seed script me bug ho ya API me — dupli
 CheckConstraint("status IN ('available', 'locked', 'booked')", name="ck_seat_status")
 ```
 
-Typo (`"Booked"`, `"bookd"`) database khud reject kar dega.
+The database will reject typos (`"Booked"`, `"bookd"`) automatically.
 
-### `Booking` ka aakhri taala — partial unique index
+### The final lock for `Booking` — partial unique index
 
 ```python
 Index(
@@ -228,23 +228,23 @@ Index(
 )
 ```
 
-**Ye sabse strong guarantee hai.** Ek seat ki sirf **ek confirmed** booking ho sakti hai.
+**This is the strongest guarantee.** A seat can have only **one confirmed** booking.
 
-- Redis down ho jaye → phir bhi safe
-- `version` check me bug ho → phir bhi safe
-- Do backend server ek saath chalein → phir bhi safe
+- If Redis goes down → still safe
+- If there is a bug in the `version` check → still safe
+- If two backend servers run simultaneously → still safe
 
-Postgres `IntegrityError` dega, jise hum Phase 4 me **409** me badal denge.
+Postgres will throw an `IntegrityError`, which we will convert to a **409** in Phase 4.
 
-**"Partial" kyu:** condition sirf `status = 'confirmed'` par lagti hai. Isliye booking **cancel** hone ke baad wahi seat dubara bik sakti hai — cancelled rows par ye index lagu hi nahi hota.
+**Why "partial":** The condition only applies to `status = 'confirmed'`. Therefore, a seat can be sold again after a booking is **cancelled** — this index does not apply to cancelled rows.
 
 ---
 
 ## Step 7 — Alembic setup
 
-Do file chahiye: `alembic.ini` aur `alembic/env.py`
+Two files required: `alembic.ini` and `alembic/env.py`
 
-### `alembic.ini` me ye zaroori hai
+### Required in `alembic.ini`
 
 ```ini
 [alembic]
@@ -252,31 +252,31 @@ script_location = alembic
 prepend_sys_path = .
 file_template = %%(year)d_%%(month).2d_%%(day).2d_%%(hour).2d%%(minute).2d-%%(rev)s_%%(slug)s
 
-# Jaan-boojh ke khali — URL env.py me settings se aata hai
+# Intentionally empty — URL comes from settings in env.py
 sqlalchemy.url =
 ```
 
-| Line | Kyu |
+| Line | Why |
 |---|---|
-| `sqlalchemy.url =` khali | **Password is file me kabhi mat likhna** — ye Git me jati hai. URL `env.py` me settings se aayega |
-| `file_template` | Migration ka naam date ke saath: `2026_08_10_1430-abc123_add_seats.py`. Default sirf random hash hota hai, history padhna mushkil |
+| `sqlalchemy.url =` empty | **Never write the password in this file** — it goes into Git. The URL comes from settings in `env.py`. |
+| `file_template` | Migration name with date: `2026_08_10_1430-abc123_add_seats.py`. Default is just a random hash, making history hard to read. |
 
-### `alembic/env.py` me do line critical hain
+### Two critical lines in `alembic/env.py`
 
 ```python
-import models  # noqa: F401     <- bina iske Alembic ko tables dikhti hi nahi
+import models  # noqa: F401     <- Alembic cannot see tables without this
 
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 target_metadata = Base.metadata
 ```
 
-Aur `context.configure()` me:
+And in `context.configure()`:
 ```python
-compare_type=True,              # column ka type badla to detect karo
-compare_server_default=True,    # default value badli to detect karo
+compare_type=True,              # detect column type changes
+compare_server_default=True,    # detect default value changes
 ```
 
-> `import models` bhool jana Alembic ki **sabse common galti** hai — wo khali migration bana deta hai aur samajh nahi aata kyu.
+> Forgetting `import models` is the **most common Alembic mistake** — it generates an empty migration and you won't know why.
 
 ### Folder structure
 
@@ -286,27 +286,27 @@ backend/
 └── alembic/
     ├── env.py
     ├── script.py.mako
-    └── versions/          <- migrations yahan banengi
+    └── versions/          <- migrations generated here
 ```
 
 ---
 
-## Step 8 — Rebuild karo
+## Step 8 — Rebuild
 
-`requirements.txt` badla hai, isliye **`--build` zaroori hai**. Sirf `up -d` se naye packages install nahi honge.
+Since `requirements.txt` changed, **`--build` is mandatory**. `up -d` alone will not install new packages.
 
 ```bash
 docker compose down
 docker compose up --build -d
 ```
 
-`docker compose ps` me teen containers dikhne chahiye: `seatpulse_db`, `fastapi_backend`, `react_frontend`.
+`docker compose ps` should show three containers: `seatpulse_db`, `fastapi_backend`, `react_frontend`.
 
-DB healthy hone me 5-10 second lagte hain — backend uska wait karega (healthcheck ki wajah se).
+It takes 5-10 seconds for the DB to become healthy — the backend will wait for it (due to the healthcheck).
 
-### ⚠️ `--build` bhool gaye to ye hota hai
+### ⚠️ What happens if you forget `--build`
 
-`localhost:8000` khulta hi nahi, aur logs me:
+`localhost:8000` won't open, and logs will show:
 
 ```
 File "/app/main.py", line 5, in <module>
@@ -314,45 +314,45 @@ File "/app/main.py", line 5, in <module>
 ModuleNotFoundError: No module named 'sqlalchemy'
 ```
 
-**Confusing part:** `docker compose ps` me backend **"Up"** dikhega, phir bhi port kaam nahi karega. Wajah — `--reload` mode me uvicorn crash hone ke baad bhi container zinda rehta hai, bas app load nahi hota.
+**Confusing part:** The backend will appear **"Up"** in `docker compose ps`, but the port won't work. Reason — uvicorn stays alive in `--reload` mode even after crashing, but the app fails to load.
 
 **Fix:**
 ```bash
 docker compose up -d --build backend
 ```
 
-> **Rule:** `requirements.txt` ya `package.json` badla = `--build` chahiye.
-> Frontend me ek qadam aur — `down -v` bhi (anonymous volume ki wajah se, Phase 1 me dekha tha).
+> **Rule:** Changed `requirements.txt` or `package.json` = `--build` required.
+> For frontend, one extra step — `down -v` as well (due to anonymous volumes, seen in Phase 1).
 
 ---
 
-## Step 9 — Pehli migration banao
+## Step 9 — Create first migration
 
 ```bash
 docker compose exec backend alembic revision --autogenerate -m "initial tables"
 ```
 
-Ye `backend/alembic/versions/` me ek file banayega.
+This creates a file in `backend/alembic/versions/`.
 
-> ⚠️ **File kholo aur padho.** Autogenerate bewakoof hai — kabhi kabhi galat cheez generate karta hai. Usme `create_table('users')`, `create_table('events')`, `create_table('seats')`, `create_table('bookings')` dikhna chahiye.
+> ⚠️ **Open and read the file.** Autogenerate is not perfect — it sometimes generates incorrect code. It should show `create_table('users')`, `create_table('events')`, `create_table('seats')`, and `create_table('bookings')`.
 
-Migration apply karo:
+Apply the migration:
 
 ```bash
 docker compose exec backend alembic upgrade head
 ```
 
-| Command | Kaam |
+| Command | Purpose |
 |---|---|
-| `alembic revision --autogenerate -m "msg"` | Models aur DB compare karke migration file banao |
-| `alembic upgrade head` | Saari pending migrations apply karo |
-| `alembic downgrade -1` | Ek migration undo karo |
-| `alembic current` | Abhi kaunsi migration lagi hai |
-| `alembic history` | Saari migrations ki list |
+| `alembic revision --autogenerate -m "msg"` | Compare models and DB to create a migration file. |
+| `alembic upgrade head` | Apply all pending migrations. |
+| `alembic downgrade -1` | Undo one migration. |
+| `alembic current` | Show currently applied migration. |
+| `alembic history` | List all migrations. |
 
 ---
 
-## Step 10 — Seed data daalo
+## Step 10 — Seed data
 
 ```bash
 docker compose exec backend python seed.py
@@ -360,18 +360,18 @@ docker compose exec backend python seed.py
 
 Output:
 ```
-✅ Demo user banaya
-✅ Event banaya (id=1)
-✅ 100 seats banayi
+✅ Demo user created
+✅ Event created (id=1)
+✅ 100 seats created
 
 🎉 Seed complete
 ```
 
-Script dubara chalao to duplicate nahi banega — pehle check karta hai.
+Running the script again won't create duplicates — it checks first.
 
 ---
 
-## ✅ Proof — chala ya nahi?
+## ✅ Proof — did it work?
 
 **1. Seats count**
 ```bash
@@ -379,7 +379,7 @@ docker compose exec db psql -U seatpulse -d seatpulse -c "SELECT count(*) FROM s
 ```
 → `100`
 
-**2. API se**
+**2. Via API**
 
 http://localhost:8000/api/stats
 ```json
@@ -390,71 +390,71 @@ http://localhost:8000/api/stats
 }
 ```
 
-**3. Health me database**
+**3. Database in health check**
 
 http://localhost:8000/api/health → `"database": "connected"`
 
-Browser me http://localhost:5173 — card me ab **Database: connected** bhi dikhega.
+In the browser, http://localhost:5173 — the card will now show **Database: connected**.
 
-**4. Asli test — constraint kaam kar raha hai?**
+**4. Real test — is the constraint working?**
 
 ```bash
 docker compose exec db psql -U seatpulse -d seatpulse -c \
   "INSERT INTO seats (event_id, row_label, seat_number, price, status, version) VALUES (1, 'A', 1, 100, 'available', 0);"
 ```
 
-Ye **fail** hona chahiye:
+This should **fail**:
 ```
 ERROR: duplicate key value violates unique constraint "uq_seat_position"
 ```
 
-**Yehi Phase 2 ka asli proof hai.** Ye error matlab database khud duplicate rok raha hai — application code par bharosa nahi karna pad raha.
+**This is the true proof of Phase 2.** This error means the database is preventing duplicates itself — we don't have to rely on application code.
 
-**5. Data persist ho raha hai?**
+**5. Is data persisting?**
 ```bash
 docker compose restart db
 docker compose exec db psql -U seatpulse -d seatpulse -c "SELECT count(*) FROM seats;"
 ```
-→ phir bhi `100`. Named volume kaam kar raha hai.
+→ still `100`. The named volume is working.
 
 ---
 
-## Step 11 — DB ko apne system se dekho (pgAdmin / DBeaver)
+## Step 11 — View DB from your system (pgAdmin / DBeaver)
 
-Saare psql commands, user banane, grants waqerah ke liye alag file hai:
+Separate file for psql commands, user creation, grants, etc.:
 **→ [postgres-commands.md](../reference/postgres-commands.md)**
 
-Yahan sirf connection ki baat:
+Connection details:
 
 | Field | Value |
 |---|---|
 | Host | `localhost` |
-| **Port** | **`5433`** ← 5432 nahi |
+| **Port** | **`5433`** ← not 5432 |
 | Maintenance database | `seatpulse` |
 | Username | `seatpulse` |
 | Password | `seatpulse_dev_password` |
 
-**pgAdmin:** Servers pe right-click → *Register* → *Server* → **General** me naam `SeatPulse (Docker)` → **Connection** me upar wali details.
+**pgAdmin:** Right-click Servers → *Register* → *Server* → **General** name `SeatPulse (Docker)` → **Connection** details above.
 
-> Naam me "(Docker)" zaroor likhna, taki local PostgreSQL se confuse na ho.
+> Include "(Docker)" in the name to avoid confusion with local PostgreSQL.
 
-### ⚠️ Port 5433 kyu — ye Phase 2 ka sabse confusing issue hai
+### ⚠️ Why port 5433 — the most confusing issue in Phase 2
 
-Is system pe **PostgreSQL already installed hai** (Windows service ki tarah chalta hai) aur wo 5432 le chuka hai.
+**PostgreSQL is already installed** on this system (as a Windows service) and has claimed 5432.
 
-Docker ne bhi 5432 maanga tha. `docker compose ps` me mapping dikhti bhi thi:
+Docker also requested 5432. The mapping appeared in `docker compose ps`:
 ```
 0.0.0.0:5432->5432/tcp
 ```
-**par asli port local Postgres ke paas tha.** pgAdmin `localhost:5432` pe gaya → wahan **local** Postgres mila → usme `seatpulse` user hai hi nahi:
+**but the actual port was held by local Postgres.** pgAdmin went to `localhost:5432` → found **local** Postgres → which does not have the `seatpulse` user:
 
 ```
 FATAL: password authentication failed for user "seatpulse"
 ```
 
-Error dekh ke lagta hai password galat hai. **Password bilkul sahi tha — DB hi galat tha.**
+The error makes it look like the password is wrong. **The password was correct — the DB was wrong.**
 
-**Kaun port le raha hai, check karo (PowerShell):**
+**Check who is using the port (PowerShell):**
 ```powershell
 Get-NetTCPConnection -LocalPort 5432 -State Listen |
   Select-Object LocalAddress, LocalPort, OwningProcess |
@@ -464,9 +464,9 @@ Get-NetTCPConnection -LocalPort 5432 -State Listen |
   }
 ```
 
-`postgres` dikha = local Postgres hai. `com.docker.backend` dikha = Docker.
+`postgres` shown = local Postgres. `com.docker.backend` shown = Docker.
 
-**Fix** — root `.env` me:
+**Fix** — in root `.env`:
 ```
 POSTGRES_PORT=5433
 ```
@@ -474,9 +474,9 @@ POSTGRES_PORT=5433
 docker compose up -d db
 ```
 
-`docker compose ps` me ab `0.0.0.0:5433->5432/tcp` dikhega.
+`docker compose ps` will now show `0.0.0.0:5433->5432/tcp`.
 
-> **Backend pe iska koi asar nahi padta.** Wo `db:5432` use karta hai — container-to-container network ke andar port hamesha 5432 hi rehta hai. `POSTGRES_PORT` sirf **host se dekhne** ke liye hai. Isiliye backend restart bhi nahi karna padta, aur data bhi safe rehta hai (named volume).
+> **This has no effect on the backend.** It uses `db:5432` — the port inside the container-to-container network is always 5432. `POSTGRES_PORT` is only for **host access**. Therefore, the backend doesn't need to restart, and data remains safe (named volume).
 
 ---
 
@@ -484,27 +484,27 @@ docker compose up -d db
 
 | Problem | Fix |
 |---|---|
-| **`localhost:8000` khul hi nahi raha** | Sabse pehle logs padho: `docker compose logs --tail=40 backend`. 90% baar wajah neeche wali hai |
-| `ModuleNotFoundError: No module named 'sqlalchemy'` (ya koi bhi naya package) | Image rebuild nahi hua — `docker compose up -d --build backend` |
-| Backend `docker compose ps` me "Up" hai par port kaam nahi kar raha | App crash ho chuka hai, container zinda hai (`--reload` ki wajah se). Logs hi batayenge |
-| `connection refused` / `could not connect to server` | DB ready nahi tha. Healthcheck sahi hai? `docker compose ps` me `db` **healthy** dikhna chahiye |
-| **pgAdmin me `password authentication failed for user "seatpulse"`** | Galat port. **5433** use karo, 5432 nahi — Step 11 dekho |
-| `password authentication failed` (backend se) | Root `.env` banaya? Purana volume purane password ke saath pada ho to: `docker compose down -v` |
-| `port is already allocated` DB start pe | Root `.env` me `POSTGRES_PORT` aur badal do (5434, 5435...) |
-| `alembic: command not found` | Rebuild nahi hua — `docker compose up -d --build backend` |
-| Migration khali bani (`pass` likha hai) | `env.py` me `import models` missing hai |
-| `Target database is not up to date` | `alembic upgrade head` pehle chalao |
-| `relation "seats" does not exist` | Migration apply nahi hui — `alembic upgrade head` |
-| `Can't locate revision` | `versions/` folder aur DB ka `alembic_version` table match nahi kar rahe. Dev me: `docker compose down -v` se fresh start |
-| DB me purana data pada hai, chahiye nahi | `docker compose down -v` → `up -d` → migration → seed |
+| **`localhost:8000` won't open** | Read logs first: `docker compose logs --tail=40 backend`. 90% of the time it's the issue below. |
+| `ModuleNotFoundError: No module named 'sqlalchemy'` | Image not rebuilt — `docker compose up -d --build backend` |
+| Backend is "Up" but port doesn't work | App crashed, container is alive (due to `--reload`). Logs will tell you why. |
+| `connection refused` / `could not connect to server` | DB not ready. Is healthcheck correct? `db` should be **healthy** in `docker compose ps`. |
+| **pgAdmin `password authentication failed`** | Wrong port. Use **5433**, not 5432 — see Step 11. |
+| `password authentication failed` (from backend) | Did you create root `.env`? If an old volume exists with an old password: `docker compose down -v` |
+| `port is already allocated` on DB start | Change `POSTGRES_PORT` in root `.env` (5434, 5435...) |
+| `alembic: command not found` | Not rebuilt — `docker compose up -d --build backend` |
+| Migration generated empty (`pass` written) | `import models` missing in `env.py` |
+| `Target database is not up to date` | Run `alembic upgrade head` first. |
+| `relation "seats" does not exist` | Migration not applied — `alembic upgrade head` |
+| `Can't locate revision` | `versions/` folder and DB `alembic_version` table mismatch. In dev: `docker compose down -v` for a fresh start. |
+| DB has old data, don't want it | `docker compose down -v` → `up -d` → migration → seed |
 
 ---
 
-## ⚠️ `down -v` ke baad DB wapas kaise laayein
+## ⚠️ How to restore DB after `down -v`
 
-Phase 2 ke baad **`docker compose down -v` DB ka saara data delete kar deta hai** — seats, events, users, sab.
+After Phase 2, **`docker compose down -v` deletes all DB data** — seats, events, users, everything.
 
-**Ghabrane ki baat nahi. 3 command me wapas:**
+**Don't panic. Restore in 3 commands:**
 
 ```bash
 docker compose up -d
@@ -512,33 +512,33 @@ docker compose exec backend alembic upgrade head
 docker compose exec backend python seed.py
 ```
 
-Fresh DB, 100 seats, sab wapas. **Isiliye `seed.py` banayi thi** — data kabhi bhi dubara ban sakta hai, isliye dev me DB udna koi aafat nahi.
+Fresh DB, 100 seats, all back. **This is why `seed.py` was created** — data can be regenerated at any time, so losing the DB in dev is not a disaster.
 
-### Confuse mat hona — do alag database hain
+### Don't get confused — there are two separate databases
 
-| | Kahan | `down -v` ka asar |
+| | Where | Effect of `down -v` |
 |---|---|---|
-| **Local PostgreSQL 18** (port 5432) | System pe installed, Windows service | ❌ **Kuch nahi hota** |
-| **Docker PostgreSQL 16** (port 5433) | `postgres_data` named volume | ✅ **Poora delete** |
+| **Local PostgreSQL 18** (port 5432) | Installed on system, Windows service | ❌ **Nothing happens** |
+| **Docker PostgreSQL 16** (port 5433) | `postgres_data` named volume | ✅ **Completely deleted** |
 
-Docker ke commands sirf Docker ki duniya me chalte hain. Tumhare system wale Postgres ko wo chhoo bhi nahi sakte.
+Docker commands only run in the Docker world. They cannot touch your system's Postgres.
 
-### Volume gaya ya nahi, check karo
+### Check if volume is gone
 
 ```bash
 docker volume ls
-docker volume ls -q | grep postgres     # kuch nahi mila = delete ho chuka
+docker volume ls -q | grep postgres     # nothing found = deleted
 ```
 
-### Frontend ka volume reset karo, DB bachao
+### Reset frontend volume, save DB
 
-Phase 1 me `node_modules` ke liye `down -v` karte the. **Ab wo mat karna** — DB bhi ud jayega. Iski jagah:
+In Phase 1, we used `down -v` for `node_modules`. **Don't do that now** — it will wipe the DB. Instead:
 
 ```bash
 docker compose up -d --build --force-recreate --renew-anon-volumes frontend
 ```
 
-`--renew-anon-volumes` sirf **anonymous** volumes naye banata hai. `postgres_data` ek **named** volume hai — wo bacha rehta hai.
+`--renew-anon-volumes` only recreates **anonymous** volumes. `postgres_data` is a **named** volume — it remains safe.
 
 ### Safe vs Destructive
 
@@ -548,31 +548,31 @@ docker compose up -d --build --force-recreate --renew-anon-volumes frontend
 | `docker compose restart` | ✅ Safe |
 | `docker compose up -d --build backend` | ✅ Safe |
 | `docker compose up -d --renew-anon-volumes frontend` | ✅ Safe |
-| `docker compose down -v` | ❌ **DB delete** |
-| `docker volume prune` | ❌ Delete |
-| `docker system prune -a --volumes` | ❌ Sab kuch, har project ka |
+| `docker compose down -v` | ❌ **DB deleted** |
+| `docker volume prune` | ❌ Deleted |
+| `docker system prune -a --volumes` | ❌ Everything, every project |
 
-> Asli data aa jaye to backup: `docker compose exec -T db pg_dump -U seatpulse seatpulse > backup.sql`
+> Backup real data: `docker compose exec -T db pg_dump -U seatpulse seatpulse > backup.sql`
 > Detail: [postgres-commands.md](../reference/postgres-commands.md) section 6
 
 ---
 
-## Files jo is phase me bane/badle
+## Files created/modified in this phase
 
 ```
-.env                        ← naya (Git me nahi)
-.env.example                ← naya
+.env                        ← new (not in Git)
+.env.example                ← new
 docker-compose.yml          ← update (db service + volume)
 
 backend/
-├── database.py             ← naya
-├── models.py               ← naya  ⭐ sabse important
-├── seed.py                 ← naya
-├── alembic.ini             ← naya
+├── database.py             ← new
+├── models.py               ← new  ⭐ most important
+├── seed.py                 ← new
+├── alembic.ini             ← new
 ├── alembic/
-│   ├── env.py              ← naya
-│   ├── script.py.mako      ← naya
-│   └── versions/           ← migrations yahan
+│   ├── env.py              ← new
+│   ├── script.py.mako      ← new
+│   └── versions/           ← migrations here
 ├── config.py               ← update (DATABASE_URL)
 ├── main.py                 ← update (DB health + /api/stats)
 ├── requirements.txt        ← update
@@ -592,16 +592,16 @@ git commit -m "Phase 2: PostgreSQL, SQLAlchemy models, Alembic migrations, seed 
 git push
 ```
 
-`git status` me koi bhi `.env` **nahi** dikhna chahiye (teeno), `.env.example` dikhni chahiye.
+No `.env` files should appear in `git status` (all three), only `.env.example`.
 
 ---
 
 ## Related
 
-- **[postgres-commands.md](../reference/postgres-commands.md)** — psql commands, user/database banana, grants, backup, constraint testing
+- **[postgres-commands.md](../reference/postgres-commands.md)** — psql commands, creating users/databases, grants, backup, constraint testing
 - [docker-commands.md](../reference/docker-commands.md) — container commands
-- [roadmap.md](../roadmap.md) — aage kya banana hai
+- [roadmap.md](../roadmap.md) — what to build next
 
 ---
 
-**Agla:** [roadmap.md](../roadmap.md) → Phase 3 (Pydantic schemas + CRUD + Seat Grid UI)
+**Next:** [roadmap.md](../roadmap.md) → Phase 3 (Pydantic schemas + CRUD + Seat Grid UI)

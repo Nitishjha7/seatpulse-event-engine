@@ -1,27 +1,25 @@
 """
 Payment providers.
 
-Do implementations, ek hi interface:
+Implementations share a common interface:
 
-  StripeProvider — asli gateway (test mode)
-  MockProvider   — jab Stripe keys na hon
+  StripeProvider — Production gateway (test mode).
+  MockProvider   — Fallback when Stripe keys are unavailable.
 
-⭐ Mock kyu banaya:
-Interviewer mera repo clone karega — uske paas meri Stripe keys nahi hongi.
-Bina mock ke wo poora checkout flow chala hi nahi sakta, aur "payments hain"
-ka claim uske liye jhoot jaisa lagta. Ab keys ho ya na ho, flow same chalta
-hai — sirf paisa asli nahi katta.
+⭐ Why a Mock:
+To ensure the repository remains functional for reviewers without requiring
+Stripe credentials. This allows the full checkout flow to be tested,
+demonstrating the architecture even without live payment processing.
 
-Yahi pattern Google OAuth me use kiya tha: credentials na ho to feature
-gracefully band ho jata hai, poora app nahi tootta.
+This follows the pattern used for Google OAuth: features degrade gracefully
+when credentials are missing rather than breaking the entire application.
 
----- Stripe SDK kyu nahi use kiya ----
+---- Why not use the Stripe SDK? ----
 
-`httpx` pehle se dependency hai, aur Stripe ka REST API seedha-saada hai.
-SDK add karne se ek aur dependency aati aur — zyada important — webhook
-signature verification ek black box ban jaata. Wo khud likhne se pata
-chalta hai ki wo actually kaam kaise karta hai (aur wo interview me
-poocha jata hai).
+`httpx` is already a dependency, and the Stripe REST API is straightforward.
+Avoiding the SDK reduces dependency bloat and, more importantly, prevents
+webhook signature verification from becoming a black box. Implementing it
+manualy ensures a clear understanding of the security mechanism.
 """
 
 import hashlib
@@ -38,22 +36,22 @@ logger = logging.getLogger(__name__)
 
 STRIPE_API = "https://api.stripe.com/v1"
 
-# Webhook signature kitni purani chal sakti hai.
-# Iske bina koi ek purana valid webhook capture karke baar-baar replay
-# kar sakta hai — signature to valid hi rahegi hamesha.
+# Maximum age for a webhook request.
+# Prevents replay attacks where an attacker captures a valid webhook
+# and resends it to trigger duplicate processing.
 WEBHOOK_TOLERANCE_SECONDS = 300
 
 
 @dataclass
 class CheckoutSession:
-    """Provider se milne wala session — dono providers yahi lautate hain."""
+    """Session object returned by providers."""
 
-    reference: str      # gateway ka id (webhook isi se payment dhoondhta hai)
-    url: str            # user ko yahan bhejo
+    reference: str      # Gateway ID (used for webhook lookups)
+    url: str            # Redirect URL for the user
 
 
 class PaymentError(Exception):
-    """Gateway se baat karne me dikkat. Route ise 502 me badalta hai."""
+    """Gateway communication error. Handled by routes as 502."""
 
 
 # ---------------------------------------------------------------------------
@@ -64,16 +62,16 @@ class MockProvider:
     name = "mock"
 
     def create_checkout(self, *, payment_id: int, amount: float, description: str) -> CheckoutSession:
-        # Reference me payment_id daal rahe hain taki mock webhook use
-        # dhoondh sake — asli gateway ye id khud generate karta hai.
+        # Embed payment_id in the reference to allow the mock webhook
+        # to identify the transaction.
         reference = f"mock_sess_{payment_id}_{int(time.time())}"
 
-        # User ko apne hi frontend ke checkout page pe bhejte hain
+        # Redirect to the local frontend checkout page.
         url = f"{settings.FRONTEND_URL.rstrip('/')}/pay/{payment_id}"
         return CheckoutSession(reference=reference, url=url)
 
     def verify_webhook(self, payload: bytes, signature: str | None) -> dict:
-        raise PaymentError("Mock provider ke paas webhook nahi hota")
+        raise PaymentError("Mock provider does not support webhooks")
 
 
 # ---------------------------------------------------------------------------
@@ -86,8 +84,8 @@ class StripeProvider:
     def create_checkout(self, *, payment_id: int, amount: float, description: str) -> CheckoutSession:
         frontend = settings.FRONTEND_URL.rstrip("/")
 
-        # ⚠️ Stripe amount SABSE CHHOTI unit me leta hai — INR me paise.
-        # ₹800 ko 800 bhejoge to user se ₹8 katega. Ye classic bug hai.
+        # ⚠️ Stripe requires the smallest currency unit (e.g., paise for INR).
+        # Passing 800 for ₹800 would result in a charge of ₹8.
         minor_units = int(round(amount * 100))
 
         data = {
@@ -96,12 +94,10 @@ class StripeProvider:
             "line_items[0][price_data][currency]": settings.CURRENCY.lower(),
             "line_items[0][price_data][unit_amount]": str(minor_units),
             "line_items[0][price_data][product_data][name]": description,
-            # Success URL me session id daal rahe hain sirf UI ke liye —
-            # asli confirmation webhook se aati hai, is redirect se NAHI.
+            # Success URL is for UI flow only; final confirmation relies on webhooks.
             "success_url": f"{frontend}/payment/return?payment_id={payment_id}",
             "cancel_url": f"{frontend}/payment/return?payment_id={payment_id}&cancelled=1",
-            # Apna payment id gateway ke paas rakh dete hain — webhook me
-            # wapas milta hai, to lookup aasan ho jata hai.
+            # Store payment_id in metadata for easy lookup in webhooks.
             "metadata[payment_id]": str(payment_id),
             "expires_at": str(int(time.time()) + max(1800, settings.PAYMENT_TTL_SECONDS)),
         }
@@ -116,27 +112,26 @@ class StripeProvider:
             res.raise_for_status()
         except httpx.HTTPError as exc:
             logger.warning("Stripe checkout create fail: %s", exc)
-            raise PaymentError("Payment gateway se baat nahi ho payi") from exc
+            raise PaymentError("Failed to communicate with payment gateway") from exc
 
         body = res.json()
         return CheckoutSession(reference=body["id"], url=body["url"])
 
     def verify_webhook(self, payload: bytes, signature: str | None) -> dict:
         """
-        ⭐ Webhook signature verify karo.
+        ⭐ Verify webhook signature.
 
-        Bina iske koi bhi hamare webhook endpoint pe POST maar ke free
-        ticket le sakta hai. Ye endpoint authenticated nahi ho sakta
-        (Stripe ke paas hamara token nahi hai), to signature hi uska
-        authentication hai.
+        Since the webhook endpoint cannot be authenticated via standard
+        headers (Stripe does not have our credentials), the signature
+        serves as the primary authentication mechanism.
 
-        Stripe header aisa bhejta hai:
+        Stripe header format:
             Stripe-Signature: t=1712345678,v1=abc123...,v1=def456...
 
-        Verify karne ka tarika:
+        Verification process:
             signed_payload = "{timestamp}.{raw body}"
             expected = HMAC-SHA256(webhook_secret, signed_payload)
-            expected == v1 me se koi ek?
+            Compare expected against provided v1 signatures.
         """
         if not signature:
             raise PaymentError("Signature header missing")
@@ -146,27 +141,23 @@ class StripeProvider:
         )
         timestamp = parts.get("t")
         if not timestamp:
-            raise PaymentError("Signature me timestamp nahi hai")
+            raise PaymentError("Signature missing timestamp")
 
-        # ⚠️ Replay protection. Signature purani hone par bhi VALID rehti hai —
-        # to bina is check ke koi ek success webhook capture karke usse
-        # baar-baar bhej sakta hai.
+        # ⚠️ Replay protection: Ensure the webhook is recent.
         if abs(time.time() - int(timestamp)) > WEBHOOK_TOLERANCE_SECONDS:
-            raise PaymentError("Webhook timestamp bahut purana hai")
+            raise PaymentError("Webhook timestamp expired")
 
         signed = f"{timestamp}.".encode() + payload
         expected = hmac.new(
             settings.STRIPE_WEBHOOK_SECRET.encode(), signed, hashlib.sha256
         ).hexdigest()
 
-        # Header me kai v1 ho sakte hain (secret rotate karte waqt).
+        # Extract all v1 signatures (supports secret rotation).
         provided = [v for k, v in (p.split("=", 1) for p in signature.split(",") if "=" in p) if k == "v1"]
 
-        # ⚠️ compare_digest — normal == timing attack ke liye khula hota hai.
-        # Wo pehle mismatch pe return kar deta hai, to jawab ke time se
-        # attacker ek-ek character guess kar sakta hai.
+        # ⚠️ Use compare_digest to prevent timing attacks.
         if not any(hmac.compare_digest(expected, got) for got in provided):
-            raise PaymentError("Signature match nahi hui")
+            raise PaymentError("Signature mismatch")
 
         import json
 
@@ -176,5 +167,5 @@ class StripeProvider:
 # ---------------------------------------------------------------------------
 
 def get_provider():
-    """Keys hain to Stripe, warna mock."""
+    """Returns StripeProvider if keys are configured, otherwise MockProvider."""
     return StripeProvider() if settings.payment_provider == "stripe" else MockProvider()

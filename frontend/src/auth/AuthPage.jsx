@@ -2,7 +2,7 @@ import { useState } from 'react'
 
 import { useAuth } from './AuthContext'
 
-/** Google ka official "G" logo — inline SVG, koi external request nahi */
+/** Official Google "G" logo — inline SVG, no external requests */
 function GoogleIcon() {
   return (
     <svg className="h-4 w-4" viewBox="0 0 24 24" aria-hidden="true">
@@ -26,7 +26,7 @@ export default function AuthPage() {
 
   const isSignup = mode === 'signup'
 
-  // Google redirect fail hua to backend ?auth_error=... ke saath wapas bhejta hai
+  // Capture auth errors passed via URL query parameters from the backend
   const urlError = new URLSearchParams(window.location.search).get('auth_error')
 
   async function handleSubmit(e) {
@@ -58,10 +58,10 @@ export default function AuthPage() {
 
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
           <h2 className="text-lg font-semibold">
-            {isSignup ? 'Account banao' : 'Login karo'}
+            {isSignup ? 'Create Account' : 'Login'}
           </h2>
           <p className="mt-1 text-sm text-slate-500">
-            {isSignup ? 'Seats book karne ke liye' : 'Wapas aa gaye, badhiya'}
+            {isSignup ? 'To book your seats' : 'Welcome back'}
           </p>
 
           {googleEnabled && (
@@ -79,7 +79,7 @@ export default function AuthPage() {
 
               <div className="my-5 flex items-center gap-3 text-xs text-slate-600">
                 <span className="h-px flex-1 bg-slate-800" />
-                ya
+                or
                 <span className="h-px flex-1 bg-slate-800" />
               </div>
             </>
@@ -88,7 +88,7 @@ export default function AuthPage() {
           <form onSubmit={handleSubmit} className={googleEnabled ? '' : 'mt-5'}>
             {isSignup && (
               <Field
-                label="Naam"
+                label="Full Name"
                 type="text"
                 value={fullName}
                 onChange={setFullName}
@@ -112,7 +112,7 @@ export default function AuthPage() {
               type="password"
               value={password}
               onChange={setPassword}
-              placeholder={isSignup ? 'kam se kam 8 characters' : '••••••••'}
+              placeholder={isSignup ? 'Minimum 8 characters' : '••••••••'}
               autoComplete={isSignup ? 'new-password' : 'current-password'}
               required
               minLength={isSignup ? 8 : undefined}
@@ -131,12 +131,12 @@ export default function AuthPage() {
                          font-medium transition hover:bg-indigo-500
                          disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {busy ? 'Ruko…' : isSignup ? 'Account banao' : 'Login'}
+              {busy ? 'Processing…' : isSignup ? 'Create Account' : 'Login'}
             </button>
           </form>
 
           <p className="mt-5 text-center text-sm text-slate-500">
-            {isSignup ? 'Account pehle se hai?' : 'Naye ho?'}{' '}
+            {isSignup ? 'Already have an account?' : 'New here?'}{' '}
             <button
               onClick={() => {
                 setMode(isSignup ? 'login' : 'signup')
@@ -144,12 +144,12 @@ export default function AuthPage() {
               }}
               className="text-indigo-400 transition hover:text-indigo-300"
             >
-              {isSignup ? 'Login karo' : 'Account banao'}
+              {isSignup ? 'Login' : 'Create Account'}
             </button>
           </p>
         </div>
 
-        {/* Demo credentials — recruiter/interviewer ko turant andar jaane deta hai */}
+        {/* Demo credentials for recruiters/interviewers */}
         <div className="mt-4 rounded-lg border border-slate-800/60 bg-slate-900/40 p-3 text-center text-xs text-slate-500">
           Demo login —{' '}
           <button

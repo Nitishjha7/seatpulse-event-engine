@@ -1,24 +1,24 @@
 /**
- * Demand-based pricing ka live indicator.
+ * Live indicator for demand-based pricing.
  *
- * ---- Yahan sabse zaroori faisla: kya NAHI dikhana ----
+ * ---- Crucial decision: what NOT to show ----
  *
- * Ticketing sites yahan "Only 3 left!" aur "🔥 Selling fast!" chipka deti
- * hain, chahe 300 seats khaali padi hon. Wo jhooth hai, aur ek baar pakda
- * jaye to poore product ka bharosa uth jata hai.
+ * Ticketing sites often display "Only 3 left!" or "🔥 Selling fast!"
+ * even if 300 seats are available. This is dishonest and erodes
+ * trust in the entire product.
  *
- * Yahan har number server se aata hai aur sach hai:
- *   - surge_percent          -> abhi ka multiplier, calculated
- *   - sold / total           -> asli ginti
- *   - seats_until_increase   -> asli loop se nikala hua, andaza nahi
+ * Every number here is server-sourced and accurate:
+ *   - surge_percent          -> current multiplier, calculated
+ *   - sold / total           -> actual count
+ *   - seats_until_increase   -> derived from actual loop, not an estimate
  *
- * Aur agar `seats_until_increase` null hai (price abhi nahi badhega, ya
- * max surge aa chuka), to hum us line ko DIKHATE HI NAHI — jhoothi
- * urgency banane se behtar hai khaali jagah.
+ * If `seats_until_increase` is null (price won't increase, or
+ * max surge reached), we hide the line entirely — better to have
+ * empty space than create false urgency.
  */
 export default function PricingBanner({ pricing }) {
-  // Dynamic pricing off hai to poora component gayab. Ye default hai, aur
-  // aise events pe surge ki baat karna hi galat lagta.
+  // Hide component if dynamic pricing is disabled. This is the default,
+  // and discussing surge pricing for such events feels inappropriate.
   if (!pricing?.enabled) return null
 
   const { surge_percent: surge, sold, total, seats_until_increase: until } = pricing
@@ -35,7 +35,7 @@ export default function PricingBanner({ pricing }) {
             📈 Demand pricing
           </h2>
           <p className="mt-1 text-xs text-slate-500">
-            {sold} / {total} seats bik chuki hain
+            {sold} / {total} seats sold
           </p>
         </div>
 
@@ -51,8 +51,8 @@ export default function PricingBanner({ pricing }) {
         </span>
       </div>
 
-      {/* Sold-out bar. Yahi wo number hai jisse price nikalta hai —
-          user ko dikhna chahiye ki price kis cheez se juda hai. */}
+      {/* Sold-out bar. This number determines the price —
+          users should see what the price is tied to. */}
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/5">
         <div
           className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-amber-400
@@ -61,18 +61,18 @@ export default function PricingBanner({ pricing }) {
         />
       </div>
 
-      {/* Sirf tab jab sach me pata ho. null = mat dikhao. */}
+      {/* Only show if data is verified. null = hide. */}
       {until != null && (
         <p className="mt-2.5 text-xs text-slate-400">
           {until === 1
-            ? 'Ek aur booking pe price badh jayega'
-            : `${until} aur seats bikne pe price badhega`}
+            ? 'Price will increase after one more booking'
+            : `Price will increase after ${until} more seats are sold`}
         </p>
       )}
 
       <p className="mt-2 text-[11px] leading-relaxed text-slate-600">
-        Seat hold karte hi uska price lock ho jata hai — beech me kitni bhi
-        seats bik jayein, tumse wahi liya jayega jo tumne dekha tha.
+        The price is locked once you hold a seat — regardless of how many
+        seats are sold in the meantime, you will pay the price you saw.
       </p>
     </section>
   )

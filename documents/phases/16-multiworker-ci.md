@@ -1,63 +1,52 @@
 # Phase 16 — Multi-Worker Deploy + CI
 
-> Phase 5 me maine likha tha: "Redis pub/sub isliye use kiya kyunki
-> multi-worker me in-memory dict share nahi hota."
+> In Phase 5, I wrote: "Redis pub/sub is used because in-memory dicts are not shared across multi-workers."
 >
-> Wo baat aaj tak **kabhi test nahi hui thi** — dev me hamesha ek hi
-> worker chala. Ye phase usi ko sach me chala ke dekhne ka hai.
+> That claim had **never been tested** — development always ran on a single worker. This phase is about running that configuration in reality.
 
 ---
 
-## Do maqsad
+## Two Objectives
 
-1. **Production config** — 4 uvicorn workers, built frontend, non-root
-   containers. Aur us config me sab kuch chalta hai ye sabit karna.
-2. **CI** — har push par poora stack chale aur 66 tests chalein.
+1. **Production config** — 4 uvicorn workers, built frontend, non-root containers. Proving that everything functions under this configuration.
+2. **CI** — Running the full stack and 66 tests on every push.
 
-Dono ne mil ke **teen asli bugs** nikale, jo dev me mahino se chhupe hue
-the. Wo hi is phase ka sabse kaam ka hissa hai.
+Together, these revealed **three real bugs** that had been hidden in development for months. This is the most valuable part of this phase.
 
 ---
 
 ## Multi-stage Dockerfiles
 
-Ek hi Dockerfile me do targets — `dev` aur `prod`:
+Two targets in a single Dockerfile — `dev` and `prod`:
 
 ```
 base ──┬── dev   (+ requirements-dev, --reload, root)
        └── prod  (non-root user, no dev tools, --workers N)
 ```
 
-**Do alag files kyu nahi:** base layers (python version, requirements)
-dheere-dheere alag ho jaati, aur wahin se "mere laptop pe to chalta tha"
-paida hota hai. Ek file me dono targets hon to base share hota hai.
+**Why not two separate files:** Base layers (Python version, requirements) would gradually diverge, leading to "it worked on my laptop" issues. Using one file ensures the base is shared.
 
 | Image | Dev | Prod |
 |---|---|---|
 | backend | 372 MB | 354 MB |
 | frontend | 407 MB | **74 MB** |
 
-Frontend ka farak bada hai kyunki prod me `node_modules` aur source hai hi
-nahi — sirf built assets aur nginx.
+The frontend difference is significant because the production image contains no `node_modules` or source code — only built assets and Nginx.
 
 📁 [`backend/Dockerfile`](../../backend/Dockerfile) · [`frontend/Dockerfile`](../../frontend/Dockerfile)
 
-### Prod image me do cheezein jaan-boojh ke hain
+### Two intentional features in the Prod image
 
 ```dockerfile
 RUN useradd --create-home --uid 1000 appuser
 USER appuser
 ```
 
-Container escape ho bhi jaye to attacker ko root nahi milna chahiye. Ek
-line, bada faayda.
+Even if a container escape occurs, the attacker should not gain root access. One line, major benefit.
 
-Aur dev tools install hi nahi hote — pytest, locust prod image me nahi
-hain. Kam size, kam attack surface.
+Furthermore, development tools are not installed — pytest and locust are absent from the production image. Smaller size, smaller attack surface.
 
-> Ye sirf comment nahi hai, CI dono ko **check** karta hai (neeche).
-> Aur ye hardening asli hai — beech me maine prod container me ek file
-> likhne ki koshish ki aur `PermissionError` aaya. Wahi to chahiye tha.
+> This is not just a comment; CI **checks** both (see below). This hardening is real — I attempted to write a file in the production container and received a `PermissionError`. That was the intended result.
 
 ---
 
@@ -69,37 +58,34 @@ location / {
 }
 ```
 
-Ye line na ho to `/events/3` par **refresh karne se 404** aata hai.
-Routing React Router ke paas hai, nginx ke paas nahi — nginx `events/3`
-naam ki file dhoondhta hai, milti nahi.
+Without this line, refreshing at `/events/3` results in a **404**. Routing is handled by React Router, not Nginx — Nginx looks for a file named `events/3`, which does not exist.
 
-Caching me bhi ek jaal hai:
+There is also a trap in caching:
 
-| Path | Cache | Kyu |
+| Path | Cache | Why |
 |---|---|---|
-| `/assets/*` | 1 saal, immutable | filename me content hash hai (`index-DTJXVmPu.js`). Content badla to naam badal jayega. |
-| `/index.html` | **kabhi nahi** | Yahi file naye asset names batati hai. Isko cache kiya to user deploy ke baad purane assets maangta rahega — jo ab exist hi nahi karte. Nateeja: **blank page**. |
+| `/assets/*` | 1 year, immutable | Filename contains a content hash (`index-DTJXVmPu.js`). If content changes, the name changes. |
+| `/index.html` | **never** | This file points to new asset names. If cached, the user will request old assets after a deployment — which no longer exist. Result: **blank page**. |
 
 📁 [`frontend/nginx.conf`](../../frontend/nginx.conf)
 
 ---
 
-## ⭐ Connection pool — multi-worker ki pehli chot
+## ⭐ Connection pool — the first hurdle of multi-worker
 
-Ye wo galti hai jo single worker pe dikhti hi nahi:
+This error is invisible on a single worker:
 
 ```
-Har uvicorn worker ek ALAG PROCESS hai — apna pool, apni memory.
+Each uvicorn worker is a SEPARATE PROCESS — its own pool, its own memory.
 
 Dev  (1 worker):   1 x (20 + 20) =  40 connections
 Prod (4 workers):  4 x (20 + 20) = 160 connections
-                                    ^^^ Postgres ka default max hai 100
+                                    ^^^ Postgres default max is 100
 ```
 
-Yaani jo pool config dev me sahi tha, wo 4 workers pe seedha
-`FATAL: sorry, too many clients already` deta.
+The pool configuration that worked in development triggered `FATAL: sorry, too many clients already` with 4 workers.
 
-Isliye pool ab env se aata hai, hardcoded nahi:
+Therefore, the pool is now sourced from environment variables, not hardcoded:
 
 ```yaml
 # docker-compose.prod.yml
@@ -108,59 +94,50 @@ DB_MAX_OVERFLOW: 5
 MAX_CONCURRENT_REQUESTS: 8    # invariant: < pool + overflow
 ```
 
-`4 × (5 + 5) = 40` — 100 ki limit ke andar aaram se.
+`4 × (5 + 5) = 40` — well within the 100-connection limit.
 
-Admission control bhi **per-worker** hai, isliye wo bhi ghatana pada.
-Invariant wahi rehta hai jo [Phase 7](07-auth-google-oauth.md) me tha:
-`MAX_CONCURRENT_REQUESTS < pool_size + max_overflow`.
+Admission control is also **per-worker**, so it had to be reduced. The invariant remains the same as in [Phase 7](07-auth-google-oauth.md): `MAX_CONCURRENT_REQUESTS < pool_size + max_overflow`.
 
-Measured, 4 workers ke saath: **5 / 100 connections**.
+Measured, with 4 workers: **5 / 100 connections**.
 
 ---
 
-## ⭐⭐ Asli proof — broadcast process boundary paar karta hai?
+## ⭐⭐ Real proof — does broadcast cross the process boundary?
 
-Ye is phase ka dil hai. Phase 5 ka argument aaj tak sirf ek **umeed** tha.
+This is the heart of this phase. The argument from Phase 5 was, until now, just a **hope**.
 
 Test:
-1. 12 WebSocket clients connect karo — har connection OS kisi bhi worker
-   ko de sakta hai, to ye alag processes me bant jaate hain
-2. `/api/health` ke `worker_pid` se **sabit karo** ki sach me kai
-   processes chal rahe hain (warna test kuch prove nahi karta)
-3. EK seat book karo — wo booking kisi EK worker me hoti hai
-4. Check karo sab 12 clients ko update mila
+1. Connect 12 WebSocket clients — the OS can assign each connection to any worker, distributing them across separate processes.
+2. Use the `worker_pid` from `/api/health` to **prove** that multiple processes are actually running (otherwise the test proves nothing).
+3. Book ONE seat — that booking occurs in ONE worker.
+4. Verify that all 12 clients received the update.
 
 ```
-Jawab dene wale worker processes: 3  -> [9, 10, 12]
+Responding worker processes: 3  -> [9, 10, 12]
 12 WebSocket clients connected
-Seat A-1 booked (HTTP 201) — ek worker me
+Seat A-1 booked (HTTP 201) — in one worker
 
-Broadcast mila: 12 / 12 clients
+Broadcast received: 12 / 12 clients
 
-✅ PASS — 3 workers, sab 12 clients tak broadcast pahuncha
-   Redis pub/sub sach me process boundary paar kar raha hai.
+✅ PASS — 3 workers, broadcast reached all 12 clients
+   Redis pub/sub truly crosses the process boundary.
 ```
 
-Agar broadcast in-memory dict se hota, to sirf usi worker ke clients ko
-message milta jisme booking hui thi. Baaki 8-9 clients chup rehte, aur
-unke grid me seat **hari dikhti rehti jabki wo bik chuki hai**.
+If the broadcast used an in-memory dict, only the clients connected to the worker that processed the booking would receive the message. The other 8-9 clients would remain silent, and their grids would show the seat as **available even though it was sold**.
 
 📁 [`loadtest/verify_multiworker.py`](../../loadtest/verify_multiworker.py)
 
-### Is proof ko likhte waqt ek galti hui
+### A mistake made while writing this proof
 
-Pehla run:
+First run:
 
 ```
-Jawab dene wale worker processes: 1  -> [9]
+Responding worker processes: 1  -> [9]
 ```
 
-4 workers chal rahe the, phir bhi. Wajah: maine ek hi `httpx` client se
-40 health requests bheji thi — sabko wahi ek **keep-alive TCP connection**
-mila, aur wo connection ek hi worker se juda tha.
+4 workers were running, yet only one responded. Reason: I sent 40 health requests from a single `httpx` client — all received the same **keep-alive TCP connection**, which was tied to one worker.
 
-**Worker distribution connection level pe hoti hai, request level pe
-nahi.** Har probe ke liye naya client banate hi 3 alag PIDs dikhe.
+**Worker distribution happens at the connection level, not the request level.** Creating a new client for every probe revealed 3 distinct PIDs.
 
 ---
 
@@ -168,151 +145,127 @@ nahi.** Har probe ke liye naya client banate hi 3 alag PIDs dikhe.
 
 📁 [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)
 
-Teen jobs:
+Three jobs:
 
-| Job | Kya |
+| Job | What |
 |---|---|
-| `test` | Poora stack up → migrate → seed → 66 tests → integrity check |
-| `build-prod` | Prod images build + **assertions** (dev tools nahi, root nahi) |
+| `test` | Full stack up → migrate → seed → 66 tests → integrity check |
+| `build-prod` | Prod images build + **assertions** (no dev tools, no root) |
 | `frontend` | `npm ci` + build |
 
-### GitHub ka `services:` block use nahi kiya
+### Did not use GitHub's `services:` block
 
-Wo sirf DB/Redis containers deta hai, aur app ko runner par alag se
-chalana padta — matlab CI wo cheez test karta jo deploy hoti hi nahi.
+It only provides DB/Redis containers, requiring the app to run separately on the runner — meaning CI would test something that isn't actually deployed.
 
-Yahan CI **wahi `docker compose`** chalata hai jo laptop pe chalti hai.
-Compose file toot jaye to CI pakdega.
+Here, CI runs the **same `docker compose`** used on the laptop. If the compose file breaks, CI will catch it.
 
-### Assertions, sirf build nahi
+### Assertions, not just builds
 
 ```yaml
-- name: Prod image me dev tools nahi hone chahiye
+- name: Prod image must not contain dev tools
   run: |
     ... 'if python -c "import pytest" 2>/dev/null; then
-           echo "FAIL: prod image me pytest hai"; exit 1
+           echo "FAIL: prod image contains pytest"; exit 1
          fi'
 
-- name: Prod image root se nahi chalni chahiye
+- name: Prod image must not run as root
   run: |
     USER_ID=$(... --entrypoint id backend -u 2>/dev/null | tail -1)
     if [ "$USER_ID" = "0" ]; then exit 1; fi
 ```
 
-"Build ho gayi" kaafi nahi hai. Kal koi `requirements-dev.txt` ko prod
-stage me copy kar de, to build fir bhi pass hogi — par image bhaari aur
-kam surakshit ho jayegi. Ye do checks usse rokte hain.
+"Build successful" is not enough. If someone copies `requirements-dev.txt` into the prod stage, the build would still pass — but the image would be bloated and less secure. These two checks prevent that.
 
-### `sleep 30` ke bajaye poll
+### Polling instead of `sleep 30`
 
 ```bash
 for i in $(seq 1 60); do
   curl -sf http://localhost:8000/api/health && exit 0
   sleep 1
 done
-docker compose logs backend      # fail hua to logs ke saath
+docker compose logs backend      # fail with logs
 exit 1
 ```
 
-Fixed sleep dheeme runner pe flaky hota hai aur tez runner pe waqt khaata
-hai. Aur fail hone par logs ke bina CI failure debug karna namumkin hai.
+Fixed sleep is flaky on slow runners and wastes time on fast ones. Debugging a CI failure without logs is impossible.
 
 ---
 
-## ⭐⭐⭐ Teen bugs jo CI-jaisi clean state ne pakde
+## ⭐⭐⭐ Three bugs caught by a clean, CI-like state
 
-Ye is phase ka sabse zaroori section hai. Teeno bugs **mahino se code me
-the**, aur teeno sirf isliye chhupe rahe ki meri dev DB purani thi.
+This is the most important section. All three bugs had been in the code for **months**, hidden only because my development database was stale.
 
-### Bug 1 — `docker compose down -v` ke baad 35 tests SKIP hue
+### Bug 1 — 35 tests SKIPPED after `docker compose down -v`
 
 ```
-31 passed, 35 skipped in 6.84s        <- CI me ye GREEN dikhta
+31 passed, 35 skipped in 6.84s        <- Appears GREEN in CI
 ```
 
-`tokens` fixture `user1@seatpulse.dev` se login karti hai. Login fail hua
-to fixture `pytest.skip()` karti hai. Aur skipped tests CI me **pass jaise
-hi** dikhte hain.
+The `tokens` fixture logs in as `user1@seatpulse.dev`. If login fails, the fixture calls `pytest.skip()`. Skipped tests appear as **passed** in CI.
 
-Wajah `seed.py` me thi:
+The cause was in `seed.py`:
 
 ```python
 existing = 3                                  # demo, organizer, admin
 for i in range(existing, existing + to_create)   # user3, user4, ...
 ```
 
-Numbering users ki **ginti** se bandhi thi. Named accounts banne ke baad
-counter 3 pe pahunch jata tha, to **`user1` aur `user2` kabhi bante hi
-nahi the.**
+Numbering was tied to the **count** of users. After named accounts were created, the counter reset to 3, so **`user1` and `user2` were never created.**
 
-Purani DB me ye chhupa tha kyunki wo tab seed hui thi jab numbering alag
-padi thi.
+This was hidden in the old database because it was seeded when the numbering was different.
 
-Fix: numbering ab fixed hai (`user1..userN`) aur sirf missing accounts
-bante hain — jisse seed idempotent bhi ho gaya.
+Fix: Numbering is now fixed (`user1..userN`) and only missing accounts are created — making the seed idempotent.
 
-> **Sabak:** "66 passed" aur "31 passed, 35 skipped" — dono CI me hare
-> dikhte hain. Skip count par nazar rakhna zaroori hai.
+> **Lesson:** "66 passed" and "31 passed, 35 skipped" both look green in CI. You must monitor the skip count.
 
-### Bug 2 — seeded event ka organizer NULL tha
+### Bug 2 — seeded event organizer was NULL
 
-Fix ke baad 62 pass, **4 fail** — saare gate check-in wale:
+After the fix, 62 passed, **4 failed** — all related to gate check-in:
 
 ```
 KeyError: 'ok'
 ```
 
-Endpoint `{"ok": ...}` ke bajaye kuch aur laut raha tha. Seedha call
-karke dekha:
+The endpoint was returning something other than `{"ok": ...}`. Calling it directly:
 
 ```
 HTTP 403
-{"detail":"Ye ticket tumhare event ka nahi hai"}
+{"detail":"This ticket does not belong to your event"}
 ```
 
-`seed.py` event banata tha par `organizer_id` set hi nahi karta tha — wo
-NULL rehta tha. Check-in ka ownership check `event.organizer_id == user.id`
-dekhta hai, jo NULL ke saath kabhi match nahi karta.
+`seed.py` created the event but did not set the `organizer_id` — it remained NULL. The check-in ownership check looks for `event.organizer_id == user.id`, which never matches NULL.
 
-Iska matlab sirf test failure nahi tha — **demo data hi toota hua tha**:
-seeded event organizer portal me dikhta hi nahi, aur uske tickets gate pe
-scan nahi hote.
+This wasn't just a test failure — **the demo data was broken**: the seeded event didn't appear in the organizer portal, and its tickets wouldn't scan at the gate.
 
-Purani DB me chhupa tha kyunki wahan event portal se banaya gaya tha.
+Hidden in the old database because it was created via the event portal.
 
-Fix: seed ab event ko organizer account se jodta hai, aur purani DB ke
-liye backfill bhi karta hai.
+Fix: Seed now links the event to the organizer account and backfills for the old database.
 
-### Bug 3 — idempotency test agle run me fail hoti thi
+### Bug 3 — idempotency test failed on subsequent runs
 
-Prod stack pe pehli baar suite chalayi to ek test fail hui:
+Running the suite on the prod stack for the first time caused one test to fail:
 
 ```
-assert 0 == 1    # "ek booking honi thi, mili 0"
+assert 0 == 1    # "one booking expected, found 0"
 ```
 
-Pehla shak multi-worker par gaya. Galat tha. Test ki idempotency key
-**fixed** thi:
+My first suspicion was multi-worker. I was wrong. The test's idempotency key was **fixed**:
 
 ```python
 "Idempotency-Key": f"test-{seat_id}-once"
 ```
 
-Wo key Redis me TTL tak zinda rehti hai. Agla test run usi key par
-**replay** le aata: 201 milta tha, par nayi booking banti hi nahi thi.
+The key persists in Redis until TTL. The next test run would **replay** the key: it received a 201, but no new booking was created.
 
-Test `reset_state.py` par nirbhar thi, jo chhoot sakta hai (aur CI me
-chalta hi nahi).
+The test relied on `reset_state.py`, which can be skipped (and doesn't run in CI).
 
-Fix: har run ka apna `RUN_ID` suffix. Ab suite lagatar do baar bina kisi
-reset ke pass hoti hai — jo pehle nahi hoti thi.
+Fix: Each run has its own `RUN_ID` suffix. The suite now passes twice in a row without any reset — which was previously impossible.
 
-> **Sabak:** "multi-worker me fail ho raha hai" ka pehla matlab "multi-worker
-> ka bug hai" nahi hota. Yahan teeno baar asli wajah kuch aur thi.
+> **Lesson:** "Failing in multi-worker" does not automatically mean "it's a multi-worker bug." In all three cases, the real cause was something else.
 
 ---
 
-## Chalane ke commands
+## Commands
 
 ```bash
 # ---- Production stack ----
@@ -322,20 +275,18 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 docker compose cp loadtest/verify_multiworker.py backend:/tmp/vmw.py
 docker compose exec backend python /tmp/vmw.py
 
-# Connections check — 4 workers, 100 ki limit
+# Connections check — 4 workers, 100 limit
 docker compose exec db psql -U seatpulse -d seatpulse \
   -c "SELECT count(*) FROM pg_stat_activity WHERE datname='seatpulse';"
 
-# Wapas dev pe
-# ⚠️ --build zaroori hai: prod build wahi image tag overwrite karta hai,
-#    to bina rebuild ke dev container prod image se chalta hai (aur usme
-#    pytest nahi hota).
+# Back to dev
+# ⚠️ --build is required: prod build overwrites the image tag,
+#    so without a rebuild, the dev container runs the prod image (which lacks pytest).
 docker compose -f docker-compose.yml -f docker-compose.prod.yml down
 docker compose up -d --build backend worker
 ```
 
-⚠️ **Prod image me pytest nahi hai.** Prod stack ke against tests chalane
-ke liye dev image se ek throwaway container chalao:
+⚠️ **Prod image does not contain pytest.** To run tests against the prod stack, run a throwaway container from the dev image:
 
 ```bash
 docker build --target dev -t seatpulse-test:dev ./backend
@@ -346,43 +297,41 @@ docker run --rm --network seatpulse-event-engine_default \
   seatpulse-test:dev python -m pytest tests/ -q
 ```
 
-### CI jaisa clean run locally
+### Clean run like CI locally
 
-Ye har bade change ke baad chalana chahiye — teeno upar wale bugs isi se
-mile:
+This should be run after every major change — it caught all three bugs above:
 
 ```bash
-docker compose down -v          # ⚠️ poora database uda deta hai
+docker compose down -v          # ⚠️ wipes the entire database
 docker compose up -d --build
 docker compose exec backend alembic upgrade head
 docker compose exec backend python seed.py
 docker compose exec backend python -m pytest tests/ -q
 ```
 
-**Skip count zaroor dekhna** — `66 passed` chahiye, `31 passed, 35 skipped`
-nahi.
+**Check the skip count** — you want `66 passed`, not `31 passed, 35 skipped`.
 
 ---
 
 ## Files
 
-**Naye:**
-| File | Kya |
+**New:**
+| File | What |
 |---|---|
-| `.github/workflows/ci.yml` | Teen jobs — tests, prod build + assertions, frontend |
-| `docker-compose.prod.yml` | 4 workers, chhota pool, nginx frontend |
+| `.github/workflows/ci.yml` | Three jobs — tests, prod build + assertions, frontend |
+| `docker-compose.prod.yml` | 4 workers, small pool, nginx frontend |
 | `frontend/nginx.conf` | SPA fallback + cache headers |
-| `frontend/package-lock.json` | Tha hi nahi — `npm ci` ke bina reproducible build namumkin |
+| `frontend/package-lock.json` | Missing previously — reproducible builds impossible without `npm ci` |
 | `loadtest/verify_multiworker.py` | Cross-worker broadcast proof |
 
-**Badle:**
-| File | Kya |
+**Modified:**
+| File | What |
 |---|---|
 | `backend/Dockerfile` | `dev` / `prod` targets, non-root prod |
 | `frontend/Dockerfile` | `dev` / `build` / `prod` (nginx) |
 | `backend/config.py` | `DB_POOL_SIZE`, `DB_MAX_OVERFLOW` |
-| `backend/database.py` | Pool ab config se |
-| `backend/main.py` | `/api/health` me `worker_pid` |
+| `backend/database.py` | Pool now from config |
+| `backend/main.py` | `worker_pid` in `/api/health` |
 | `backend/seed.py` | **Bug 1 + Bug 2 fix** |
 | `backend/tests/test_concurrency.py` | **Bug 3 fix** — per-run idempotency keys |
 | `docker-compose.yml` | `target: dev` explicit |
@@ -391,8 +340,8 @@ nahi.
 
 ## Related
 
-- [Phase 5 — WebSockets](05-websockets.md) — wo daawa jo yahan verify hua
-- [Phase 7 — Auth + Google OAuth](07-auth-google-oauth.md) — admission control aur pool ka invariant
-- [Phase 15 — Locking Benchmark](15-locking-benchmark.md) — pichla measurement phase
+- [Phase 5 — WebSockets](05-websockets.md) — the claim verified here
+- [Phase 7 — Auth + Google OAuth](07-auth-google-oauth.md) — admission control and pool invariant
+- [Phase 15 — Locking Benchmark](15-locking-benchmark.md) — previous measurement phase
 - [testing.md](../reference/testing.md) — commands
 - [docker-commands.md](../reference/docker-commands.md) — compose reference

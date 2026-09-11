@@ -1,9 +1,8 @@
 /**
- * Chhote inline SVG icons.
+ * Small inline SVG icons.
  *
- * Icon library (lucide/heroicons) nahi lagayi — hume 10 icons chahiye,
- * uske liye poora package aur ek aur dependency add karna faltu hai.
- * Ye sab 24x24 stroke icons hain, `currentColor` follow karte hain.
+ * Avoids external icon libraries to minimize bundle size.
+ * These are 24x24 stroke icons that inherit `currentColor`.
  */
 
 const base = {

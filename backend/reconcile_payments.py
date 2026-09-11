@@ -1,24 +1,24 @@
 """
 Payment reconciliation.
 
-⭐ Sirf webhook par bharosa karna kaafi nahi hai.
+⭐ Relying solely on webhooks is insufficient.
 
-Webhook miss ho sakta hai — hamara server neeche tha, network gira, ya
-gateway ne saare retries khatam kar diye. Us case me paisa kat chuka hoga
-par booking nahi bani hogi, aur user ki seat block padi rahegi.
+Webhooks can be missed due to server downtime, network issues, or exhausted
+gateway retries. In such cases, the user is charged, but the booking is not
+created, and the seat remains blocked.
 
-Isliye har payment ka ek TTL hai, aur ye script un pending payments ko
-utha ke settle karti hai jinka time nikal gaya:
+Every payment has a TTL. This script processes pending payments that have
+exceeded their TTL:
 
-  - Stripe se poochho ki asal me kya hua
-  - succeeded hai to fulfil karo (webhook late ya miss hua tha)
-  - warna expired mark karke seat wapas available karo
+  - Query Stripe for the actual payment status.
+  - If succeeded, fulfill the booking (recovering from a missed webhook).
+  - Otherwise, mark as expired and release the seat.
 
-Chalao (cron/scheduler se, har 5 minute):
+Execution (via cron/scheduler, every 5 minutes):
     docker compose exec backend python reconcile_payments.py
 
-Ye "belt and braces" hai — webhook fast path hai, ye safety net.
-Har paise wale system me dono hote hain.
+This is a "belt and braces" approach; webhooks provide the fast path,
+while this script acts as a safety net.
 """
 
 import logging
@@ -35,7 +35,7 @@ logger = logging.getLogger("reconcile")
 
 
 def _stripe_session_status(session_id: str) -> str | None:
-    """Stripe se poochho ki session ka kya hua. None = pata nahi chala."""
+    """Query Stripe for the session status. Returns None if status is unknown."""
     try:
         res = httpx.get(
             f"https://api.stripe.com/v1/checkout/sessions/{session_id}",
@@ -45,15 +45,14 @@ def _stripe_session_status(session_id: str) -> str | None:
         res.raise_for_status()
         return res.json().get("payment_status")   # "paid" | "unpaid" | "no_payment_required"
     except httpx.HTTPError as exc:
-        logger.warning("Stripe se %s ka status nahi mila: %s", session_id, exc)
+        logger.warning("Failed to retrieve status for %s from Stripe: %s", session_id, exc)
         return None
 
 
 def reconcile() -> None:
-    # Import yahan hai, upar nahi — warna circular import ho jata
-    # (routers.payments -> models -> ... ). Reconciliation ko wahi
-    # _fulfil/_fail use karne chahiye jo webhook use karta hai, apna
-    # duplicate logic nahi.
+    # Import deferred to avoid circular imports (routers.payments -> models -> ...).
+    # Reconciliation must use the same _fulfil/_fail logic as webhooks to
+    # ensure consistency.
     from routers.payments import _fail, _fulfil
 
     db = SessionLocal()
@@ -68,22 +67,21 @@ def reconcile() -> None:
         ).all()
 
         if not stale:
-            logger.info("Koi stale payment nahi — sab settled hai")
+            logger.info("No stale payments found — all settled.")
             return
 
-        logger.info("%d stale pending payments mile", len(stale))
+        logger.info("Found %d stale pending payments.", len(stale))
 
         for payment in stale:
-            # Stripe hai to pehle usse poochho — ho sakta hai paisa kat chuka ho
-            # aur sirf webhook miss hua ho. Bina poochhe expire kar dena
-            # matlab user ka paisa le lena aur ticket na dena.
+            # Verify status with Stripe to handle missed webhooks.
+            # Do not expire if the payment was successful.
             if payment.provider == "stripe" and payment.provider_ref:
                 status = _stripe_session_status(payment.provider_ref)
 
                 if status == "paid":
                     logger.warning(
-                        "Payment %s Stripe pe PAID hai par yahan pending — "
-                        "webhook miss hua. Fulfil kar rahe hain.",
+                        "Payment %s is PAID on Stripe but pending here — "
+                        "webhook missed. Fulfilling.",
                         payment.id,
                     )
                     _fulfil(db, payment)
@@ -91,14 +89,13 @@ def reconcile() -> None:
                     continue
 
                 if status is None:
-                    # Stripe se baat nahi hui — chhod do, agli baar dekhenge.
-                    # Andaza laga ke expire karna galat hoga.
+                    # Stripe unreachable; skip to avoid premature expiration.
                     continue
 
             _fail(db, payment, "expired_unpaid")
             expired += 1
 
-        logger.info("✅ %d fulfil kiye (missed webhooks), %d expire kiye", settled, expired)
+        logger.info("✅ Fulfilled %d (missed webhooks), expired %d.", settled, expired)
 
     finally:
         db.close()

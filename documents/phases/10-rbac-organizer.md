@@ -1,22 +1,22 @@
 # Phase 10 — RBAC + Organizer Portal
 
-[09-rate-limit-idempotency.md](09-rate-limit-idempotency.md) ke baad ka kaam.
+Follow-up to [09-rate-limit-idempotency.md](09-rate-limit-idempotency.md).
 
-**Kya bana:** teen roles, organizer apne events bana sakta hai, admin ko platform stats dikhte hain.
+**Implemented:** Three roles, organizer event creation, and admin platform statistics.
 
 ---
 
-## Teen alag cheezein jo log mila dete hain
+## Three distinct concepts often confused
 
-| | Sawaal | Kahan solve hui |
+| | Question | Solved in |
 |---|---|---|
-| **Authentication** | Tum kaun ho? | Phase 7 — token se |
-| **Authorization** | Tum kya kar sakte ho? | **Ye phase** — role se |
-| **Ownership** | Ye cheez TUMHARI hai? | **Ye phase** — `organizer_id` se |
+| **Authentication** | Who are you? | Phase 7 — via token |
+| **Authorization** | What can you do? | **This phase** — via role |
+| **Ownership** | Is this YOUR resource? | **This phase** — via `organizer_id` |
 
-> ⭐ Teesri sabse zyada bhulai jaati hai. **Role check pass hone ka matlab ye nahi ki har resource tumhara hai.** Organizer role hone se tum kisi bhi event ko edit nahi kar sakte — sirf apne wale ko.
+> ⭐ Ownership is the most frequently overlooked. **Passing a role check does not imply ownership of a resource.** Having an organizer role does not grant permission to edit any event — only your own.
 >
-> Ye interview me poocha jata hai, aur bahut log sirf pehli do batate hain.
+> This is a common interview question; many candidates only mention the first two.
 
 ---
 
@@ -28,19 +28,19 @@ ROLE_ORGANIZER = "organizer"    # apne events banao aur manage karo
 ROLE_ADMIN     = "admin"        # poore platform ka access
 ```
 
-### Sirf teen flat roles kyu, permission matrix kyu nahi
+### Why flat roles instead of a permission matrix?
 
-Granular permissions (`event.create`, `event.delete`, `stats.read`...) bade systems me chahiye hoti hain. Yahan wo **over-engineering** hoti.
+Granular permissions (`event.create`, `event.delete`, `stats.read`...) are necessary for large-scale systems. Here, they would be **over-engineering**.
 
-Aur ek practical baat: **flat role se granular pe jaana aasan hai; ulta bahut mushkil.** Aaj `role` column hai, kal `permissions` table add karke role usme map kar sakte ho.
+Practical note: **Moving from flat roles to granular permissions is easy; the reverse is difficult.** Today we use a `role` column; tomorrow we can add a `permissions` table and map roles to it.
 
-### Column pe check constraint
+### Column check constraint
 
 ```python
 CheckConstraint(f"role IN ({', '.join(repr(r) for r in ALL_ROLES)})", name="ck_user_role")
 ```
 
-Typo se koi `"Organizer"` ya `"orgnizer"` na ban jaye — DB hi rok dega. Wahi pattern jo `seats.status` pe laga hai.
+This prevents typos like `"Organizer"` or `"orgnizer"` — the database enforces the constraint. This follows the same pattern used for `seats.status`.
 
 ---
 
@@ -55,20 +55,20 @@ def require_role(*roles: str):
     return dependency
 ```
 
-Use:
+Usage:
 ```python
 user: User = Depends(require_role(ROLE_ORGANIZER, ROLE_ADMIN))
 ```
 
-### ⚠️ Yahan 403, booking me 404 — dono kyu alag
+### ⚠️ Why 403 for roles, but 404 for bookings?
 
-| Case | Status | Kyu |
+| Case | Status | Reason |
 |---|---|---|
-| Attendee organizer route pe | **403** | Chhupane ko kuch hai hi nahi. Endpoint `/docs` me dikh raha hai. Bas permission nahi hai |
-| Organizer A, organizer B ka event | **404** | Yahan chhupana hai ki wo event **exist karta hai** |
-| User A, user B ki booking (Phase 7) | **404** | Same wajah |
+| Attendee on organizer route | **403** | Nothing to hide. The endpoint is visible in `/docs`. Access is simply denied. |
+| Organizer A, accessing Organizer B's event | **404** | We must hide the fact that the event **exists**. |
+| User A, accessing User B's booking (Phase 7) | **404** | Same reason. |
 
-> Rule: **capability** ki kami = 403. **Existence** chhupani ho = 404.
+> Rule: Lack of **capability** = 403. Need to hide **existence** = 404.
 
 ---
 
@@ -86,15 +86,15 @@ def _owned_event(event_id: int, user: User, db: Session) -> Event:
     return event
 ```
 
-Har organizer endpoint isse hi event nikalta hai. Bina iske koi bhi organizer `/api/organizer/events/5` chala ke kisi aur ka event edit kar deta — **role check pass ho jata, par ownership fail hoti.**
+Every organizer endpoint uses this to retrieve the event. Without this, any organizer could call `/api/organizer/events/5` to edit another user's event — the **role check would pass, but ownership would fail.**
 
-Admin ko chhoot hai — wo sab dekh aur edit kar sakta hai.
+Admins are exempt and can view/edit everything.
 
 ---
 
-## Step 4 — Event + seats ek saath
+## Step 4 — Event + seats generation
 
-Organizer ko har seat alag se nahi banani. Wo **price tiers** deta hai:
+Organizers do not create seats individually. They define **price tiers**:
 
 ```json
 {
@@ -107,7 +107,7 @@ Organizer ko har seat alag se nahi banani. Wo **price tiers** deta hai:
 }
 ```
 
-Tiers **upar se neeche** lagte hain — pehla tier row A se. Matlab: A-B @2500, C-E @1200, F-J @800. Total 10 rows × 10 = **100 seats**.
+Tiers are applied **top-to-bottom** — the first tier starts at row A. Example: A-B @2500, C-E @1200, F-J @800. Total 10 rows × 10 = **100 seats**.
 
 ```python
 row_index = 0
@@ -120,18 +120,18 @@ for tier in payload.price_tiers:
 db.bulk_save_objects(seats)
 ```
 
-`bulk_save_objects` — 2000 alag INSERT se bahut tez.
+`bulk_save_objects` is significantly faster than 2000 individual INSERTs.
 
-### Limits — bina inke koi DB bhar sakta hai
+### Limits — preventing database bloat
 
 ```python
-if total_rows > 26:            # A-Z se zyada rows nahi
-if total_seats > 2000:         # ek event me max
+if total_rows > 26:            # A-Z max
+if total_seats > 2000:         # max per event
 ```
 
-Pydantic me bhi: `seats_per_row: int = Field(..., gt=0, le=50)`, `price_tiers: max_length=10`.
+Pydantic validation: `seats_per_row: int = Field(..., gt=0, le=50)`, `price_tiers: max_length=10`.
 
-### `EventUpdate` me layout aur pricing kyu nahi
+### Why exclude layout and pricing from `EventUpdate`?
 
 ```python
 class EventUpdate(BaseModel):
@@ -140,21 +140,21 @@ class EventUpdate(BaseModel):
     starts_at: datetime | None = None
     description: str | None = None
     category: str | None = None
-    # seats_per_row aur price_tiers JAAN-BOOJH KE nahi hain
+    # seats_per_row and price_tiers are intentionally omitted
 ```
 
-Jab log tickets khareed chuke hon, tab seats ya price badalna galat hai. Layout badalna ho to event delete karke naya banana padega — aur delete tabhi hoga jab koi confirmed booking na ho.
+Changing seats or pricing after tickets have been sold is invalid. To change the layout, the event must be deleted and recreated — and deletion is only permitted if there are no confirmed bookings.
 
-**Schema me field hi na rakhna** sabse saaf tarika hai — route me `if` likhne se behtar.
+**Omitting the fields from the schema** is the cleanest approach, superior to adding `if` logic in the route.
 
-### `exclude_unset` ka farak
+### The impact of `exclude_unset`
 
 ```python
 for field, value in payload.model_dump(exclude_unset=True).items():
     setattr(event, field, value)
 ```
 
-Bina `exclude_unset` ke, client ne jo field **bheji hi nahi** wo bhi `None` set ho jaati — matlab `{"name": "New"}` bhejne se description NULL ho jata.
+Without `exclude_unset`, fields **not sent** by the client would be set to `None` — meaning `{"name": "New"}` would inadvertently set the description to NULL.
 
 ---
 
@@ -170,38 +170,38 @@ if confirmed:
     raise HTTPException(409, f"{confirmed} confirmed booking hain — delete nahi ho sakta")
 ```
 
-⚠️ **Ye sabse important business rule hai.** Cascade delete laga hua hai, to bina is check ke ek DELETE se logon ki **khareedi hui tickets gayab** ho jaatin.
+⚠️ **This is a critical business rule.** Since cascade delete is enabled, this check prevents a single DELETE command from wiping out **purchased tickets**.
 
 ---
 
-## ⭐ Bug: SQLAlchemy ne DB ka kaam khud karne ki koshish ki
+## ⭐ Bug: SQLAlchemy's over-eager DB management
 
-Test fail hua:
+Test failure:
 
 ```
 AssertionError: assert 500 == 204
 ```
 
-Logs me:
+Logs:
 ```
 sqlalchemy.exc.IntegrityError: (psycopg2.errors.NotNullViolation)
 null value in column "seat_id" of relation "bookings" violates not-null constraint
 ```
 
-### Kya ho raha tha
+### The cause
 
-DB me FK pe `ON DELETE CASCADE` laga hua hai:
+The database FK has `ON DELETE CASCADE`:
 ```python
 seat_id: Mapped[int] = mapped_column(ForeignKey("seats.id", ondelete="CASCADE"))
 ```
 
-Par `db.delete(event)` par **SQLAlchemy DB ka intezaar nahi karta**. Wo khud "helpful" banne ki koshish karta hai:
+However, SQLAlchemy does not wait for the DB during `db.delete(event)`. It tries to be "helpful":
 
-1. Event ki saari seats memory me load karta hai
-2. Un seats ki saari bookings load karta hai
-3. Aur `UPDATE bookings SET seat_id = NULL` chalata hai
+1. Loads all event seats into memory.
+2. Loads all bookings for those seats.
+3. Executes `UPDATE bookings SET seat_id = NULL`.
 
-Par `seat_id` NOT NULL hai → violation.
+Since `seat_id` is NOT NULL, this triggers a violation.
 
 ### Fix — `passive_deletes=True`
 
@@ -211,13 +211,13 @@ seats: Mapped[list["Seat"]] = relationship(
 )
 ```
 
-Ye SQLAlchemy se kehta hai: *"tu kuch mat kar, DB ka `ON DELETE` khud sambhal lega."*
+This instructs SQLAlchemy: *"Do nothing; the DB's `ON DELETE` will handle it."*
 
-> **Rule:** jab bhi FK pe `ondelete="CASCADE"` ya `"SET NULL"` lagao, relationship pe `passive_deletes=True` bhi lagao. Warna dono cascade karne ki koshish karte hain aur takra jaate hain.
+> **Rule:** Whenever using `ondelete="CASCADE"` or `"SET NULL"` on an FK, set `passive_deletes=True` on the relationship. Otherwise, both attempt to cascade, causing a conflict.
 >
-> Bonus: ye tez bhi hai — SQLAlchemy hazaaron child rows memory me load nahi karta.
+> Bonus: It is faster — SQLAlchemy no longer loads thousands of child rows into memory.
 
-Maine ye teeno jagah lagaya: `Event.seats`, `Seat.bookings`, `User.bookings`.
+Applied to: `Event.seats`, `Seat.bookings`, and `User.bookings`.
 
 ---
 
@@ -228,15 +228,15 @@ active_locks = sum(1 for _ in redis_client.scan_iter("seat:*:lock"))
 live = sum(manager.count(event_id) for event_id in manager.rooms())
 ```
 
-Data **teen jagah** se aata hai — Postgres (users, events, bookings, revenue), Redis (active locks), aur is worker ki memory (WebSocket clients).
+Data is aggregated from **three sources**: Postgres (users, events, bookings, revenue), Redis (active locks), and worker memory (WebSocket clients).
 
-> ⚠️ `scan_iter` use kiya, `KEYS` nahi. `KEYS` poore Redis ko block kar deta hai — production me kabhi mat use karna. `scan` cursor-based hai.
+> ⚠️ Used `scan_iter`, not `KEYS`. `KEYS` blocks the entire Redis instance — never use in production. `scan` is cursor-based.
 
-> ⚠️ `live_connections` **sirf is worker ka** count hai. Multi-worker me har worker apna alag number dega. Sahi total ke liye ye bhi Redis me rakhna padega — abhi wo zaroorat nahi, par limitation doc me likhi hui hai (aur UI me bhi dikhayi hai).
+> ⚠️ `live_connections` is **worker-specific**. In a multi-worker setup, each worker reports its own count. For an accurate total, this must be moved to Redis — not required yet, but noted as a limitation.
 
-### N+1 se bachna
+### Avoiding N+1
 
-Organizer ke 20 events ke counts chahiye. Naive tarika: har event ke liye ek query = 20 queries.
+We need counts for 20 organizer events. Naive approach: one query per event = 20 queries.
 
 ```python
 seat_rows = db.execute(
@@ -246,22 +246,22 @@ seat_rows = db.execute(
 ).all()
 ```
 
-Ek query, sab events ke counts. **N+1 sabse common performance bug hai** aur interview me bhi poocha jata hai.
+One query, all counts. **N+1 is the most common performance bug** and a frequent interview topic.
 
 ---
 
 ## Step 7 — Frontend
 
-### Role-gated nav
+### Role-gated navigation
 
 ```jsx
 const isOrganizer = user?.role === 'organizer' || user?.role === 'admin'
 const isAdmin = user?.role === 'admin'
 ```
 
-Sidebar me "Organizer" aur "Admin" sections role ke hisaab se dikhte hain.
+Sidebar sections "Organizer" and "Admin" are rendered based on the user's role.
 
-### ⚠️ Client-side gate security NAHI hai
+### ⚠️ Client-side gates are NOT security
 
 ```jsx
 function RequireRole({ roles, children }) {
@@ -270,19 +270,19 @@ function RequireRole({ roles, children }) {
 }
 ```
 
-Ye **sirf UX** ke liye hai. React DevTools se state badalna trivial hai. Asli gate backend ka `require_role` hai — bypass karke bhi user ko 403 hi milega.
+This is **UX only**. State manipulation via React DevTools is trivial. The real gate is the backend `require_role` — bypassing the UI will still result in a 403.
 
-> Interview me ye khud bolna: *"Frontend role check sirf isliye hai ki user ko wo page na dikhe jo waise bhi 403 dega. Security backend me hai."*
+> Interview tip: State clearly: *"Frontend role checks are for UX, preventing access to pages that would return a 403 anyway. Security is enforced on the backend."*
 
 ### Pages
 
-| Route | Kaun | Kya |
+| Route | Role | Purpose |
 |---|---|---|
-| `/organizer/events` | organizer, admin | Apne events + sales bar + revenue |
+| `/organizer/events` | organizer, admin | Events list + sales bar + revenue |
 | `/organizer/events/new` | organizer, admin | Create form with live seat preview |
-| `/admin` | admin | Platform stats, 10s pe refresh |
+| `/admin` | admin | Platform stats, 10s refresh |
 
-**Create form me live preview** — jaise tier badalte ho, `A–B`, `C–E` labels aur "40 seats" turant update hote hain. Backend ki limits (26 rows, 2000 seats) yahan bhi check hoti hain, taki user ko submit karne se pehle pata chal jaye.
+**Create form live preview** — as tiers change, `A–B`, `C–E` labels and "40 seats" update instantly. Backend limits (26 rows, 2000 seats) are checked here too, providing immediate feedback.
 
 ---
 
@@ -331,7 +331,7 @@ SELECT row_label, count(*), min(price) FROM seats WHERE event_id=2 GROUP BY row_
 ### 3. ⭐ Ownership isolation
 
 ```bash
-# Dusra organizer pehle ka event edit kare
+# Organizer 2 attempts to edit Organizer 1's event
 curl -X PATCH -H "Authorization: Bearer $ORG2" -d '{"name":"HACKED"}' \
   http://localhost:8000/api/organizer/events/2
 # -> 404
@@ -339,15 +339,15 @@ curl -X PATCH -H "Authorization: Bearer $ORG2" -d '{"name":"HACKED"}' \
 curl -X DELETE -H "Authorization: Bearer $ORG2" http://localhost:8000/api/organizer/events/2
 # -> 404
 
-# Usse apni list me kuch dikhta bhi nahi
+# Organizer 2 sees nothing in their list
 curl -H "Authorization: Bearer $ORG2" http://localhost:8000/api/organizer/events
 # -> []
 
-# Admin ko sab dikhte hain
+# Admin sees everything
 curl -H "Authorization: Bearer $ADM" http://localhost:8000/api/organizer/events
 # -> "Test Comedy Night", "Arijit Singh Live"
 
-# Owner khud edit kare
+# Owner edits their own event
 curl -X PATCH -H "Authorization: Bearer $ORG" -d '{"venue":"Habitat World"}' ...
 # -> 200
 ```
@@ -355,7 +355,7 @@ curl -X PATCH -H "Authorization: Bearer $ORG" -d '{"venue":"Habitat World"}' ...
 ### 4. Delete guard
 
 ```bash
-# Booking karne ke baad
+# After booking
 curl -X DELETE -H "Authorization: Bearer $ORG" http://localhost:8000/api/organizer/events/2
 # {"detail":"1 confirmed booking hain — event delete nahi ho sakta"}
 ```
@@ -374,32 +374,32 @@ curl -X DELETE -H "Authorization: Bearer $ORG" http://localhost:8000/api/organiz
 29 passed in 39.88s
 ```
 
-9 naye tests: role in `/me`, attendee blocked, organizer blocked from admin, admin sees all, price tiers, attendee can't create, **ownership isolation**, **delete guard**, layout limits.
+9 new tests: role in `/me`, attendee blocked, organizer blocked from admin, admin sees all, price tiers, attendee can't create, **ownership isolation**, **delete guard**, layout limits.
 
 ### 7. Browser
 
-Teen accounts se login karke dekho — sidebar har baar alag dikhega:
+Login with three accounts — the sidebar updates accordingly:
 
-| Login | Sidebar me |
+| Login | Sidebar |
 |---|---|
-| `demo@seatpulse.dev` | Sirf Dashboard, Events, My Bookings, Profile |
+| `demo@seatpulse.dev` | Dashboard, Events, My Bookings, Profile |
 | `organizer@seatpulse.dev` | + **Organizer** section (My Events, Create Event) |
 | `admin@seatpulse.dev` | + **Admin** section (Platform Stats) |
 
-Profile page pe role badge bhi dikhta hai — admin laal, organizer violet.
+Profile page displays a role badge — admin red, organizer violet.
 
 ---
 
-## Interview me kya poocha jayega
+## Interview Q&A
 
-| Sawaal | Jawab |
+| Question | Answer |
 |---|---|
-| "RBAC kaise implement kiya?" | `role` column + `require_role` dependency. Par sirf role kaafi nahi — **ownership** alag check hai. Organizer role hone se koi bhi event edit nahi kar sakte |
-| "403 aur 404 me kya farak?" | Capability ki kami = 403 (endpoint public knowledge hai). Existence chhupani ho = 404 (attacker ko pata na chale ki resource hai) |
-| "Granular permissions kyu nahi?" | Teen roles wale system me wo over-engineering hai. Flat se granular jaana aasan hai, ulta mushkil |
-| "Frontend me role check hai — wo secure hai?" | Bilkul nahi. Wo sirf UX hai, DevTools se bypass ho jata hai. Asli gate backend me hai |
-| "Organizer delete kare to bookings ka kya?" | Delete tabhi allowed hai jab koi confirmed booking na ho — 409. Paid tickets kabhi gayab nahi honi chahiye |
-| "N+1 se kaise bache?" | Sab events ke counts ek `GROUP BY` query me, har event ke liye alag query nahi |
+| "How did you implement RBAC?" | `role` column + `require_role` dependency. Role alone is insufficient — **ownership** is checked separately. An organizer role does not grant edit access to all events. |
+| "Difference between 403 and 404?" | Lack of capability = 403 (endpoint is public knowledge). Hiding existence = 404 (attacker shouldn't know the resource exists). |
+| "Why no granular permissions?" | Over-engineering for a three-role system. Moving from flat to granular is easy; the reverse is hard. |
+| "Is the frontend role check secure?" | Absolutely not. It is UX only, bypassable via DevTools. The real gate is the backend. |
+| "What happens to bookings if an organizer deletes an event?" | Deletion is blocked if confirmed bookings exist — 409. Paid tickets must never disappear. |
+| "How to avoid N+1?" | Aggregate counts for all events in a single `GROUP BY` query, rather than one query per event. |
 
 ---
 
@@ -407,11 +407,11 @@ Profile page pe role badge bhi dikhta hai — admin laal, organizer violet.
 
 | Problem | Fix |
 |---|---|
-| `NotNullViolation` on event delete | Relationship pe `passive_deletes=True` chahiye |
-| Organizer ko apne events nahi dikh rahe | `organizer_id` set hua? Purane events ka NULL hota hai |
-| Sidebar me Organizer section nahi dikh raha | `/api/auth/me` me `role` aa raha hai? `UserOut` me field add ki thi |
-| 403 aa raha hai jabki role sahi hai | Token purana ho sakta hai — role badalne ke baad dobara login karo |
-| Migration fail — `role` NOT NULL | `server_default='attendee'` chahiye, existing rows hain |
+| `NotNullViolation` on event delete | Relationship requires `passive_deletes=True`. |
+| Organizer cannot see their events | Check if `organizer_id` is set. Older events may have NULL. |
+| Organizer section missing in sidebar | Check if `role` is returned in `/api/auth/me` and added to `UserOut`. |
+| 403 despite correct role | Token may be stale — re-login after role change. |
+| Migration fail — `role` NOT NULL | Requires `server_default='attendee'` for existing rows. |
 
 ---
 
@@ -424,25 +424,25 @@ backend/
 ├── schemas.py                  ← EventCreate/Update, PriceTier, AdminStatsOut, role in UserOut
 ├── websocket.py                ← manager.rooms()
 ├── seed.py                     ← organizer + admin demo accounts
-├── main.py                     ← naye routers
+├── main.py                     ← new routers
 ├── routers/
-│   ├── organizer.py            ← naya ⭐ CRUD + ownership + seat generation
-│   ├── admin.py                ← naya (platform stats)
+│   ├── organizer.py            ← new ⭐ CRUD + ownership + seat generation
+│   ├── admin.py                ← new (platform stats)
 │   └── auth.py                 ← role in response
-├── tests/test_concurrency.py   ← 9 naye tests (20 → 29)
+├── tests/test_concurrency.py   ← 9 new tests (20 → 29)
 └── alembic/versions/...        ← role + organizer_id migration
 
 frontend/src/
 ├── api.js                      ← organizer + admin calls
-├── App.jsx                     ← RequireRole + naye routes
+├── App.jsx                     ← RequireRole + new routes
 ├── layout/
 │   ├── Sidebar.jsx             ← role-gated sections
 │   └── icons.jsx               ← IconPlus
 └── pages/
     ├── organizer/
-    │   ├── MyEvents.jsx        ← naya (sales bar, delete)
-    │   └── CreateEvent.jsx     ← naya (price tiers, live preview)
-    ├── admin/AdminStats.jsx    ← naya
+    │   ├── MyEvents.jsx        ← new (sales bar, delete)
+    │   └── CreateEvent.jsx     ← new (price tiers, live preview)
+    ├── admin/AdminStats.jsx    ← new
     └── Profile.jsx             ← role badge
 ```
 
@@ -477,4 +477,4 @@ git commit -m "Phase 10: RBAC and organizer portal
 
 - [07-auth-google-oauth.md](07-auth-google-oauth.md) — authentication
 - [../reference/testing.md](../reference/testing.md) — test commands
-- [../roadmap.md](../roadmap.md) — aage kya
+- [../roadmap.md](../roadmap.md) — next steps

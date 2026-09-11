@@ -3,29 +3,28 @@ Idempotency keys.
 
 ---- Problem ----
 
-User "Confirm Booking" pe double-click karta hai. Ya network glitch pe
-browser request retry kar deta hai. Do requests ban jaati hain.
+Users may double-click "Confirm Booking" or browsers may retry requests due to
+network glitches, leading to duplicate requests.
 
-Abhi kya hota: dusri request ko 409 milta hai — kyunki seat tab tak
-`booked` ho chuki hoti. To nateeja to sahi hai.
+Currently, the second request receives a 409 error because the seat is already
+`booked`. While the outcome is correct, it is accidental rather than by design,
+resulting in a confusing error for the user despite a successful booking.
 
-**Par wo sanyog se sahi hai, design se nahi.** Aur user ko ek confusing
-error dikhta hai jabki uski booking ho chuki hai.
-
-Aur jab payments aayenge, ye sanyog kaafi nahi hoga — "paisa kat gaya
-par booking nahi hui" wala case yahi se aata hai.
+For payment processing, this approach is insufficient and can lead to
+"money deducted but booking failed" scenarios.
 
 ---- Solution ----
 
-Client har booking attempt ke saath ek unique `Idempotency-Key` bhejta hai.
-Server pehla jawab us key ke against Redis me store kar leta hai.
+The client sends a unique `Idempotency-Key` with each booking attempt. The
+server stores the initial response in Redis keyed by this value.
 
-  Pehli request  -> kaam karo, jawab store karo, jawab do
-  Wahi key phir  -> kaam mat karo, STORED jawab wapas do
+  First request -> Process, store response, return response
+  Subsequent request -> Do not process, return STORED response
 
-User ko dono baar wahi booking dikhti hai. Database me ek hi row.
+The user sees the same booking result both times, and only one row is created
+in the database.
 
-Ye Stripe, Razorpay, aur har payment API ka standard pattern hai.
+This is the standard pattern used by Stripe, Razorpay, and other payment APIs.
 """
 
 import hashlib
@@ -38,30 +37,28 @@ from redis_client import redis_client
 
 HEADER = "Idempotency-Key"
 
-# Jawab kitni der yaad rakhein. 24 ghante standard hai (Stripe bhi yahi
-# use karta hai) — retry aur double-click isse kahin pehle ho jaate hain.
+# TTL for stored results. 24 hours is standard (used by Stripe) to cover
+# retries and double-clicks.
 RESULT_TTL = timedelta(hours=24)
 
-# "Processing" wali entry ki TTL. Server beech me crash ho jaye to key
-# hamesha ke liye atki na rahe — itni der me apne aap chhut jayegi.
+# TTL for "processing" entries. Prevents keys from being permanently locked
+# if the server crashes during execution.
 LOCK_TTL = timedelta(seconds=60)
 
 
 def _key(user_id: int, scope: str, idem_key: str) -> str:
-    # user_id key me isliye: do users galti se same UUID bhej dein to
-    # ek ko dusre ki booking na dikh jaye
+    # Include user_id to prevent cross-user booking collisions if UUIDs overlap.
     return f"idem:{user_id}:{scope}:{idem_key}"
 
 
 def _fingerprint(payload: dict) -> str:
     """
-    Request body ka hash.
+    Generate a hash of the request body.
 
-    Kyu: agar koi wahi key ke saath ALAG body bhej de, to wo bug hai
-    (ya attack). Chupchap purana jawab lauta dena galat hoga — isliye
-    body ka hash bhi store karke compare karte hain.
+    Used to detect if the same key is reused with a different body, which
+    indicates a bug or attack. We store the hash to validate consistency.
 
-    sort_keys=True — {"a":1,"b":2} aur {"b":2,"a":1} ka hash same aana chahiye.
+    sort_keys=True ensures {"a":1,"b":2} and {"b":2,"a":1} produce the same hash.
     """
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
@@ -69,14 +66,14 @@ def _fingerprint(payload: dict) -> str:
 
 class Idempotency:
     """
-    Ek request ke liye idempotency handle.
+    Handles idempotency for a single request.
 
-    Use:
+    Usage:
         idem = Idempotency(request, user.id, "booking", payload.model_dump())
         cached = idem.begin()
         if cached:
             return idem.replay(response, cached)
-        ...kaam karo...
+        ...process logic...
         idem.complete(result, status_code=201)
     """
 
@@ -88,26 +85,28 @@ class Idempotency:
 
     def begin(self) -> dict | None:
         """
-        Slot claim karo.
+        Claim a processing slot.
 
-        None      -> naya request hai, aage badho
-        dict      -> pehle ho chuka hai, ye stored jawab wapas kar do
+        Returns:
+            None: New request, proceed.
+            dict: Existing request, return stored response.
 
-        Raise karta hai agar wahi key alag body ke saath aaye, ya wahi
-        request abhi chal rahi ho.
+        Raises:
+            HTTPException: If the key is reused with a different body or
+                           if the request is currently in progress.
         """
         if not self.enabled:
-            return None    # header nahi bheja — normal behaviour
+            return None    # No header provided; proceed normally.
 
-        # SET NX — atomic claim. Do parallel requests me se ek hi jeetega.
+        # SET NX provides an atomic claim. Only one of multiple parallel requests succeeds.
         placeholder = json.dumps({"state": "processing", "fp": self.fingerprint})
         if redis_client.set(self.redis_key, placeholder, nx=True, ex=int(LOCK_TTL.total_seconds())):
-            return None    # humne claim kar liya
+            return None    # Claim successful.
 
-        # Kisi aur ne (ya hum hi ne pehle) claim ki hui hai
+        # Key already claimed.
         existing = redis_client.get(self.redis_key)
         if existing is None:
-            # TTL pe abhi abhi expire ho gayi — naya maan lo
+            # Key expired; treat as a new request.
             return None
 
         record = json.loads(existing)
@@ -115,28 +114,28 @@ class Idempotency:
         if record.get("fp") != self.fingerprint:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "Ye Idempotency-Key pehle alag data ke saath use ho chuki hai",
+                "This Idempotency-Key has already been used with different data.",
             )
 
         if record.get("state") == "processing":
-            # Pehli request abhi chal rahi hai (double-click ka asli case).
-            # 409 dete hain — client thodi der baad retry kar sakta hai.
+            # Request is currently in progress (e.g., double-click).
+            # Return 409 to signal the client to retry later.
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "Yahi request abhi process ho rahi hai",
+                "This request is currently being processed.",
             )
 
         return record
 
     def replay(self, response: Response, record: dict) -> dict:
-        """Stored jawab wapas do."""
+        """Return the stored response."""
         response.status_code = record.get("status", 200)
-        # Client ko pata chale ki ye naya kaam nahi, purana jawab hai
+        # Indicate to the client that this is a cached response.
         response.headers["X-Idempotent-Replay"] = "true"
         return record["body"]
 
     def complete(self, body: dict, status_code: int = 200) -> None:
-        """Kaam ho gaya — jawab store kar do."""
+        """Store the final result."""
         if not self.enabled:
             return
 
@@ -150,16 +149,16 @@ class Idempotency:
                     "status": status_code,
                     "body": body,
                 },
-                default=str,   # datetime waqerah ke liye
+                default=str,   # Handle datetime objects.
             ),
         )
 
     def abort(self) -> None:
         """
-        Kaam fail ho gaya — claim chhod do.
+        Release the claim if the operation fails.
 
-        Zaroori hai: warna 500 ke baad user usi key se retry hi nahi kar
-        paata, aur 60 second tak "already processing" milta rehta.
+        Necessary to allow retries immediately after a 500 error, rather
+        than waiting for the 60-second lock to expire.
         """
         if self.enabled:
             redis_client.delete(self.redis_key)

@@ -11,8 +11,8 @@ const ROW_LABELS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 export default function CreateEvent() {
   const navigate = useNavigate()
 
-  // NOTE: `seats_per_row` yahan hai kyunki wo sirf tiers mode me chahiye.
-  // Layout mode me ye bheja hi nahi jata (neeche handleSubmit dekho).
+  // NOTE: `seats_per_row` is only required for tiers mode.
+  // It is omitted in layout mode (see handleSubmit below).
   const [form, setForm] = useState({
     name: '',
     venue: '',
@@ -21,22 +21,20 @@ export default function CreateEvent() {
     description: '',
     seats_per_row: 10,
   })
-  // Tiers upar se neeche lagte hain — pehla tier row A se shuru
+  // Tiers are ordered top to bottom — the first tier starts at row A
   const [tiers, setTiers] = useState([
     { rows: 2, price: 2500 },
     { rows: 3, price: 1200 },
     { rows: 5, price: 800 },
   ])
-  // Dynamic pricing DEFAULT OFF. Organizer jaan-boojh ke on kare —
-  // surge har event ke liye theek nahi (free meetup pe ye bhaddha lagta).
+  // Dynamic pricing is OFF by default. Organizers must enable it manually —
+  // surge pricing isn't suitable for every event (e.g., free meetups).
   const [surge, setSurge] = useState({ on: false, demand_factor: 0.5, max_surge: 2.0 })
 
-  // 'tiers'  = purana simple raasta (N rows x M seats, ek price per tier)
-  // 'layout' = poora naksha — sections, alag-alag row sizes, aisles
+  // 'tiers'  = simple method (N rows x M seats, one price per tier)
+  // 'layout' = full map — sections, custom row sizes, aisles
   //
-  // Default 'tiers' hai jaan-boojh ke. Zyadatar events ko naksha chahiye
-  // hi nahi, aur simple form 20 second me bhar jata hai. Layout builder
-  // tab hai jab sach me zaroorat ho.
+  // 'tiers' is the default. Most events don't require a custom map, and the simple form takes 20 seconds to fill. Use the layout builder only when necessary.
   const [mode, setMode] = useState('tiers')
   const [layout, setLayout] = useState(emptyLayout)
 
@@ -46,12 +44,11 @@ export default function CreateEvent() {
   const totalRows = tiers.reduce((sum, t) => sum + Number(t.rows || 0), 0)
   const totalSeats = totalRows * Number(form.seats_per_row || 0)
 
-  // Backend me bhi yahi limits hain — yahan sirf user ko pehle bata rahe hain
+  // These limits are enforced by the backend; we are just informing the user early.
   const tooManyRows = totalRows > 26
   const tooManySeats = totalSeats > 2000
 
-  // Layout mode me seat count aur validity dono LayoutBuilder se aate hain,
-  // tiers wale hisaab se nahi.
+  // In layout mode, seat count and validity are derived from the LayoutBuilder, not the tiers calculation.
   const layoutError = mode === 'layout' ? validateLayout(layout) : null
   const layoutSeats =
     mode === 'layout'
@@ -78,9 +75,7 @@ export default function CreateEvent() {
     setBusy(true)
     setError(null)
     try {
-      // Sirf chuna hua raasta bhejte hain. Dono bhejte to server ko
-      // guess karna padta ki user ka matlab kya tha — aur wo guess
-      // kabhi na kabhi galat hoti.
+      // Send only the selected mode. Sending both would force the server to guess the user's intent, which is prone to errors.
       const seatPlan =
         mode === 'layout'
           ? {
@@ -107,7 +102,7 @@ export default function CreateEvent() {
       const created = await createEvent({
         ...form,
         ...seatPlan,
-        // datetime-local "2026-12-01T19:30" deta hai — backend ko ISO chahiye
+        // datetime-local returns "2026-12-01T19:30" — the backend requires ISO format.
         starts_at: new Date(form.starts_at).toISOString(),
         description: form.description || null,
         dynamic_pricing: surge.on,
@@ -128,8 +123,8 @@ export default function CreateEvent() {
         <h1 className="text-xl font-semibold text-slate-100">Create Event</h1>
         <p className="mt-1 text-sm text-slate-500">
           {mode === 'layout'
-            ? 'Sections, row sizes aur aisles — jaisa asli venue hai'
-            : 'Seats price tiers se apne aap ban jaayengi'}
+            ? 'Sections, row sizes, and aisles — just like the actual venue'
+            : 'Seats will be generated automatically from price tiers'}
         </p>
       </header>
 
@@ -197,7 +192,7 @@ export default function CreateEvent() {
               rows={4}
               value={form.description}
               onChange={(e) => setField('description', e.target.value)}
-              placeholder="Do paragraph alag karne ke liye ek khaali line chhodo"
+              placeholder="Leave an empty line to separate paragraphs"
               className={`${inputCls} resize-y`}
             />
           </Field>
@@ -207,8 +202,8 @@ export default function CreateEvent() {
           {/* Mode toggle */}
           <div className="mb-4 inline-flex rounded-xl border border-[var(--border)] p-0.5">
             {[
-              ['tiers', 'Simple', 'Barabar rows, tier-wise price'],
-              ['layout', 'Layout builder', 'Sections, aisles, alag row sizes'],
+              ['tiers', 'Simple', 'Uniform rows, tier-based pricing'],
+              ['layout', 'Layout builder', 'Sections, aisles, custom row sizes'],
             ].map(([value, label, hint]) => (
               <button
                 key={value}
@@ -246,12 +241,12 @@ export default function CreateEvent() {
             Price tiers
           </p>
           <p className="mt-1 text-xs text-slate-600">
-            Upar se neeche lagte hain — pehla tier row A se shuru hota hai
+            Ordered top to bottom — the first tier starts at row A
           </p>
 
           <div className="mt-3 space-y-2">
             {tiers.map((tier, i) => {
-              // Is tier ki rows kaunsi hongi (A-B, C-E...)
+              // Determine the row range for this tier (e.g., A-B, C-E...)
               const start = tiers.slice(0, i).reduce((s, t) => s + Number(t.rows || 0), 0)
               const end = start + Number(tier.rows || 0) - 1
               const label =
@@ -343,8 +338,8 @@ export default function CreateEvent() {
                   Demand-based pricing
                 </span>
                 <span className="mt-0.5 block text-xs leading-relaxed text-slate-500">
-                  Seats bikne ke saath price apne aap badhta hai. Upar ka price
-                  BASE hai — surge usi par lagta hai.
+                  Prices increase automatically as seats are sold. The price above is the
+                  BASE price — surge is applied on top of it.
                 </span>
               </span>
             </label>
@@ -353,13 +348,12 @@ export default function CreateEvent() {
               <div className="mt-3 space-y-3 rounded-xl bg-white/[0.03] p-3.5">
                 <div>
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-slate-400">Kitna aggressive</span>
+                    <span className="text-slate-400">Aggression level</span>
                     <span className="font-mono text-violet-300">
                       sold out par +{Math.round(surge.demand_factor * 100)}%
                     </span>
                   </div>
-                  {/* Slider isliye ki 0.5 ka matlab pehli nazar me samajh nahi
-                      aata — par "sold out par +50%" turant samajh aata hai */}
+                  {/* Using a slider because 0.5 isn't immediately intuitive — but "+50% when sold out" is clear */}
                   <input
                     type="range"
                     min="0"
@@ -374,7 +368,7 @@ export default function CreateEvent() {
                 </div>
 
                 <p className="text-[11px] leading-relaxed text-slate-500">
-                  ₹{tiers[0]?.price || 0} wali seat sold-out ke waqt tak
+                  A seat priced at ₹{tiers[0]?.price || 0} will reach
                   <strong className="text-slate-300">
                     {' '}
                     ₹
@@ -382,8 +376,7 @@ export default function CreateEvent() {
                       ((tiers[0]?.price || 0) * (1 + Number(surge.demand_factor))) / 10,
                     ) * 10}
                   </strong>{' '}
-                  tak jayegi. Jisne pehle hold kar liya, uska price locked
-                  rehta hai.
+                  by the time it is sold out. Prices are locked for users who hold seats early.
                 </p>
               </div>
             )}

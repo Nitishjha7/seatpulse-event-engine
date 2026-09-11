@@ -1,60 +1,53 @@
 # Phase 15 — Pessimistic vs Optimistic Locking Benchmark
 
-> Poore project me maine optimistic locking use ki hai. Ye phase us faisle
-> ko **maapne** ke liye hai — sahi sabit karne ke liye nahi.
+> I have used optimistic locking throughout this project. This phase is to **measure** that decision — not to justify it.
 
 ---
 
-## Sawaal
+## The Question
 
-Phase 2 se hi maine `version` column wali optimistic locking use ki hai.
-Interview me iska seedha counter-question hai:
+Since Phase 2, I have used optimistic locking with a `version` column. The direct counter-question in interviews is:
 
-> "`SELECT ... FOR UPDATE` kyu nahi? Wo to simple hai."
+> "Why not `SELECT ... FOR UPDATE`? It is simpler."
 
-Ab tak mera jawab theory tha. Is phase me dono implement karke same load
-pe chalaya, taaki jawab **numbers** ke saath ho.
+Until now, my answer was theoretical. In this phase, I implemented both and ran them under the same load to provide an answer backed by **numbers**.
 
-**Aur agar numbers mere khilaf jaate, to wo bhi likhna tha.** Kuch had tak
-gaye bhi — neeche hai.
+**And if the numbers went against me, I had to document that too.** They did, to some extent — details below.
 
 ---
 
-## Do tareeke
+## Two Approaches
 
 ```
-OPTIMISTIC  — "koshish karo, takra gaye to haar maan lo"
+OPTIMISTIC  — "Try it, if you collide, give up"
 
     UPDATE seats SET status='booked', version = version + 1
     WHERE id = ? AND version = ? AND status IN ('available','locked')
 
-    rowcount 0 -> koi aur jeet gaya -> TURANT 409
+    rowcount 0 -> someone else won -> IMMEDIATELY 409
 
 
-PESSIMISTIC — "pehle taala lagao, phir aaram se karo"
+PESSIMISTIC — "Lock it first, then proceed at leisure"
 
-    SELECT * FROM seats WHERE id = ? FOR UPDATE   <- yahan BLOCK hota hai
-    (ab row mere lock me hai, aaram se check karo)
+    SELECT * FROM seats WHERE id = ? FOR UPDATE   <- BLOCKS here
+    (now the row is locked by me, check at leisure)
     UPDATE ...
 ```
 
-Farak correctness ka nahi hai — **dono overselling rokte hain**. Farak
-behaviour ka hai:
+The difference is not in correctness — **both prevent overselling**. The difference is in behavior:
 
-| | Haarne wala kya karta hai |
+| | What the loser does |
 |---|---|
-| Optimistic | turant 409 leke chala jata hai |
-| Pessimistic | **qataar me lagta hai**, apni baari par pata chalta hai seat ja chuki, phir 409 |
+| Optimistic | Takes a 409 immediately and leaves |
+| Pessimistic | **Joins a queue**, finds out the seat is gone only when their turn comes, then 409 |
 
 📁 [`backend/locking_strategies.py`](../../backend/locking_strategies.py)
 
-### ⚠️ Benchmark asli code chalata hai, uski copy nahi
+### ⚠️ The benchmark runs real code, not a copy
 
-Sabse aasan galti ye hoti ki benchmark ke liye ek alag endpoint bana lete.
-Tab hum us cheez ko maap rahe hote jo deploy hoti hi nahi.
+The easiest mistake is creating a separate endpoint for benchmarking. Then you would be measuring something that is never deployed.
 
-Isliye dono strategies **usi `_perform_booking()`** se chalti hain jo
-production me chalta hai. Sirf claim wala step badalta hai:
+Therefore, both strategies run using the **same `_perform_booking()`** used in production. Only the claim step changes:
 
 ```python
 if strategy == PESSIMISTIC:
@@ -63,68 +56,53 @@ else:
     claim = claim_optimistic(db, payload.seat_id, expected_version)
 ```
 
-Knobs query params se aate hain, **par sirf tab jab `BENCHMARK_MODE=true` ho.**
-Warna chupchaap ignore. Ek query param jo locking semantics badal de, wo
-production me footgun hai — koi bhi `?redis_lock=off` bhej ke sabse mehngi
-code path chala sakta hai.
+Knobs come from query parameters, **but only if `BENCHMARK_MODE=true`**. Otherwise, they are silently ignored. A query parameter that changes locking semantics is a production footgun — anyone could send `?redis_lock=off` and trigger the most expensive code path.
 
 ---
 
-## Round 1 — Locust, 300 users, ek seat
+## Round 1 — Locust, 300 users, one seat
 
 ```bash
-bash loadtest/run_benchmark.sh          # chaar scenarios
+bash loadtest/run_benchmark.sh          # four scenarios
 ```
 
-| Scenario | Total req | `/bookings` tak pahunche | req/s | p50 |
+| Scenario | Total req | Reached `/bookings` | req/s | p50 |
 |---|---|---|---|---|
 | optimistic, Redis **on** | 1733 | **1** | 59.0 | 3300 ms |
 | pessimistic, Redis **on** | 1871 | **1** | 63.9 | 2900 ms |
 | optimistic, Redis **off** | 1783 | 1483 | 63.1 | 3000 ms |
 | pessimistic, Redis **off** | 1857 | 1557 | 63.4 | 3200 ms |
 
-Chaaron me integrity check pass: **exactly 1 confirmed booking**, koi
-overselling nahi.
+Integrity check passed in all four: **exactly 1 confirmed booking**, no overselling.
 
-Aur chaaron ke numbers... lagbhag ek jaise. Do wajah nikli, aur dono
-apne aap me finding hain:
+And the numbers for all four... were nearly identical. Two reasons emerged, both findings in their own right:
 
-### ⭐ Finding 1 — Redis on ho to DB strategy tak load pahunchta hi nahi
+### ⭐ Finding 1 — If Redis is on, load doesn't reach the DB strategy
 
-1433 contended requests me se **1** `/api/bookings` tak pahunchi. Baaki
-1432 Redis lock pe hi 409 leke lautt gayi.
+Out of 1433 contended requests, only **1** reached `/api/bookings`. The other 1432 returned 409 at the Redis lock level.
 
-Ye mere Phase 4 wale daawe ka seedha proof hai — par iska ek natija bhi
-hai: **production config me DB strategy badalne se kuch farak pad hi nahi
-sakta**, kyunki wo code chalta hi nahi.
+This is direct proof of my claim in Phase 4 — but it has a consequence: **changing the DB strategy in production config cannot make a difference**, because that code never runs.
 
-Isliye baaki benchmark Redis off karke chalana pada. Wo "cheating" nahi
-hai — wo hi ek tareeka hai DB layer ko akela dekhne ka.
+Therefore, the rest of the benchmark had to be run with Redis off. That is not "cheating" — it is the only way to observe the DB layer in isolation.
 
-### Finding 2 — 300 users pe admission control bottleneck ban jata hai
+### Finding 2 — Admission control becomes a bottleneck at 300 users
 
-Redis off karne ke baad bhi chaaron ~63 req/s aur p50 ~3s pe atke rahe.
+Even with Redis off, all four scenarios were stuck at ~63 req/s and p50 ~3s.
 
-Wajah: [Phase 7](07-auth-google-oauth.md) me maine admission control lagayi
-thi — ek semaphore jo sirf 30 requests andar aane deta hai. 300 users me
-har request ~3 second **queue me** khadi rehti hai.
+Reason: In [Phase 7](07-auth-google-oauth.md), I implemented admission control — a semaphore that only allows 30 requests inside. With 300 users, every request waits in the **queue** for ~3 seconds.
 
-Us 3 second ke saamne database ka kaam (~milliseconds) dikhta hi nahi.
-Locust poore system ko maap raha tha, us ek line ko nahi jo maine badli thi.
+Against that 3-second wait, the database work (~milliseconds) is invisible. Locust was measuring the entire system, not the single line I changed.
 
 ---
 
 ## Round 2 — Micro-benchmark
 
-Locust galat tool nahi tha, galat **sawaal** ka jawab de raha tha. To ek
-focused benchmark likha:
+Locust wasn't the wrong tool; it was answering the wrong **question**. So I wrote a focused benchmark:
 
-- Redis layer **off** (warna DB tak kuch aata hi nahi)
-- concurrency **25**, admission limit (30) se **neeche** — queue wait
-  numbers me na ghule
-- login **pehle ek baar** — bcrypt (~400ms) sab kuch daba deta hai
-- har round me seat wapas free karke **asli contention dubara** paida —
-  ek hi contention event maapna sirf shor hota hai
+- Redis layer **off** (otherwise nothing reaches the DB)
+- Concurrency **25**, below the admission limit (30) — so queue wait times don't pollute the numbers
+- Login **once beforehand** — bcrypt (~400ms) masks everything
+- Free the seat after every round to recreate **real contention** — measuring a single contention event is just noise
 - 40 rounds × 25 = **1000 requests per strategy**
 
 ```bash
@@ -133,7 +111,7 @@ docker compose exec backend python /loadtest/micro_benchmark.py
 
 📁 [`loadtest/micro_benchmark.py`](../../loadtest/micro_benchmark.py)
 
-### Nateeja — 4 runs
+### Result — 4 runs
 
 | Run | Order | opt p50 | pess p50 | opt p99 | pess p99 | p50 ratio | p99 ratio |
 |---|---|---|---|---|---|---|---|
@@ -142,49 +120,42 @@ docker compose exec backend python /loadtest/micro_benchmark.py
 | C | opt first | 285.2 | 273.2 | 517.0 | 510.9 | 0.96× | 0.99× |
 | D | **pess first** | 310.2 | 291.8 | 642.0 | 514.5 | 0.94× | 0.80× |
 
-Har run me 40/40 wins, 960 conflicts, **0 errors** — matlab comparison
-valid hai.
+40/40 wins, 960 conflicts, **0 errors** in every run — meaning the comparison is valid.
 
-### ⭐ Finding 3 — pessimistic *thoda tez* nikla, dhima nahi
+### ⭐ Finding 3 — pessimistic was *slightly faster*, not slower
 
-Ye mere expectation ke **ulta** hai, aur likhna zaroori hai.
+This is the **opposite** of my expectation, and it is important to document.
 
-Pehla shak ordering bias ka tha (jo pehle chale wo thandi machine pe
-chale). Isliye run D me order ulta kiya — **wahi nateeja**. To ye bias
-nahi hai.
+My first suspicion was ordering bias (the first to run benefits from a cold machine). So in run D, I reversed the order — **same result**. So it is not bias.
 
-Wajah code me hai. Seat book hone ke BAAD aane wale losers ke liye:
+The reason is in the code. For the losers arriving AFTER the seat is booked:
 
 ```
 optimistic  -> UPDATE ... WHERE version=? (0 rows match) -> rollback
-                ^^^ write statement, phir bhi chalti hai
+                ^^^ write statement, still executes
 
-pessimistic -> SELECT ... FOR UPDATE (lock free hai, turant milta hai)
-               status check -> 'booked' -> return, koi UPDATE hi nahi
+pessimistic -> SELECT ... FOR UPDATE (lock is free, acquired immediately)
+               status check -> 'booked' -> return, no UPDATE executed
 ```
 
-Yaani ek hi seat pe 25 me se 24 losers ke liye pessimistic path me **kam
-kaam** hota hai. Blocking hoti hi nahi kyunki jeetne wala millisecond me
-commit kar chuka hota hai.
+Meaning, for 24 out of 25 losers on the same seat, the pessimistic path does **less work**. Blocking doesn't happen because the winner has already committed in milliseconds.
 
-**Par farak 5-7% ka hai, aur run-to-run variance bhi utna hi hai.** Isliye
-imaandar nateeja ye hai: *is scale pe dono ka farak measurable nahi hai.*
+**But the difference is 5-7%, and the run-to-run variance is similar.** Therefore, the honest conclusion is: *at this scale, the difference between the two is not measurable.*
 
 ---
 
-## ⭐ Finding 4 — claim step request ka 1/33 hissa hai
+## ⭐ Finding 4 — the claim step is 1/33 of the request
 
-"Farak kyu nahi dikha" ka asli jawab yahan hai. Postgres pe statement
-logging on karke ek booking request gini:
+The real answer to "why was there no difference" is here. After enabling statement logging on Postgres, I counted the SQL statements for one booking request:
 
 ```bash
 docker compose exec db psql -U seatpulse -d seatpulse \
   -c "ALTER SYSTEM SET log_statement='all';" -c "SELECT pg_reload_conf();"
 ```
 
-**Ek booking = 33 SQL statements.** Breakdown:
+**One booking = 33 SQL statements.** Breakdown:
 
-| Kitni | Kya |
+| Count | What |
 |---|---|
 | 4 | `SELECT 1` — pool pre-ping health checks |
 | 4 / 2 / 2 | BEGIN / COMMIT / ROLLBACK |
@@ -194,64 +165,45 @@ docker compose exec db psql -U seatpulse -d seatpulse \
 | 2 | `count(seats)` |
 | 2 | `count(bookings)` |
 | 2 | `min(seats.price)` |
-| … | ticket worker ka `UPDATE bookings SET qr_token=…` |
-| **1** | **asli claim** — `UPDATE seats SET status='booked'` |
+| … | ticket worker's `UPDATE bookings SET qr_token=…` |
+| **1** | **actual claim** — `UPDATE seats SET status='booked'` |
 
-Locking strategy badalne se **33 me se 1 statement** badalta hai. Baaki 32
-bilkul same rehte hain. Isliye 5% ka farak bilkul expected hai — aur wo
-bhi noise me doob jata hai.
+Changing the locking strategy changes **1 out of 33 statements**. The other 32 remain exactly the same. That is why a 5% difference is expected — and even that gets lost in the noise.
 
-Baseline bhi yahi kehta hai: concurrency 1 pe (koi contention hi nahi) ek
-booking ~50-70ms leti hai. Claim step usme se do-teen millisecond hai.
+The baseline confirms this: at concurrency 1 (no contention), a booking takes ~50-70ms. The claim step is only two or three milliseconds of that.
 
-### Ek aur cheez jo ginti ne pakdi
+### One more thing the count caught
 
-`count(seats)`, `count(bookings)` aur `min(price)` — teeno **do-do baar**
-chal rahe hain. Wajah: `pricing_state()` ek baar `price_now()` me chalta
-hai aur dobara `broadcast_seat_update()` me.
+`count(seats)`, `count(bookings)`, and `min(price)` — all three are running **twice**. Reason: `pricing_state()` runs once in `price_now()` and again in `broadcast_seat_update()`.
 
-Matlab har booking me **6 queries faaltu** hain.
+Meaning there are **6 redundant queries** in every booking.
 
-Maine ye abhi fix **nahi** kiya, jaan-boojh ke — fix karne se upar wale
-saare numbers badal jaate aur benchmark dobara chalana padta. Ye [roadmap](../roadmap.md)
-me follow-up ke roop me likha hai. Par ye is phase ka sabse practical
-faayda hai: **maapne se ek asli inefficiency mil gayi**, jo locking se
-koi lena-dena nahi rakhti.
+I have **not** fixed this yet, intentionally — fixing it would change all the numbers above and require re-running the benchmark. This is noted as a follow-up in the [roadmap](../roadmap.md). But this is the most practical benefit of this phase: **measuring revealed a real inefficiency** that has nothing to do with locking.
 
 ---
 
-## To optimistic hi kyu rakha?
+## So why keep optimistic?
 
-Numbers ne throughput ka farak nahi dikhaya. Phir bhi optimistic hi
-default hai, aur wajah **failure mode** hai, speed nahi:
+The numbers did not show a throughput difference. Yet, optimistic remains the default, and the reason is the **failure mode**, not speed:
 
-| | Load badhne par |
+| | Under high load |
 |---|---|
-| **Optimistic** | loser turant nikal jata hai. Connection turant free. |
-| **Pessimistic** | loser **DB connection pakde** qataar me khada rehta hai |
+| **Optimistic** | Loser exits immediately. Connection freed immediately. |
+| **Pessimistic** | Loser stays in queue **holding the DB connection** |
 
-Pool me 40 connections hain. 500 log ek seat pe hon aur har haarne wala
-apna connection pakde rakhe, to pool minton me nahi — seconds me khatam
-ho jata hai. Bilkul wahi bimari jo [Phase 7](07-auth-google-oauth.md) me
-`idle in transaction` ke roop me pakdi thi.
+There are 40 connections in the pool. If 500 people are after one seat and every loser holds their connection, the pool is exhausted not in minutes — but in seconds. The exact same ailment identified as `idle in transaction` in [Phase 7](07-auth-google-oauth.md).
 
-**Ye is benchmark me nahi dikha, aur maine dikhane ka daawa bhi nahi kiya.**
-Nahi dikha kyunki jeetne wali transaction millisecond me commit kar deti
-hai — koi rukta hi nahi. Pessimistic ka kharcha us waqt ke saath badhta
-hai jitni der lock pakda jata hai. Aaj wo waqt ~2ms hai.
+**This did not show up in this benchmark, and I did not claim it would.** It didn't show up because the winning transaction commits in milliseconds — no one waits. The cost of pessimistic grows with the time the lock is held. Today that time is ~2ms.
 
-Khatra ye hai ki wo waqt **badh sakta hai**: transaction me ek external
-call, ek slow query, ek badi report — aur pessimistic path seedha pool
-exhaustion me badal jayega, jabki optimistic ka behaviour waisa hi rahega.
+The danger is that the time **could increase**: a transaction with an external call, a slow query, a large report — and the pessimistic path will turn into immediate pool exhaustion, while the optimistic behavior remains the same.
 
-> Ek line me: **maine optimistic isliye nahi choose kiya ki wo aaj tez hai
-> (wo nahi hai). Isliye choose kiya ki wo kal bura nahi hoga.**
+> In one line: **I didn't choose optimistic because it is faster today (it isn't). I chose it so it won't be bad tomorrow.**
 
 ---
 
-## Kya toota (aur kya seekha)
+## What broke (and what I learned)
 
-### 1. Pehla micro-benchmark run poora jhootha tha
+### 1. The first micro-benchmark run was completely false
 
 ```
 strategy       reqs  won   409   err
@@ -259,90 +211,77 @@ optimistic     1000   33   463   504     <- 504 errors!
 pessimistic    1000   33   392   575
 ```
 
-Rate limit buckets clear karne wale code me prefix galat likha tha —
-`ratelimit:*`, jabki asli prefix `rl:` hai ([`rate_limit.py`](../../backend/rate_limit.py)).
-Buckets clear hote hi nahi the, aur chauthe round se har request 429 khaane
-lagti thi. Wo 429 latency numbers me ghul rahe the.
+The prefix in the code clearing rate limit buckets was wrong — `ratelimit:*`, while the actual prefix is `rl:` ([`rate_limit.py`](../../backend/rate_limit.py)). The buckets were never cleared, and from the fourth round, every request started hitting 429s. Those 429 latencies were polluting the numbers.
 
-**Ise `errors` column ne pakda** — jo maine sirf sanity ke liye rakha tha.
-Agar bas p50/p99 print karta, to numbers *bilkul theek dikhte* aur main
-poori tarah galat conclusion nikaal ke doc likh deta.
+**This was caught by the `errors` column** — which I kept only for sanity. If I had only printed p50/p99, the numbers would have *looked perfectly fine* and I would have written the doc with a completely wrong conclusion.
 
-Sabak: benchmark me hamesha ek **invariant** check rakho ("har round me
-theek 1 booking jeetni chahiye"), sirf timing mat chhapo.
+Lesson: Always keep an **invariant** check in benchmarks ("exactly 1 booking should win every round"), don't just print timings.
 
-### 2. Pehla proof-of-concept me 0 WebSocket messages (Phase 14 wala sabak dohraya)
+### 2. The first proof-of-concept had 0 WebSocket messages (Lesson from Phase 14 repeated)
 
-Locust ke chaar runs "sab barabar" dikha rahe the aur pehla reflex tha ki
-strategy switch kaam hi nahi kar raha. Asal me switch theek chal raha tha —
-Redis 1432/1433 requests rok raha tha.
+Locust's four runs looked "all equal" and my first reflex was that the strategy switch wasn't working. In reality, the switch was working fine — Redis was blocking 1432/1433 requests.
 
-Per-endpoint CSV dekhe bina ye pata nahi chalta. Aggregate numbers ne
-sach chhupa liya tha.
+Without looking at per-endpoint CSVs, this is impossible to know. Aggregate numbers hid the truth.
 
-### 3. "Benchmark ne mera daawa confirm nahi kiya" — aur wahi likha
+### 3. "The benchmark did not confirm my claim" — and I wrote exactly that
 
-Sabse aasan hota ki numbers ko aise ghuma dete ki optimistic jeetta hua
-dikhe. Numbers ne wo nahi kaha. Doc me wahi likha hai jo mila: *farak
-measurable nahi tha, aur jo thoda tha wo pessimistic ke haq me tha.*
+It would have been easiest to spin the numbers to make optimistic look like the winner. The numbers didn't say that. I wrote exactly what I found: *the difference was not measurable, and what little there was favored pessimistic.*
 
-Interview me "maine measure kiya aur mera andaza galat nikla" bolna
-"maine measure kiya aur main sahi tha" se **zyada** bharosa deta hai.
+In an interview, saying "I measured it and my assumption was wrong" builds **more** trust than "I measured it and I was right."
 
 ---
 
-## Kaise dobara chalao
+## How to run it again
 
 ```bash
-# 1. Benchmark mode on karo
+# 1. Turn on benchmark mode
 echo "BENCHMARK_MODE=true" >> backend/.env
 docker compose up -d backend
 
-# 2. Locust — poora system, chaar scenarios
+# 2. Locust — full system, four scenarios
 bash loadtest/run_benchmark.sh
 
-# 3. Micro-benchmark — sirf DB claim step
+# 3. Micro-benchmark — DB claim step only
 docker compose exec backend python /loadtest/micro_benchmark.py
 
 # Order bias check
 docker compose exec -e BENCH_ORDER=pessimistic,optimistic backend \
     python /loadtest/micro_benchmark.py
 
-# 4. Wapas off karo — production me ye knobs nahi hone chahiye
+# 4. Turn it off — these knobs should not exist in production
 sed -i '/BENCHMARK_MODE=true/d' backend/.env
 docker compose up -d backend
 ```
 
-Tests dono modes me pass hote hain (**66/66**) — ye jaan-boojh ke hai,
-taki benchmark mode galti se on chhut jaye to bhi suite meaningful rahe.
+Tests pass in both modes (**66/66**) — this is intentional, so that if benchmark mode is accidentally left on, the suite remains meaningful.
 
 ---
 
 ## Files
 
-**Naye:**
-| File | Kya |
+**New:**
+| File | What |
 |---|---|
-| `backend/locking_strategies.py` | Dono claim strategies, ek jagah |
-| `loadtest/run_benchmark.sh` | Chaar Locust scenarios + integrity check |
+| `backend/locking_strategies.py` | Both claim strategies, in one place |
+| `loadtest/run_benchmark.sh` | Four Locust scenarios + integrity check |
 | `loadtest/micro_benchmark.py` | Focused DB-only measurement |
 
-**Badle:**
-| File | Kya |
+**Modified:**
+| File | What |
 |---|---|
 | `backend/config.py` | `BENCHMARK_MODE` (default false) |
-| `backend/routers/bookings.py` | Claim step strategies me nikala; benchmark knobs |
+| `backend/routers/bookings.py` | Extracted claim step strategies; benchmark knobs |
 | `loadtest/locustfile.py` | `BOOKING_STRATEGY` / `USE_REDIS_LOCK` env |
 | `docker-compose.yml`, `backend/.env.example` | `BENCHMARK_MODE` |
-| `backend/tests/test_concurrency.py` | 3 naye tests |
+| `backend/tests/test_concurrency.py` | 3 new tests |
 
 ---
 
 ## Related
 
-- [Phase 2 — Postgres + Models](02-postgres-models.md) — `version` column kahan se aaya
-- [Phase 4 — Redis Locking](04-redis-locking.md) — wo layer jo 1432/1433 rok deti hai
+- [Phase 2 — Postgres + Models](02-postgres-models.md) — where the `version` column came from
+- [Phase 4 — Redis Locking](04-redis-locking.md) — the layer that stops 1432/1433 requests
 - [Phase 6 — Load Testing](06-load-testing.md) — Locust setup
-- [Phase 7 — Auth + Google OAuth](07-auth-google-oauth.md) — admission control aur pool exhaustion
-- [Interview Prep](../interview-prep.md) — `FOR UPDATE` wala sawaal
-- [testing.md](../reference/testing.md) — chalane ke commands
+- [Phase 7 — Auth + Google OAuth](07-auth-google-oauth.md) — admission control and pool exhaustion
+- [Interview Prep](../interview-prep.md) — the `FOR UPDATE` question
+- [testing.md](../reference/testing.md) — commands to run

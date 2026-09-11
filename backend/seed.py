@@ -1,10 +1,10 @@
 """
-Test data banata hai — 1 event + 100 seats (10 rows x 10 seats) + 1 user.
+Creates test data: 1 event + 100 seats (10 rows x 10 seats) + 1 user.
 
-Chalao:
+Usage:
     docker compose exec backend python seed.py
 
-Ye script dubara chalane par duplicate nahi banayega — pehle check karta hai.
+This script is idempotent; it checks for existing data before creating new records.
 """
 
 import os
@@ -24,25 +24,21 @@ from models import (
     utcnow,
 )
 
-# Demo login — README aur docs me yahi likha hai
+# Demo login credentials as specified in README and documentation.
 DEMO_EMAIL = "demo@seatpulse.dev"
 DEMO_PASSWORD = "demo1234"
 
-# Kitne test users banane hain.
-# Load test me har concurrent user ka apna user_id hona chahiye — warna
-# same user dubara lock maange to "already_owned" wala 200 mil jata hai
-# aur contention ki asli tasveer nahi banti.
-# Kitne NUMBERED test users (user1 … userN). Named accounts iske alawa
-# hain, isliye total = SEED_USERS + 3.
-#
-# 499 isliye ki loadtest/locustfile.py ka USER_POOL_SIZE bhi 499 hai —
-# har concurrent Locust user ko apna account chahiye.
+# Number of test users to generate.
+# Load testing requires unique user_ids for each concurrent user to avoid
+# "already_owned" errors and accurately simulate contention.
+# Total users = SEED_USERS + 3 (for named accounts).
+# 499 is used to match the USER_POOL_SIZE in loadtest/locustfile.py.
 SEED_USERS = int(os.getenv("SEED_USERS", "499"))
 
 ROWS = "ABCDEFGHIJ"      # 10 rows
-SEATS_PER_ROW = 10       # har row me 10 seats = 100 total
+SEATS_PER_ROW = 10       # 10 seats per row = 100 total
 
-# Aage ki rows sasti, aage waali mehngi
+# Pricing tiers by row.
 PRICE_BY_ROW = {"A": 2500, "B": 2500, "C": 1800, "D": 1800, "E": 1200}
 DEFAULT_PRICE = 800
 
@@ -52,28 +48,18 @@ def seed():
     try:
         # ---- Users ----
         #
-        # Do tarah ke accounts:
-        #   named   — demo / organizer / admin. Teeno roles test karne ke liye.
-        #   numbered — user1 ... userN. Load test aur concurrency tests ke
-        #              liye, jahan har concurrent client ka apna account
-        #              chahiye hota hai.
+        # Two types of accounts:
+        #   named    — demo / organizer / admin for role-based testing.
+        #   numbered — user1 ... userN for load and concurrency testing.
         #
-        # ⚠️ Numbering users ki GINTI se nahi banti.
+        # ⚠️ Numbering is fixed to ensure consistency.
         #
-        # Pehle `range(existing, existing + to_create)` tha, jahan `existing`
-        # named accounts ke baad 3 ho jata tha. Nateeja: fresh DB par
-        # user3...user499 bante the aur **user1 aur user2 kabhi bante hi
-        # nahi**. Tests unhi se login karte hain, to `tokens` fixture skip
-        # ho jati thi — aur 35 tests SKIPPED hote hue bhi suite "green"
-        # dikhti thi. CI me ye chup-chaap pass ho jata.
-        #
-        # Ab numbering fixed hai (hamesha user1..userN) aur hum sirf wahi
-        # banate hain jo pehle se nahi hain. Isse seed idempotent bhi ho
-        # jata hai — do baar chalao to duplicate nahi banenge.
+        # Previously, dynamic ranges caused user1 and user2 to be skipped,
+        # breaking tests that relied on those specific accounts.
+        # Fixed numbering ensures idempotency and consistent test state.
 
-        # Sab test users ka password ek hi hai. bcrypt slow hai (~100ms),
-        # 500 baar hash karte to seed ek minute leta. Ek baar hash karke
-        # sabko wahi de rahe hain — ye SIRF test data ke liye theek hai.
+        # Bcrypt is slow (~100ms); hashing once and reusing for all test users
+        # significantly speeds up the seeding process.
         shared_hash = hash_password(DEMO_PASSWORD)
 
         named = [
@@ -88,8 +74,7 @@ def seed():
 
         have = set(db.scalars(select(User.email)).all())
 
-        # Named accounts pehle — inhe ORM se add karte hain taki `demo` ko
-        # id=1 mile (frontend aur docs isi maante hain).
+        # Add named accounts first to ensure the demo user receives id=1.
         new_named = [
             User(email=e, hashed_password=shared_hash, full_name=n, role=r)
             for e, n, r in named
@@ -105,13 +90,13 @@ def seed():
             if e not in have
         ]
         if new_numbered:
-            # Ek hi bulk insert — 500 alag INSERT se bahut tez
+            # Bulk insert is significantly faster than individual INSERTs.
             db.bulk_save_objects(new_numbered)
         db.flush()
 
         created = len(new_named) + len(new_numbered)
         total = len(have) + created
-        print(f"✅ Users: {created} naye banaye, total {total}")
+        print(f"✅ Users: {created} created, total {total}")
         print(f"   Numbered: user1 … user{SEED_USERS}")
         print(f"   Login: {DEMO_EMAIL} / {DEMO_PASSWORD}")
         print(f"          organizer@seatpulse.dev / {DEMO_PASSWORD}  (organizer)")
@@ -119,16 +104,10 @@ def seed():
 
         # ---- Event ----
         #
-        # ⚠️ organizer_id set karna ZAROORI hai.
+        # ⚠️ organizer_id is mandatory.
         #
-        # Pehle ye chhoot gaya tha aur seeded event ka organizer NULL rehta
-        # tha. Nateeja fresh DB par: organizer portal me event dikhta hi
-        # nahi, aur gate check-in par 403 "Ye ticket tumhare event ka nahi
-        # hai" milta tha (ownership check organizer_id se match karta hai).
-        #
-        # Purani DB me ye chhupa hua tha kyunki event portal se banaya gaya
-        # tha. Sirf `docker compose down -v` ke baad dikha — yaani jab CI
-        # jaisi clean state bani.
+        # Missing organizer_id causes 403 errors during gate check-in and
+        # prevents events from appearing in the organizer portal.
         organizer = db.scalar(
             select(User).where(User.email == "organizer@seatpulse.dev")
         )
@@ -152,15 +131,14 @@ def seed():
                 ),
             )
             db.add(event)
-            db.flush()   # id chahiye seats banane ke liye, isliye flush
-            print(f"✅ Event banaya (id={event.id})")
+            db.flush()   # Flush to retrieve event.id for seat creation
+            print(f"✅ Event created (id={event.id})")
         else:
-            # Purani DB me organizer chhoot gaya ho to yahin theek kar do,
-            # taki seed dobara chalane se dikkat khud hat jaye.
+            # Repair missing organizer_id in existing records.
             if event.organizer_id is None and organizer is not None:
                 event.organizer_id = organizer.id
-                print(f"🔧 Event ka organizer set kiya ({organizer.email})")
-            print(f"ℹ️  Event pehle se hai (id={event.id})")
+                print(f"🔧 Event organizer updated ({organizer.email})")
+            print(f"ℹ️  Event already exists (id={event.id})")
 
         # ---- Seats ----
         existing = db.scalar(
@@ -178,15 +156,15 @@ def seed():
                 for num in range(1, SEATS_PER_ROW + 1)
             ]
             db.add_all(seats)
-            print(f"✅ {len(seats)} seats banayi")
+            print(f"✅ {len(seats)} seats created")
         else:
-            print("ℹ️  Seats pehle se hain")
+            print("ℹ️  Seats already exist")
 
         db.commit()
         print("\n🎉 Seed complete")
 
     except Exception:
-        # Kuch bhi galat ho to poora rollback — aadha-adhura data nahi chahiye
+        # Rollback on failure to prevent partial data state.
         db.rollback()
         raise
     finally:

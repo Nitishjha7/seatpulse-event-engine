@@ -1,43 +1,43 @@
 # Phase 9 — Rate Limiting + Idempotency
 
-[Phase 8 — Dashboard UI](08-dashboard-ui.md) ke baad ka kaam.
+Follows [Phase 8 — Dashboard UI](08-dashboard-ui.md).
 
-**Kya bana:** bot protection aur double-click protection. Dono Redis pe, koi nayi service nahi.
+**Implemented:** Bot protection and double-click protection. Both use Redis; no new services required.
 
-> ⭐ Ye phase project ki **kahani complete** karta hai. Poora project is premise pe khada hai ki "flash sale me bots aate hain" — par ab tak unhe rokne ka koi intezaam tha hi nahi. Interviewer ye gap pakad sakta tha.
+> ⭐ This phase completes the project's **narrative**. The entire project is built on the premise that "bots attack flash sales" — yet until now, there was no mechanism to stop them. An interviewer could easily have identified this gap.
 
 ---
 
 ## Part 1 — Rate Limiting
 
-### Algorithm — token bucket kyu
+### Algorithm — Why Token Bucket
 
 | Algorithm | Problem |
 |---|---|
-| **Fixed window** (60 req/minute) | Boundary pe 2x burst nikal jata hai — 59th second me 60, aur 61st second me 60 aur. Ek second me 120 |
-| **Sliding window log** (har request ka timestamp) | Bilkul accurate, par har request ka timestamp store karna padta hai — memory khaata hai |
-| **Token bucket** ✅ | Bucket me `capacity` tokens, `refill` tokens/second bharte rehte hain. Har request ek token khaati hai |
+| **Fixed window** (60 req/minute) | Allows 2x burst at the boundary — 60 requests in the 59th second, and another 60 in the 61st. 120 requests in one second. |
+| **Sliding window log** (timestamp per request) | Highly accurate, but requires storing a timestamp for every request — memory intensive. |
+| **Token bucket** ✅ | Bucket holds `capacity` tokens, `refill` tokens/second. Each request consumes one token. |
 
-**Token bucket kyu jeeta:** user ka natural behaviour allow hota hai — 4-5 seats jaldi-jaldi click karna theek hai (burst) — par ek script jo 100 req/s maar raha hai wo refill rate pe aake atak jata hai.
+**Why Token Bucket won:** It allows natural user behavior — clicking 4-5 seats in quick succession is acceptable (burst) — but a script firing 100 req/s will be throttled to the refill rate.
 
-### ⭐ Lua me kyu, Python me kyu nahi
+### ⭐ Why Lua, not Python
 
 ```python
-# GALAT — race condition
-tokens = redis.get(key)          # 1. padho
-tokens = calculate(tokens)       # 2. hisaab lagao
-redis.set(key, tokens)           # 3. likho
+# WRONG — race condition
+tokens = redis.get(key)          # 1. read
+tokens = calculate(tokens)       # 2. calculate
+redis.set(key, tokens)           # 3. write
 ```
 
-Un teen steps ke beech dusra request bhi **wahi purane tokens padh leta** hai, aur dono ko permission mil jaati hai. Classic read-modify-write race.
+Between those three steps, a second request could **read the same old token count**, and both would be granted permission. A classic read-modify-write race.
 
-Lua script Redis ke andar **ek unit** me chalti hai — beech me kuch nahi ghus sakta. Wahi wajah jo Phase 4 me lock release ke liye thi.
+A Lua script runs as **one atomic unit** inside Redis — nothing can interrupt it. This is the same reason we used it for lock release in Phase 4.
 
 ```lua
 local bucket = redis.call("HMGET", key, "tokens", "ts")
 local tokens = tonumber(bucket[1])
 
-if tokens == nil then tokens = capacity; ts = now end    -- pehli baar: bucket full
+if tokens == nil then tokens = capacity; ts = now end    -- first time: bucket full
 
 local elapsed = math.max(0, now - ts)
 tokens = math.min(capacity, tokens + elapsed * refill)   -- refill
@@ -48,44 +48,44 @@ if tokens >= needed then
 end
 ```
 
-**TTL bhi set karte hain** — `capacity / refill + 60` second. Bucket poora bharne ke baad key ka koi matlab nahi (wo waise bhi full bucket hoti). Redis khud purani keys saaf karta rehta hai.
+**TTL is also set** — `capacity / refill + 60` seconds. Once the bucket is full, the key is redundant. Redis automatically cleans up expired keys.
 
-### ⭐ Limit KIS PAR — ye sabse important design decision hai
+### ⭐ What to limit — the most important design decision
 
-**Per user / per email. Per IP nahi.**
+**Per user / per email. Not per IP.**
 
-| Kyu IP nahi | |
+| Why not IP | |
 |---|---|
-| Proxy ke peeche | App ko har request **ek hi IP** se aati dikhti hai (load balancer ki). `X-Forwarded-For` set karo to wo **spoof** ho sakta hai |
-| NAT | Poora office/college ek IP share karta hai. Ek bot ki wajah se 200 log block — galat |
-| Attacker | IP badalna aasan hai. Jis account ko todna hai uska **email badalna nahi** |
+| Behind a proxy | The app sees every request from the **same IP** (the load balancer). `X-Forwarded-For` can be **spoofed**. |
+| NAT | An entire office/campus shares one IP. One bot blocks 200 legitimate users — incorrect. |
+| Attacker | Changing an IP is trivial. Changing the **email** of the account they want to compromise is not. |
 
-> **Per-IP limiting edge par honi chahiye** — nginx, Cloudflare, API gateway. App identity par limit lagata hai, jo zyada targeted hai.
+> **Per-IP limiting should be at the edge** — nginx, Cloudflare, API gateway. The app limits by identity, which is more targeted.
 >
-> Ye interview me achha jawab hai: "Maine IP par limit nahi lagayi kyunki app proxy ke peeche hoti hai aur wahan IP bharosemand nahi. IP limiting edge ka kaam hai."
+> This is a strong interview answer: "I didn't implement IP-based limiting because the app sits behind a proxy where IPs are unreliable. IP limiting is an edge-layer responsibility."
 
-**Bonus:** isi design ki wajah se **load test bina badle pass ho jata hai** — har Locust user ka apna account hai, to har ek ka apna bucket.
+**Bonus:** This design allows **load tests to pass without modification** — each Locust user has their own account, so each has their own bucket.
 
-### Limits aur unka logic
+### Limits and Logic
 
 ```python
-SEAT_LOCK  = Limit(capacity=15, refill=5)        # 15 burst, phir 5/s
+SEAT_LOCK  = Limit(capacity=15, refill=5)        # 15 burst, then 5/s
 BOOKING    = Limit(capacity=5,  refill=1)
-LOGIN_FAIL = Limit(capacity=5,  refill=1/60)     # 5 galtiyan, phir 1/minute
+LOGIN_FAIL = Limit(capacity=5,  refill=1/60)     # 5 errors, then 1/minute
 REGISTER   = Limit(capacity=5,  refill=1/120)
 ```
 
-| Limit | Kyu ye number |
+| Limit | Rationale |
 |---|---|
-| `SEAT_LOCK` | User 4-5 seats jaldi try kar sakta hai. Sustained 5/s se zyada matlab script hai |
-| `BOOKING` | Booking soch ke hoti hai, itni tez nahi |
-| `LOGIN_FAIL` | Credential stuffing yahin marti hai |
-| `REGISTER` | Ek IP se account farm banane se rokta hai |
+| `SEAT_LOCK` | Users may try 4-5 seats quickly. Sustained >5/s indicates a script. |
+| `BOOKING` | Booking is a deliberate action, not high-frequency. |
+| `LOGIN_FAIL` | Stops credential stuffing. |
+| `REGISTER` | Prevents account farming from a single IP. |
 
-### ⭐ Login limit sirf GALAT password pe kharch hoti hai
+### ⭐ Login limit only consumes on WRONG passwords
 
 ```python
-# Pehle sirf jhaanko — token kharch mat karo
+# Peek first — do not consume a token
 allowed, _, retry_after = check(bucket, LOGIN_FAIL, cost=0)
 if not allowed:
     raise HTTPException(429, ...)
@@ -93,15 +93,15 @@ if not allowed:
 user = db.scalar(...)
 
 if user is None or not verify_password(...):
-    check(bucket, LOGIN_FAIL, cost=1)     # <- ab kharch karo
-    raise HTTPException(401, "Email ya password galat hai")
+    check(bucket, LOGIN_FAIL, cost=1)     # <- consume now
+    raise HTTPException(401, "Incorrect email or password")
 ```
 
-Jo user roz sahi password se login karta hai wo **kabhi rate limit me nahi phasta**. Sirf galat guesses count hote hain.
+Users who log in correctly every day **never hit the rate limit**. Only incorrect guesses are counted.
 
-> Agar har login attempt count karte, to ek user jo din me 20 baar login karta hai (multiple devices, tabs) wo block ho jata — jabki usne kuch galat nahi kiya.
+> If every attempt were counted, a user logging in 20 times a day (multiple devices, tabs) would be blocked despite doing nothing wrong.
 
-### ⚠️ Fail-open, fail-closed nahi
+### ⚠️ Fail-open, not fail-closed
 
 ```python
 try:
@@ -110,17 +110,17 @@ except Exception:
     return True, limit.capacity, 0     # Redis down -> ALLOW
 ```
 
-Redis girte hi poori site band ho jaati agar fail-closed karte. Rate limiting ek **protection** hai, correctness nahi — aur booking ki correctness ki teen alag layers pehle se hain.
+If we used fail-closed, the entire site would go down if Redis failed. Rate limiting is a **protection** layer, not a correctness layer — and booking correctness is already handled by three other layers.
 
 ### Response headers
 
 ```
 X-RateLimit-Limit: 15
 X-RateLimit-Remaining: 3
-Retry-After: 2          (sirf 429 pe)
+Retry-After: 2          (only on 429)
 ```
 
-Ye **hamesha** bhejte hain, sirf 429 pe nahi — client dekh sakta hai ki wo limit ke kitna paas hai aur khud slow ho sakta hai.
+These are sent **always**, not just on 429 — the client can see how close they are to the limit and throttle themselves.
 
 ---
 
@@ -128,92 +128,92 @@ Ye **hamesha** bhejte hain, sirf 429 pe nahi — client dekh sakta hai ki wo lim
 
 ### Problem
 
-User "Confirm Booking" pe **double-click** karta hai. Ya network glitch pe browser request retry kar deta hai.
+A user **double-clicks** "Confirm Booking," or a network glitch causes the browser to retry the request.
 
-**Abhi kya hota tha:** dusri request ko 409 milta — kyunki seat tab tak `booked` ho chuki hoti.
+**Previous behavior:** The second request received a 409 because the seat was already `booked`.
 
-Nateeja to sahi tha. **Par wo sanyog se sahi tha, design se nahi.** Aur user ko ek confusing error dikhta jabki uski booking ho chuki hai.
+The result was correct, but **by coincidence, not by design.** The user saw a confusing error despite their booking being successful.
 
-Aur jab payments aayenge, ye sanyog kaafi nahi hoga — "paisa kat gaya par booking nahi hui" wala case yahin se aata hai.
+When payments are integrated, this coincidence will not suffice — the "money deducted but no booking" scenario stems from this.
 
 ### Solution
 
-Client har booking attempt ke saath ek unique `Idempotency-Key` bhejta hai:
+The client sends a unique `Idempotency-Key` with every booking attempt:
 
 ```
-Pehli request  -> kaam karo, jawab STORE karo, jawab do
-Wahi key phir  -> kaam MAT karo, stored jawab wapas do
+First request  -> process, STORE response, return it
+Same key again -> do NOT process, return stored response
 ```
 
-Ye Stripe, Razorpay, aur har payment API ka standard pattern hai.
+This is the standard pattern for Stripe, Razorpay, and other payment APIs.
 
 ### Flow
 
 ```python
 idem = Idempotency(request, user.id, "booking", payload.model_dump())
 
-cached = idem.begin()          # SET NX se slot claim
+cached = idem.begin()          # Claim slot via SET NX
 if cached:
     return idem.replay(response, cached)
 
 try:
     booking = _perform_booking(payload, db, user)
 except Exception:
-    idem.abort()               # claim chhod do
+    idem.abort()               # Release claim
     raise
 
 idem.complete(result, status_code=201)
 return result
 ```
 
-### Chaar cheezein jo detail me sahi karni padti hain
+### Four critical implementation details
 
-**1. Claim `SET NX` se hoti hai**
+**1. Claim via `SET NX`**
 
 ```python
 redis_client.set(key, '{"state":"processing",...}', nx=True, ex=60)
 ```
 
-Do parallel requests me se ek hi jeetega — wahi atomic pattern jo seat lock me hai.
+Only one of two parallel requests will win — the same atomic pattern used for seat locking.
 
-**2. Body ka fingerprint bhi store hota hai**
+**2. Body fingerprinting**
 
 ```python
 raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
 fingerprint = hashlib.sha256(raw.encode()).hexdigest()[:32]
 ```
 
-Agar koi **wahi key ALAG body** ke saath bheje, to wo bug hai (ya attack). Chupchap purana jawab lauta dena galat hoga → **422**.
+If someone sends the **same key with a DIFFERENT body**, it is a bug (or an attack). Returning the old response would be incorrect → **422**.
 
-`sort_keys=True` zaroori hai — `{"a":1,"b":2}` aur `{"b":2,"a":1}` ka hash same aana chahiye.
+`sort_keys=True` is mandatory — `{"a":1,"b":2}` and `{"b":2,"a":1}` must produce the same hash.
 
-**3. "Processing" state pe 409**
+**3. "Processing" state returns 409**
 
-Pehli request abhi chal rahi hai (double-click ka asli case) → 409, client thodi der baad retry kar sakta hai.
+If the first request is still running (the double-click case) → 409, the client can retry after a short delay.
 
-Uski TTL sirf **60 second** hai — server beech me crash ho jaye to key hamesha ke liye atki na rahe.
+The TTL is only **60 seconds** — if the server crashes, the key won't be stuck forever.
 
-**4. Fail pe `abort()` zaroori hai**
+**4. `abort()` on failure is mandatory**
 
 ```python
 except Exception:
-    idem.abort()      # claim delete
+    idem.abort()      # delete claim
     raise
 ```
 
-Bina iske 500 ke baad user usi key se retry hi nahi kar paata — 60 second tak "already processing" milta rehta.
+Without this, the user cannot retry with the same key after a 500 error — they would receive "already processing" for 60 seconds.
 
-### Key me `user_id` kyu
+### Why include `user_id` in the key
 
 ```python
 f"idem:{user_id}:{scope}:{idem_key}"
 ```
 
-Do users galti se same UUID bhej dein to ek ko dusre ki booking na dikh jaye.
+Prevents one user from seeing another's booking if they accidentally use the same UUID.
 
-### Result TTL — 24 ghante
+### Result TTL — 24 hours
 
-Stripe bhi yahi use karta hai. Retry aur double-click isse kahin pehle ho jaate hain.
+Stripe uses this duration. Retries and double-clicks happen well within this window.
 
 ### Frontend
 
@@ -226,47 +226,47 @@ export const createBooking = (seatId, idempotencyKey = crypto.randomUUID()) =>
   });
 ```
 
-`crypto.randomUUID()` browser me built-in hai — koi uuid package nahi chahiye.
+`crypto.randomUUID()` is built into the browser — no external package needed.
 
-> Key har **attempt** ke liye nayi banti hai, har seat ke liye nahi. Matlab ek confirm-click ka retry safe hai, par user jaan-boojh ke dubara book karna chahe to wo alag request hai.
+> The key is generated per **attempt**, not per seat. Retrying a confirm-click is safe, but a user intentionally trying to book again is a separate request.
 
-**Header optional hai** — na bheja to normal behaviour. Purane clients tootte nahi.
+**Header is optional** — if omitted, it defaults to standard behavior. Legacy clients won't break.
 
 ---
 
-## ⭐ Test ne ek bug pakda — `cost=0` wala peek
+## ⭐ Test caught a bug — `cost=0` peek
 
-Pehla run me brute-force test fail hua:
+The brute-force test failed on the first run:
 
 ```
-AssertionError: Brute force nahi ruka: [401]
+AssertionError: Brute force not stopped: [401]
 ```
 
-12 galat passwords ke baad bhi 429 nahi aaya.
+Even after 12 incorrect passwords, no 429 was triggered.
 
-**Wajah:** login me pehle `cost=0` se "peek" karte hain (token kharch kiye bina check). Lua me tha:
+**Reason:** Login uses a `cost=0` "peek" (check without consuming a token). The Lua script had:
 
 ```lua
 if tokens >= cost then    -- cost = 0
 ```
 
-Bucket khali ho gaya (`tokens = 0`), par `0 >= 0` **true** hai — to peek hamesha allow kar deta tha!
+The bucket was empty (`tokens = 0`), but `0 >= 0` is **true** — so the peek always allowed the request!
 
 **Fix:**
 
 ```lua
 local needed = cost
 if cost == 0 then
-    needed = 1        -- peek me bhi kam se kam 1 token hona chahiye
+    needed = 1        -- peek must also require at least 1 token
 end
 
 if tokens >= needed then
-    tokens = tokens - cost    -- peek me cost 0, to kuch ghata nahi
+    tokens = tokens - cost    -- cost is 0, so nothing is subtracted
     allowed = 1
 end
 ```
 
-> Chhota bug hai, par **poori brute-force protection bekaar kar raha tha** — aur manually test karte to shayad kabhi na pakda jata. Automated test ne pehle hi run me pakad liya.
+> A small bug, but it **rendered the entire brute-force protection useless** — manual testing might never have caught it. Automated tests caught it on the first run.
 
 ---
 
@@ -292,7 +292,7 @@ done
 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 429 429 200 429
 ```
 
-Beech me ek 200 dikha? **Wahi token bucket ka refill hai** — ek second beeta, 5 tokens wapas aaye.
+See the 200 in the middle? **That is the token bucket refill** — one second passed, 5 tokens were replenished.
 
 ### 2. Headers
 
@@ -317,13 +317,13 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
   -d '{"seat_id":7}' http://localhost:8000/api/bookings
 # {"id":146, ...}                       HTTP 201
 
-# WAHI key dubara
+# Same key again
 curl -X POST ... -H "Idempotency-Key: $KEY" -d '{"seat_id":7}' ...
 # {"id":146, ...}                       HTTP 201 + x-idempotent-replay: true
 
-# Wahi key, ALAG body
+# Same key, DIFFERENT body
 curl -X POST ... -H "Idempotency-Key: $KEY" -d '{"seat_id":8}' ...
-# {"detail":"Ye Idempotency-Key pehle alag data ke saath use ho chuki hai"}   422
+# {"detail":"This Idempotency-Key was already used with different data"}   422
 ```
 
 **Database:**
@@ -332,7 +332,7 @@ SELECT count(*) FROM bookings WHERE seat_id=7;
 -- 1
 ```
 
-Do requests, wahi booking id, **ek hi row**.
+Two requests, same booking ID, **one row**.
 
 ### 4. Test suite
 
@@ -340,11 +340,11 @@ Do requests, wahi booking id, **ek hi row**.
 20 passed in 22.74s
 ```
 
-7 naye tests: burst blocking, headers, **per-user isolation**, brute force, idempotent replay, fingerprint mismatch, aur "header ke bina bhi kaam kare".
+7 new tests: burst blocking, headers, **per-user isolation**, brute force, idempotent replay, fingerprint mismatch, and "works without header".
 
-Sabse important `test_rate_limit_is_per_user_not_global` hai — ek user ka bucket khatam karke check karta hai ki **dusra user affected nahi hua**. Global limiter poore system ko ek bot ki wajah se band kar deta.
+The most important is `test_rate_limit_is_per_user_not_global` — it drains one user's bucket to ensure **another user is unaffected**. A global limiter would shut down the entire system due to one bot.
 
-### 5. Load test — rate limiting ne toda to nahi?
+### 5. Load test — did rate limiting break it?
 
 ```
 Total requests   : 7,351
@@ -353,27 +353,27 @@ Requests/sec     : 124.0
 p50 / p99        : 1,200 ms / 1,700 ms
 ```
 ```
-✅ SAB PASS — koi overselling nahi hui
+✅ ALL PASS — no overselling
 Seats: available=99, booked=1 · Bookings: confirmed=1
 ```
 
-**Zero 429s** load test me — kyunki limits per-user hain aur har Locust user ka apna account hai.
+**Zero 429s** in the load test — because limits are per-user and every Locust user has their own account.
 
-Throughput 137 → 124 rps (~9% neeche). Wo har request pe ek extra Redis roundtrip ka kharcha hai. **Ye trade-off worth hai** — 9% throughput dekar bot protection mila.
+Throughput dropped from 137 to 124 rps (~9%). That is the cost of an extra Redis roundtrip per request. **This trade-off is worth it** — 9% throughput for bot protection.
 
 ---
 
-## Interview me kya poocha jayega
+## Interview Questions
 
-| Sawaal | Jawab |
+| Question | Answer |
 |---|---|
-| "Kaunsa algorithm aur kyu?" | Token bucket. Fixed window boundary pe 2x burst deta hai; sliding log memory khaata hai. Token bucket natural bursts allow karta hai par sustained abuse rokta hai |
-| "IP par kyu nahi lagaya?" | App proxy ke peeche hoti hai — IP bharosemand nahi, aur `X-Forwarded-For` spoof ho sakta hai. NAT ke peeche poora office ek IP share karta hai. IP limiting edge (nginx/Cloudflare) ka kaam hai; app identity par limit lagata hai |
-| "Lua kyu?" | Read-modify-write race. Python me GET → calculate → SET ke beech dusra request purane tokens padh leta |
-| "Redis down ho jaye to?" | Fail-open — allow kar dete hain. Fail-closed karte to Redis girte hi site band. Rate limiting protection hai, correctness nahi |
-| "Idempotency ki zaroorat kya, 409 to mil hi raha tha?" | Wo sanyog se sahi tha, design se nahi. Aur user ko error dikhta tha jabki uski booking ho chuki thi. Payments ke saath ye sanyog kaafi nahi hoga |
-| "Same key alag body aaye to?" | 422. Chupchap purana jawab dena galat hoga — wo bug ya attack hai, isliye fingerprint compare karte hain |
-| "Load test toota nahi?" | Nahi — limits per-user hain, har Locust user ka apna account. Throughput 9% giri, wo extra Redis roundtrip ka kharcha hai |
+| "Which algorithm and why?" | Token bucket. Fixed window allows 2x bursts at boundaries; sliding log is memory-intensive. Token bucket allows natural bursts but stops sustained abuse. |
+| "Why not limit by IP?" | The app is behind a proxy — IPs are unreliable, and `X-Forwarded-For` can be spoofed. NAT shares IPs across offices. IP limiting is an edge (nginx/Cloudflare) task; the app limits by identity. |
+| "Why Lua?" | Read-modify-write race. In Python, a second request could read old tokens between GET and SET. |
+| "What if Redis goes down?" | Fail-open — we allow requests. Fail-closed would take the site down. Rate limiting is protection, not correctness. |
+| "Why idempotency if 409 was already working?" | 409 was a coincidence, not design. Users saw errors for successful bookings. This is insufficient for payments. |
+| "What if the same key has a different body?" | 422. Silently returning the old response is wrong — it's a bug or attack, so we compare fingerprints. |
+| "Did the load test break?" | No — limits are per-user, and each Locust user has their own account. Throughput dropped 9% due to the extra Redis roundtrip. |
 
 ---
 
@@ -381,13 +381,13 @@ Throughput 137 → 124 rps (~9% neeche). Wo har request pe ek extra Redis roundt
 
 | Problem | Fix |
 |---|---|
-| Sab requests 429 aa rahi | `reset_state.py` chalao — purane buckets saaf ho jayenge |
-| Rate limit lag hi nahi raha | `.env` me `RATE_LIMIT_ENABLED=True` hai? |
-| Load test me 429 aa rahe | Users seed nahi hue — sab ek hi account use kar rahe honge |
-| Idempotency kaam nahi kar rahi | Header ka naam exactly `Idempotency-Key` hona chahiye |
-| "Yahi request abhi process ho rahi hai" atka hua | Pichhla request crash hua tha. 60 second me apne aap chhut jayega, ya `reset_state.py` |
-| Test ke baad login block | `reset_state.py` ab `rl:*` bhi saaf karta hai |
-| **pytest ke baad load test fail** | Brute-force test ne `user9` ka login bucket khali kar diya hai. Beech me `reset_state.py` chalao — warna Locust ka `on_start` login 429 khata hai aur poora run ruk jata hai |
+| All requests returning 429 | Run `reset_state.py` — clears old buckets. |
+| Rate limit not working | Is `RATE_LIMIT_ENABLED=True` in `.env`? |
+| 429s in load test | Users not seeded — they might all be using the same account. |
+| Idempotency not working | Header name must be exactly `Idempotency-Key`. |
+| "Request currently processing" stuck | Previous request crashed. It will clear in 60s, or run `reset_state.py`. |
+| Login blocked after tests | `reset_state.py` now clears `rl:*` as well. |
+| **Load test fails after pytest** | Brute-force test drained `user9`'s login bucket. Run `reset_state.py` — otherwise Locust's `on_start` login hits 429 and stops the run. |
 
 ---
 
@@ -395,19 +395,19 @@ Throughput 137 → 124 rps (~9% neeche). Wo har request pe ek extra Redis roundt
 
 ```
 backend/
-├── rate_limit.py               ← naya ⭐ token bucket (Lua) + dependencies
-├── idempotency.py              ← naya ⭐ SET NX claim + fingerprint + replay
+├── rate_limit.py               ← new ⭐ token bucket (Lua) + dependencies
+├── idempotency.py              ← new ⭐ SET NX claim + fingerprint + replay
 ├── config.py                   ← RATE_LIMIT_ENABLED
-├── reset_state.py              ← ab rl:* aur idem:* bhi saaf karta hai
+├── reset_state.py              ← now clears rl:* and idem:*
 ├── routers/
-│   ├── seats.py                ← lock pe SEAT_LOCK limit
+│   ├── seats.py                ← SEAT_LOCK limit on lock
 │   ├── bookings.py             ← BOOKING limit + idempotency wrapper
-│   └── auth.py                 ← login (per email, sirf fail pe) + register
-└── tests/test_concurrency.py   ← 7 naye tests (13 → 20)
+│   └── auth.py                 ← login (per email, only on fail) + register
+└── tests/test_concurrency.py   ← 7 new tests (13 → 20)
 
 frontend/src/
 ├── api.js                      ← Idempotency-Key header, Retry-After parse
-└── booking/BookingContext.jsx  ← 429 ka friendly message
+└── booking/BookingContext.jsx  ← friendly 429 message
 ```
 
 ---
@@ -428,7 +428,7 @@ git commit -m "Phase 9: Redis token-bucket rate limiting and idempotency keys
 
 ## Related
 
-- [Phase 4 — Redis Locking](04-redis-locking.md) — wahi Lua atomicity ka pattern
+- [Phase 4 — Redis Locking](04-redis-locking.md) — same Lua atomicity pattern
 - [Phase 6 — Load Testing](06-load-testing.md) — load test
-- [testing.md](../reference/testing.md) — saare test commands
-- [roadmap.md](../roadmap.md) — aage kya
+- [testing.md](../reference/testing.md) — all test commands
+- [roadmap.md](../roadmap.md) — next steps

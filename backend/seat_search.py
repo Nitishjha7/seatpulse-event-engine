@@ -1,9 +1,9 @@
 """
-Seat search — filters se seats dhoondhna.
+Seat search — filters seats based on criteria.
 
----- Yahan LLM NAHI hai ----
+---- NO LLM HERE ----
 
-Natural language wala hissa `ai.py` me hai, aur wo sirf itna karta hai:
+Natural language processing is handled in `ai.py`, which performs:
 
     "3 seats together under 1500 near the stage"
                     |
@@ -11,23 +11,21 @@ Natural language wala hissa `ai.py` me hai, aur wo sirf itna karta hai:
     SeatFilters(quantity=3, together=True, max_price=1500,
                 row_preference="front")
 
-Uske BAAD ka poora kaam yahan hota hai, aur wo bilkul normal code hai —
-koi model, koi API call, koi randomness.
+All subsequent processing occurs here using standard, deterministic code.
+There are no models, API calls, or randomness involved.
 
-Ye bantwara jaan-boojh ke hai aur is feature ka sabse zaroori design
-faisla bhi:
+This separation is a deliberate design choice:
 
-  1. **Security.** LLM ka output kabhi SQL nahi banta. Wo ek validated
-     Pydantic object banta hai, aur query hamesha parameterised rehti hai.
-     Prompt injection zyada se zyada ajeeb filters bana sakta hai —
-     data leak ya SQL injection nahi.
+  1. **Security.** LLM output is never used as raw SQL. It is mapped to a
+     validated Pydantic object, and queries remain parameterised. Prompt
+     injection can only produce invalid filters, not data leaks or SQL injection.
 
-  2. **Testability.** Search ka poora logic bina API key ke test hota hai.
-     90 me se ek bhi test ko Gemini ki zaroorat nahi.
+  2. **Testability.** The search logic is fully testable without API keys.
+     None of the 90+ tests require Gemini.
 
-  3. **Reliability.** Model down ho, key na ho, rate limit lage — search
-     phir bhi chalta hai. Sirf natural language wala input band hota hai,
-     normal filters nahi.
+  3. **Reliability.** The search remains functional even if the model is
+     down or rate-limited. Only natural language input is disabled;
+     standard filters continue to work.
 """
 
 from dataclasses import dataclass
@@ -37,7 +35,7 @@ from models import SEAT_AVAILABLE
 
 @dataclass(frozen=True)
 class SeatCandidate:
-    """Ek match — ek ya kai seats jo saath me hain."""
+    """Represents a match — one or more contiguous seats."""
 
     seat_ids: list[int]
     row_label: str
@@ -54,7 +52,7 @@ class SeatCandidate:
 
 
 def _aisle_positions(layout: dict | None) -> dict[str, set[int]]:
-    """Row label -> kis seat ke baad aisle hai."""
+    """Maps row labels to seat numbers followed by an aisle."""
     out: dict[str, set[int]] = {}
     if not layout:
         return out
@@ -68,18 +66,16 @@ def _aisle_positions(layout: dict | None) -> dict[str, set[int]]:
 
 def _runs(seats: list, quantity: int, aisles: set[int]) -> list[list]:
     """
-    Ek row me `quantity` LAGATAR available seats ke saare groups.
+    Finds all groups of `quantity` contiguous available seats in a row.
 
-    ⚠️ Aisle "together" ko todti hai.
+    ⚠️ Aisles break "together" status.
 
-    Seat 5 aur 6 ke beech agar chalne ka raasta hai, to wo saath nahi
-    baithe — beech me log guzar rahe honge. Numbers lagatar hone se ye
-    faisla nahi hota, aur yahi wo detail hai jo Phase 18 ka layout data
-    kaam me laati hai.
+    If an aisle exists between seat 5 and 6, they are not considered
+    contiguous, as they are separated by a walkway. Sequential numbering
+    alone is insufficient; this logic relies on Phase 18 layout data.
 
-    Bina is check ke search "saath wali seats" bata deta jo asal me
-    saath hoti hi nahi — aur wo galti user ko venue me pahunch kar pata
-    chalti.
+    Without this check, the search might suggest "contiguous" seats that
+    are physically separated, leading to poor user experience at the venue.
     """
     out = []
     run: list = []
@@ -88,8 +84,8 @@ def _runs(seats: list, quantity: int, aisles: set[int]) -> list[list]:
         if run:
             prev = run[-1]
             broken = (
-                seat.seat_number != prev.seat_number + 1     # beech me seat gayab/booked
-                or prev.seat_number in aisles                 # beech me aisle
+                seat.seat_number != prev.seat_number + 1     # Gap in seat numbers
+                or prev.seat_number in aisles                 # Aisle separation
             )
             if broken:
                 run = []
@@ -104,13 +100,13 @@ def _runs(seats: list, quantity: int, aisles: set[int]) -> list[list]:
 
 def _row_rank(row_label: str, preference: str | None) -> list[int]:
     """
-    Sort key — preference ke hisaab se.
+    Sort key based on row preference.
 
-    Row A stage ke sabse paas hai (Phase 3 se yahi convention hai), to
-    "front" matlab A se shuru aur "back" matlab ulta.
+    Row A is closest to the stage (Phase 3 convention). "front" sorts
+    ascending from A; "back" reverses this.
 
-    Character codes ki list lauta rahe hain, string nahi — taki "A" aur
-    "A1" jaise labels bhi theek se sort hon.
+    Returns a list of character codes to ensure correct sorting of labels
+    like "A" vs "A1".
     """
     sign = -1 if preference == "back" else 1
     return [sign * ord(c) for c in row_label]
@@ -129,25 +125,24 @@ def find(
     limit: int = 12,
 ) -> list[SeatCandidate]:
     """
-    Filters se matching seat groups dhoondo.
+    Filters seats based on provided criteria.
 
-    Sab kuch memory me hota hai, ek SQL query ke baad. Wajah: "N lagatar
-    available seats" ko SQL me likhna window functions ka pahaad ban jata
-    hai, aur ek event me max 2000 seats hain — Python me ye kuch
-    milliseconds ka kaam hai.
+    Processing occurs in-memory after the initial SQL query. Reason:
+    calculating "N contiguous available seats" in SQL is complex with
+    window functions. Given the limit of 2000 seats per event, Python
+    processing is significantly faster (milliseconds).
 
-    Agar kabhi 100k seats hue to ye badalna padega, par abhi wo optimise
-    karna hoga jo problem hai hi nahi.
+    This approach may need re-evaluation if seat counts reach 100k, but
+    currently, we avoid premature optimization.
     """
     quantity = max(1, min(quantity, 10))
 
     usable = [s for s in seats if s.status == SEAT_AVAILABLE]
 
-    # `price` BASE hai; user jo dekh raha hai wo current price hai
-    # (Phase 14). Filter usi par lagna chahiye jo screen pe dikh raha hai.
+    # `price` is the base; current price is used for display (Phase 14).
     #
-    # ⚠️ `or` se nahi, `is None` se check karte hain — free seat (price 0)
-    # falsy hoti hai aur `or` usse chupchaap base price pe bhej deta.
+    # ⚠️ Use `is None` check; free seats (price 0) are falsy, and `or`
+    # would incorrectly revert to the base price.
     def price_of(seat) -> float:
         display = getattr(seat, "_display_price", None)
         return float(seat.price if display is None else display)
@@ -172,12 +167,11 @@ def find(
         row_seats.sort(key=lambda s: s.seat_number)
 
         if quantity == 1 or not together:
-            # Saath ki zaroorat nahi — har seat apne aap me ek match hai.
+            # Contiguity not required; treat each seat as an individual match.
             #
-            # ⚠️ `together=False` ke saath quantity > 1 par bhi hum SINGLE
-            # seats lautate hain, group nahi. Kyunki "3 seats, saath nahi
-            # chahiye" ka matlab hai "koi bhi 3 dikha do" — unhe
-            # artificially group karna jhooth hoga.
+            # ⚠️ When `together=False` and quantity > 1, we return individual
+            # seats rather than groups. Artificially grouping them would be
+            # misleading.
             groups = [[s] for s in row_seats]
         else:
             groups = _runs(row_seats, quantity, aisles.get(row_label.upper(), set()))
@@ -193,7 +187,7 @@ def find(
                 )
             )
 
-    # Sasta pehle — par preference diya ho to row order jeetti hai
+    # Sort by price, or by row preference if specified.
     if row_preference in ("front", "back"):
         candidates.sort(key=lambda c: (_row_rank(c.row_label, row_preference), c.total_price))
     else:

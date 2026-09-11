@@ -39,7 +39,7 @@ export default function Dashboard() {
 
   return (
     <div className="animate-rise space-y-5">
-      {/* xl se neeche right rail grid ke neeche chala jata hai */}
+      {/* Right rail moves below the grid on screens smaller than xl */}
       <div className="grid gap-5 xl:grid-cols-[1fr_380px]">
         <div className="space-y-5">
           <EventHero event={event} totalSeats={seats.length} />
@@ -54,21 +54,18 @@ export default function Dashboard() {
         </div>
 
         <div className="space-y-5">
-          {/* AI search — key na ho to ye component khud ko render hi
-              nahi karta, isliye yahan koi condition nahi chahiye */}
+          {/* AI search component handles its own conditional rendering */}
           <SeatSearch
             eventId={event?.id}
             onPick={(match) => {
-              // Pehli seat select kar do — baaki grid me highlight ho
-              // jaati hain aur user chahe to group bana sakta hai.
+              // Select the first seat to highlight matches in the grid
               const seat = seats.find((s) => s.id === match.seat_ids[0])
               if (seat) selectSeat(seat)
             }}
           />
 
           <EventSummary event={event} counts={counts} />
-          {/* HoldCard ke UPAR — user ko pehle pata chale ki price demand se
-              chal raha hai, tabhi 'price locked' badge ka matlab banta hai */}
+          {/* PricingBanner placed above HoldCard to provide context for the 'price locked' badge */}
           <PricingBanner pricing={pricing} />
           <HoldCard
             seat={selectedSeat}
@@ -81,7 +78,7 @@ export default function Dashboard() {
             onGroupSizeChange={setGroupSize}
             onStartGroup={async () => {
               const token = await startGroup(groupSize)
-              // Token mila to seedha share page pe — wahi se link copy hota hai
+              // Redirect to share page upon successful token generation
               if (token) navigate(`/groups/${token}`)
             }}
           />

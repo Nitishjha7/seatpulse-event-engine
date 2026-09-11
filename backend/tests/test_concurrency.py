@@ -1,12 +1,11 @@
 """
-Concurrency + auth tests — chalti hui API ke against.
+Concurrency + auth tests — against a running API.
 
-Ye unit tests nahi hain. Ye asli HTTP requests bhejte hain, kyunki race
-conditions sirf tab dikhti hain jab poora stack (uvicorn + Redis + Postgres)
-saath me chal raha ho. Mock kar dete to woh bug pakda hi na jata jo load
-test ne pakda tha.
+These are not unit tests. They send real HTTP requests because race
+conditions only appear when the full stack (uvicorn + Redis + Postgres)
+is running. Mocking would have missed the bug caught by the load test.
 
-Chalao:
+Run:
     docker compose exec backend pytest tests/ -v
 """
 
@@ -17,23 +16,23 @@ from concurrent.futures import ThreadPoolExecutor
 import httpx
 import pytest
 
-# Container ke andar se "backend", host se "localhost"
+# "backend" from inside the container, "localhost" from the host
 BASE_URL = os.getenv("TEST_BASE_URL", "http://backend:8000")
 
-# seed.py sab test users ko yahi password deta hai
+# seed.py assigns this password to all test users
 PASSWORD = "demo1234"
 CONCURRENCY = 40
 
-# Har pytest run ka apna suffix.
+# Unique suffix for each pytest run.
 #
-# ⚠️ Idempotency keys pehle fixed the (`test-100-once`). Wo Redis me TTL
-# tak zinda rehti hain, matlab AGLA test run usi key pe replay le aata
-# tha: 201 to milta tha, par nayi booking banti hi nahi thi — aur test
-# "0 bookings mili" pe fail hoti thi.
+# ⚠️ Idempotency keys were previously fixed (`test-100-once`). They persist
+# in Redis until TTL, meaning the NEXT test run would replay on the same key:
+# it would return 201, but no new booking was created — and the test would
+# fail on "0 bookings found".
 #
-# Ye bug multi-worker stack pe pakda gaya aur pehle multi-worker ka bug
-# laga. Tha nahi — tests reset_state.py par nirbhar the, jo chhoot sakta
-# hai. Ab har run apni keys use karta hai aur ye nirbharta khatam.
+# This bug was caught on a multi-worker stack and initially misidentified as
+# a multi-worker issue. It wasn't — tests relied on reset_state.py, which
+# could be skipped. Now each run uses its own keys, eliminating this dependency.
 RUN_ID = uuid.uuid4().hex[:8]
 
 
@@ -56,10 +55,10 @@ def client():
 @pytest.fixture(scope="module")
 def tokens(client):
     """
-    Har concurrent "user" ka apna token.
+    Each concurrent "user" has their own token.
 
-    Alag users zaroori hain — same user dubara lock maange to use
-    `already_owned` wala 200 mil jata hai aur contention test jhoothi ho jati.
+    Distinct users are necessary — if the same user requests a lock again,
+    they receive a 200 with `already_owned`, invalidating the contention test.
     """
     emails = ["demo@seatpulse.dev"] + [
         f"user{i}@seatpulse.dev" for i in range(1, CONCURRENCY)
@@ -67,21 +66,21 @@ def tokens(client):
     try:
         return [_token(client, e) for e in emails]
     except httpx.HTTPStatusError:
-        pytest.skip("Test users nahi hain — 'python seed.py' chalao")
+        pytest.skip("Test users missing — run 'python seed.py'")
 
 
 @pytest.fixture
 def free_seat(client, tokens):
-    """Ek available seat lo, test ke baad usse saaf kar do."""
+    """Take an available seat, clean it up after the test."""
     seats = client.get("/api/events/1/seats").json()
     available = [s for s in seats if s["status"] == "available"]
     if not available:
-        pytest.skip("Koi available seat nahi — 'python reset_state.py' chalao")
+        pytest.skip("No available seats — run 'python reset_state.py'")
 
-    seat = available[-1]        # aakhri wali, taki UI wali se na takraye
+    seat = available[-1]        # use the last one to avoid conflict with UI
     yield seat
 
-    # Cleanup: har user ka lock chhodo, phir booking cancel karo
+    # Cleanup: release each user's lock, then cancel the booking
     for token in tokens:
         client.delete(f"/api/seats/{seat['id']}/lock", headers=_headers(token))
 
@@ -107,7 +106,7 @@ def test_health(client):
 # ---------------------------------------------------------------------------
 
 def test_protected_routes_need_a_token(client):
-    """Bina token ke booking/lock/bookings sab 401."""
+    """All booking/lock/bookings endpoints return 401 without a token."""
     assert client.post("/api/bookings", json={"seat_id": 1}).status_code == 401
     assert client.post("/api/seats/1/lock").status_code == 401
     assert client.get("/api/bookings").status_code == 401
@@ -124,29 +123,29 @@ def test_login_wrong_password(client):
         "/api/auth/login", json={"email": "demo@seatpulse.dev", "password": "galat"}
     )
     assert res.status_code == 401
-    # Same message jo unknown email pe milta hai — user enumeration se bachne ke liye
-    assert res.json()["detail"] == "Email ya password galat hai"
+    # Use the same message for unknown emails to prevent user enumeration.
+    assert res.json()["detail"] == "Invalid email or password"
 
 
 def test_login_unknown_email_same_message(client):
     res = client.post(
-        "/api/auth/login", json={"email": "nahi@hai.dev", "password": "kuchbhi"}
+        "/api/auth/login", json={"email": "nonexistent@example.dev", "password": "anything"}
     )
     assert res.status_code == 401
-    assert res.json()["detail"] == "Email ya password galat hai"
+    assert res.json()["detail"] == "Invalid email or password"
 
 
 def test_refresh_rotates_and_old_token_dies(client):
-    """Refresh ke baad purana refresh token bekaar ho jana chahiye."""
+    """Old refresh token should be invalidated after refresh."""
     with httpx.Client(base_url=BASE_URL, timeout=30.0) as c:
         c.post("/api/auth/login", json={"email": "demo@seatpulse.dev", "password": PASSWORD})
         old_cookie = c.cookies.get("seatpulse_refresh")
         assert old_cookie
 
         assert c.post("/api/auth/refresh").status_code == 200
-        assert c.cookies.get("seatpulse_refresh") != old_cookie   # rotate hua
+        assert c.cookies.get("seatpulse_refresh") != old_cookie   # rotated
 
-    # Purana cookie ab reject hona chahiye
+    # Old cookie should now be rejected
     with httpx.Client(base_url=BASE_URL, timeout=30.0) as c2:
         c2.cookies.set("seatpulse_refresh", old_cookie)
         assert c2.post("/api/auth/refresh").status_code == 401
@@ -160,7 +159,7 @@ def test_logout_kills_refresh_token(client):
 
 
 def test_cannot_cancel_someone_elses_booking(client, tokens, free_seat):
-    """IDOR check — dusre ki booking cancel nahi kar sakte."""
+    """IDOR check — cannot cancel someone else's booking."""
     seat_id = free_seat["id"]
     owner, attacker = tokens[0], tokens[1]
 
@@ -168,7 +167,7 @@ def test_cannot_cancel_someone_elses_booking(client, tokens, free_seat):
     assert res.status_code == 201
     booking_id = res.json()["id"]
 
-    # 404 (403 nahi) — attacker ko ye bhi na pata chale ki booking exist karti hai
+    # 404 (not 403) — attacker should not know if the booking exists
     assert client.delete(f"/api/bookings/{booking_id}", headers=_headers(attacker)).status_code == 404
     assert client.delete(f"/api/bookings/{booking_id}", headers=_headers(owner)).status_code == 200
 
@@ -179,7 +178,7 @@ def test_cannot_cancel_someone_elses_booking(client, tokens, free_seat):
 
 @pytest.fixture(scope="module")
 def role_tokens(client):
-    """Teeno roles ke tokens. seed.py ye accounts banata hai."""
+    """Tokens for all three roles. seed.py creates these accounts."""
     accounts = {
         "attendee": "demo@seatpulse.dev",
         "organizer": "organizer@seatpulse.dev",
@@ -188,7 +187,7 @@ def role_tokens(client):
     try:
         return {role: _token(client, email) for role, email in accounts.items()}
     except httpx.HTTPStatusError:
-        pytest.skip("Role accounts nahi hain — 'python seed.py' chalao")
+        pytest.skip("Role accounts missing — run 'python seed.py'")
 
 
 def test_role_comes_through_in_me(client, role_tokens):
@@ -197,14 +196,14 @@ def test_role_comes_through_in_me(client, role_tokens):
 
 
 def test_attendee_cannot_touch_organizer_or_admin(client, role_tokens):
-    """Sabse basic RBAC check."""
+    """Most basic RBAC check."""
     t = _headers(role_tokens["attendee"])
     assert client.get("/api/organizer/events", headers=t).status_code == 403
     assert client.get("/api/admin/stats", headers=t).status_code == 403
 
 
 def test_organizer_cannot_reach_admin(client, role_tokens):
-    """Organizer hone ka matlab admin hona nahi hai."""
+    """Being an organizer does not mean being an admin."""
     assert client.get(
         "/api/admin/stats", headers=_headers(role_tokens["organizer"])
     ).status_code == 403
@@ -217,7 +216,7 @@ def test_admin_can_reach_everything(client, role_tokens):
 
 
 def test_organizer_creates_event_with_priced_rows(client, role_tokens):
-    """Price tiers se seats sahi ban rahi hain?"""
+    """Are seats created correctly with price tiers?"""
     token = role_tokens["organizer"]
 
     res = client.post(
@@ -237,13 +236,13 @@ def test_organizer_creates_event_with_priced_rows(client, role_tokens):
     assert event["total_seats"] == 3 * 4      # 3 rows x 4 seats
     assert event["available_seats"] == 12
 
-    # Seats actually bani, aur pricing tier ke hisaab se
+    # Seats were created, according to pricing tiers
     seats = client.get(f"/api/events/{event['id']}/seats").json()
     assert len(seats) == 12
     assert {s["price"] for s in seats if s["row_label"] == "A"} == {1500}
     assert {s["price"] for s in seats if s["row_label"] in ("B", "C")} == {500}
 
-    # cleanup — koi booking nahi hai to delete chal jayega
+    # Cleanup: deletion will succeed if there are no bookings.
     assert client.delete(
         f"/api/organizer/events/{event['id']}", headers=_headers(token)
     ).status_code == 204
@@ -266,10 +265,10 @@ def test_attendee_cannot_create_event(client, role_tokens):
 
 def test_organizer_cannot_touch_another_organizers_event(client, role_tokens, tokens):
     """
-    ⭐ Sabse important RBAC test.
+    ⭐ Most important RBAC test.
 
-    Role check pass hone ka matlab ye nahi ki har resource tumhara hai.
-    Ownership alag se check honi chahiye.
+    Passing the role check does not mean you own every resource.
+    Ownership must be checked separately.
     """
     owner = role_tokens["organizer"]
 
@@ -285,12 +284,12 @@ def test_organizer_cannot_touch_another_organizers_event(client, role_tokens, to
         },
     ).json()
 
-    # user1 ko organizer bana ke dekhte hain — role to hai, par event uska nahi
+    # Let's try making user1 an organizer — they have the role, but not the event
     admin = _headers(role_tokens["admin"])
     other = _token(client, "user1@seatpulse.dev")
 
-    # user1 organizer nahi hai to pehle 403 milega; agar hai to 404 (ownership).
-    # Dono hi "access nahi" hain — bas alag wajah se.
+    # If user1 is not an organizer, they receive 403; if they are, they receive 404 (ownership).
+    # Both indicate "no access" for different reasons.
     patch = client.patch(
         f"/api/organizer/events/{created['id']}",
         headers=_headers(other),
@@ -298,14 +297,14 @@ def test_organizer_cannot_touch_another_organizers_event(client, role_tokens, to
     )
     assert patch.status_code in (403, 404)
 
-    # Owner khud edit kar sakta hai
+    # Owner can edit their own event
     assert client.patch(
         f"/api/organizer/events/{created['id']}",
         headers=_headers(owner),
         json={"venue": "Updated Hall"},
     ).status_code == 200
 
-    # Admin bhi kar sakta hai
+    # Admin can also edit
     assert client.patch(
         f"/api/organizer/events/{created['id']}", headers=admin, json={"venue": "Admin Hall"}
     ).status_code == 200
@@ -315,10 +314,10 @@ def test_organizer_cannot_touch_another_organizers_event(client, role_tokens, to
 
 def test_event_with_bookings_cannot_be_deleted(client, role_tokens):
     """
-    ⚠️ Business rule: paid tickets kabhi gayab nahi honi chahiye.
+    ⚠️ Business rule: paid tickets must never disappear.
 
-    Cascade delete laga hua hai, to bina is guard ke ek DELETE se logon ki
-    khareedi hui tickets ud jaatin.
+    Cascade delete is enabled, so without this guard, a DELETE would wipe out
+    tickets purchased by users.
     """
     owner = role_tokens["organizer"]
     attendee = role_tokens["attendee"]
@@ -341,11 +340,11 @@ def test_event_with_bookings_cannot_be_deleted(client, role_tokens):
     )
     assert booking.status_code == 201
 
-    # Ab delete block hona chahiye
+    # Delete should now be blocked
     blocked = client.delete(f"/api/organizer/events/{created['id']}", headers=_headers(owner))
     assert blocked.status_code == 409
 
-    # Booking cancel karo -> ab delete chal jayega
+    # Cancel the booking -> delete will now work
     client.delete(f"/api/bookings/{booking.json()['id']}", headers=_headers(attendee))
     assert client.delete(
         f"/api/organizer/events/{created['id']}", headers=_headers(owner)
@@ -353,7 +352,7 @@ def test_event_with_bookings_cannot_be_deleted(client, role_tokens):
 
 
 def test_seat_layout_limits_are_enforced(client, role_tokens):
-    """26 rows (A-Z) se zyada nahi ban sakti."""
+    """Cannot create more than 26 rows (A-Z)."""
     res = client.post(
         "/api/organizer/events",
         headers=_headers(role_tokens["organizer"]),
@@ -374,11 +373,11 @@ def test_seat_layout_limits_are_enforced(client, role_tokens):
 
 def test_rate_limit_blocks_a_burst(client, tokens, free_seat):
     """
-    Ek user 40 requests ek saath maare — kuch 429 milne chahiye.
+    If a user sends 40 requests at once — some should receive 429.
 
-    Token bucket 15 burst allow karta hai, phir 5/s refill. Serial curl
-    loop me bhi refill hota rehta hai, isliye "kuch 429" check kar rahe
-    hain, "theek 25" nahi — wo flaky hota.
+    The token bucket allows a burst of 15, then refills at 5/s. The refill
+    continues during the serial curl loop, so we check for "some 429s",
+    not "exactly 25" — that would be flaky.
     """
     seat_id = free_seat['id']
     token = tokens[3]
@@ -388,13 +387,13 @@ def test_rate_limit_blocks_a_burst(client, tokens, free_seat):
         for _ in range(40)
     ]
 
-    assert 429 in codes, f"Rate limit laga hi nahi: {sorted(set(codes))}"
-    # Shuru wali requests to pass honi chahiye — limiter sab kuch block na kare
+    assert 429 in codes, f"Rate limit not applied: {sorted(set(codes))}"
+    # Initial requests should pass — the limiter shouldn't block everything
     assert codes[0] in (200, 409)
 
 
 def test_rate_limit_sends_headers(client, tokens, free_seat):
-    """Client ko pata chalna chahiye ki wo limit ke kitna paas hai."""
+    """Client should know how close it is to the limit."""
     res = client.post(
         f"/api/seats/{free_seat['id']}/lock", headers=_headers(tokens[4])
     )
@@ -404,35 +403,35 @@ def test_rate_limit_sends_headers(client, tokens, free_seat):
 
 def test_rate_limit_is_per_user_not_global(client, tokens, free_seat):
     """
-    Ek user ke block hone se DUSRA user affect nahi hona chahiye.
+    One user being blocked should not affect another user.
 
-    Ye sabse important rate limit test hai — global limiter poore system
-    ko ek bot ki wajah se band kar deta.
+    This is the most important rate limit test — a global limiter would
+    shut down the entire system due to one bot.
     """
     seat_id = free_seat['id']
     victim, other = tokens[5], tokens[6]
 
-    # Ek user ka bucket khatam karo
+    # Exhaust one user's bucket
     for _ in range(40):
         client.post(f"/api/seats/{seat_id}/lock", headers=_headers(victim))
 
-    # Dusre user ko 429 nahi milna chahiye
+    # The other user should not receive a 429
     res = client.post(f"/api/seats/{seat_id}/lock", headers=_headers(other))
-    assert res.status_code != 429, "Ek user ke limit se dusra block ho gaya"
+    assert res.status_code != 429, "One user's limit blocked another"
 
 
 def test_wrong_password_eventually_rate_limited(client):
-    """Brute force protection — galat password baar baar dene par 429."""
+    """Brute force protection — 429 on repeated wrong passwords."""
     email = "user9@seatpulse.dev"
 
     codes = [
         client.post(
-            "/api/auth/login", json={"email": email, "password": f"galat{i}"}
+            "/api/auth/login", json={"email": email, "password": f"wrong{i}"}
         ).status_code
         for i in range(12)
     ]
 
-    assert 429 in codes, f"Brute force nahi ruka: {sorted(set(codes))}"
+    assert 429 in codes, f"Brute force not stopped: {sorted(set(codes))}"
 
 
 # ---------------------------------------------------------------------------
@@ -441,9 +440,9 @@ def test_wrong_password_eventually_rate_limited(client):
 
 def test_same_idempotency_key_returns_same_booking(client, tokens, free_seat):
     """
-    ⭐ Double-click ka asli test.
+    ⭐ Real test for double-clicks.
 
-    Wahi key dubara -> wahi booking, aur database me sirf EK row.
+    Same key again -> same booking, and only ONE row in the database.
     """
     seat_id = free_seat['id']
     token = tokens[0]
@@ -454,17 +453,17 @@ def test_same_idempotency_key_returns_same_booking(client, tokens, free_seat):
 
     second = client.post("/api/bookings", json={"seat_id": seat_id}, headers=headers)
     assert second.status_code == 201
-    assert second.json()["id"] == first.json()["id"], "Alag booking ban gayi!"
+    assert second.json()["id"] == first.json()["id"], "A different booking was created!"
     assert second.headers.get("X-Idempotent-Replay") == "true"
 
-    # Sabse zaroori check — DB me kitni bookings actually bani
+    # Most important check — how many bookings were actually created in the DB
     mine = client.get("/api/bookings", headers=_headers(token)).json()
     for_seat = [b for b in mine if b["seat_id"] == seat_id and b["status"] == "confirmed"]
     assert len(for_seat) == 1
 
 
 def test_same_key_different_body_is_rejected(client, tokens, free_seat):
-    """Wahi key alag data ke saath = bug ya attack. Chupchap purana jawab mat do."""
+    """Same key with different data = bug or attack. Do not silently return the old response."""
     seat_id = free_seat['id']
     headers = {**_headers(tokens[0]), "Idempotency-Key": f"test-{seat_id}-mismatch-{RUN_ID}"}
 
@@ -475,7 +474,7 @@ def test_same_key_different_body_is_rejected(client, tokens, free_seat):
 
 
 def test_booking_works_without_idempotency_key(client, tokens, free_seat):
-    """Header optional hona chahiye — purane clients tootne nahi chahiye."""
+    """Header should be optional — legacy clients should not break."""
     res = client.post(
         "/api/bookings", json={"seat_id": free_seat['id']}, headers=_headers(tokens[0])
     )
@@ -487,7 +486,7 @@ def test_booking_works_without_idempotency_key(client, tokens, free_seat):
 # ---------------------------------------------------------------------------
 
 def test_only_one_user_gets_the_lock(client, tokens, free_seat):
-    """40 users, ek seat — sirf ek ko lock milna chahiye."""
+    """40 users, one seat — only one should get the lock."""
     seat_id = free_seat["id"]
 
     def try_lock(token):
@@ -501,7 +500,7 @@ def test_only_one_user_gets_the_lock(client, tokens, free_seat):
 
 
 def test_no_double_booking(client, tokens, free_seat):
-    """40 users ek saath book karein — database me exactly 1 booking."""
+    """40 users booking simultaneously — exactly 1 booking in the database."""
     seat_id = free_seat["id"]
 
     def try_book(token):
@@ -517,18 +516,18 @@ def test_no_double_booking(client, tokens, free_seat):
 
 
 def test_lock_blocks_other_users_booking(client, tokens, free_seat):
-    """Ek user hold kare, dusra book na kar paaye."""
+    """If one user holds a seat, another cannot book it."""
     seat_id = free_seat["id"]
     holder, other = tokens[1], tokens[2]
 
     assert client.post(f"/api/seats/{seat_id}/lock", headers=_headers(holder)).status_code == 200
     assert client.post("/api/bookings", json={"seat_id": seat_id}, headers=_headers(other)).status_code == 409
-    # Lock wala khud book kar sakta hai
+    # The lock holder can book the seat
     assert client.post("/api/bookings", json={"seat_id": seat_id}, headers=_headers(holder)).status_code == 201
 
 
 def test_cannot_release_someone_elses_lock(client, tokens, free_seat):
-    """Lua script dusre ka lock nahi hatne deti."""
+    """Lua script prevents unauthorized lock release."""
     seat_id = free_seat["id"]
     holder, other = tokens[1], tokens[2]
 
@@ -542,7 +541,7 @@ def test_cannot_release_someone_elses_lock(client, tokens, free_seat):
 
 
 def test_version_increments_on_change(client, tokens, free_seat):
-    """Har state change pe version badhna chahiye — optimistic locking isi par chalti hai."""
+    """Version must increment on state change — required for optimistic locking."""
     seat_id = free_seat["id"]
     token = tokens[1]
 
@@ -561,7 +560,7 @@ def test_version_increments_on_change(client, tokens, free_seat):
 # ---------------------------------------------------------------------------
 
 def _checkout(client, token, seat_id):
-    """Seat hold karke checkout shuru karo — helper."""
+    """Helper to hold a seat and initiate checkout."""
     client.post(f"/api/seats/{seat_id}/lock", headers=_headers(token))
     return client.post(
         "/api/payments/checkout", json={"seat_id": seat_id}, headers=_headers(token)
@@ -569,7 +568,7 @@ def _checkout(client, token, seat_id):
 
 
 def test_checkout_moves_seat_to_payment_pending(client, tokens, free_seat):
-    """Checkout ke baad seat hold se aage badh jaati hai — par booked NAHI."""
+    """After checkout, the seat moves past the hold state but is NOT booked."""
     seat_id = free_seat["id"]
 
     res = _checkout(client, tokens[0], seat_id)
@@ -579,13 +578,13 @@ def test_checkout_moves_seat_to_payment_pending(client, tokens, free_seat):
     seat = client.get(f"/api/seats/{seat_id}").json()
     assert seat["status"] == "payment_pending"
 
-    # ⭐ Sabse zaroori: abhi tak koi booking nahi bani
+    # ⭐ Most important: no booking created yet
     mine = client.get("/api/bookings", headers=_headers(tokens[0])).json()
     assert not [b for b in mine if b["seat_id"] == seat_id and b["status"] == "confirmed"]
 
 
 def test_another_user_cannot_checkout_held_seat(client, tokens, free_seat):
-    """Ek user ka hold, dusre ka checkout — 409."""
+    """One user's hold prevents another's checkout — 409."""
     seat_id = free_seat["id"]
     _checkout(client, tokens[0], seat_id)
 
@@ -596,7 +595,7 @@ def test_another_user_cannot_checkout_held_seat(client, tokens, free_seat):
 
 
 def test_successful_payment_creates_exactly_one_booking(client, tokens, free_seat):
-    """Happy path — payment succeed, booking bani, seat booked."""
+    """Happy path — payment succeeds, booking created, seat booked."""
     seat_id = free_seat["id"]
     token = tokens[0]
 
@@ -621,8 +620,8 @@ def test_successful_payment_creates_exactly_one_booking(client, tokens, free_sea
 
 def test_fulfilment_is_idempotent(client, tokens, free_seat):
     """
-    ⭐ Webhooks AT-LEAST-ONCE hote hain — gateway same event do baar bhej
-    sakta hai. Dusri baar naya kaam nahi, wahi booking wapas milni chahiye.
+    ⭐ Webhooks are AT-LEAST-ONCE — the gateway may send the same event twice.
+    The second request should return the existing booking, not create a new one.
     """
     seat_id = free_seat["id"]
     token = tokens[0]
@@ -641,15 +640,15 @@ def test_fulfilment_is_idempotent(client, tokens, free_seat):
         headers=_headers(token),
     ).json()
 
-    assert first["booking_id"] == second["booking_id"], "Dusri baar nayi booking ban gayi!"
+    assert first["booking_id"] == second["booking_id"], "A new booking was created on the second attempt!"
 
-    # DB me bhi ek hi
+    # Only one in the DB
     mine = client.get("/api/bookings", headers=_headers(token)).json()
     assert len([b for b in mine if b["seat_id"] == seat_id and b["status"] == "confirmed"]) == 1
 
 
 def test_failed_payment_releases_the_seat(client, tokens, free_seat):
-    """Payment fail — seat wapas available, koi booking nahi."""
+    """Payment failure — seat released, no booking created."""
     seat_id = free_seat["id"]
     token = tokens[0]
 
@@ -670,7 +669,7 @@ def test_failed_payment_releases_the_seat(client, tokens, free_seat):
 
 
 def test_cannot_see_or_settle_someone_elses_payment(client, tokens, free_seat):
-    """IDOR — dusre ka payment na dikhe, na settle ho."""
+    """IDOR — prevent viewing or settling another user's payment."""
     seat_id = free_seat["id"]
     payment_id = _checkout(client, tokens[0], seat_id).json()["payment_id"]
 
@@ -683,9 +682,9 @@ def test_cannot_see_or_settle_someone_elses_payment(client, tokens, free_seat):
 
 def test_webhook_rejects_bad_signature(client):
     """
-    ⭐ Webhook endpoint authenticated nahi hai — signature hi uska auth hai.
+    ⭐ Webhook endpoint is not authenticated — the signature is the only auth.
 
-    Bina iske koi bhi POST maar ke free ticket le leta.
+    Without this, anyone could POST and claim a free ticket.
     """
     res = client.post(
         "/api/payments/webhook",
@@ -706,10 +705,9 @@ def test_webhook_without_signature_is_rejected(client):
 
 def _wait_for_ticket(client, token, seat_id, timeout=15):
     """
-    Worker background me chalta hai — poll karke ticket ka intezaar karo.
+    The worker runs in the background — poll to wait for the ticket.
 
-    ⚠️ Fixed `sleep` nahi lagaya. Wo dheeme machine pe flaky hota hai aur
-    tez machine pe faltu time khaata hai.
+    ⚠️ Avoided fixed `sleep`. It causes flakiness on slow machines and wastes time on fast ones.
     """
     import time
 
@@ -725,10 +723,9 @@ def _wait_for_ticket(client, token, seat_id, timeout=15):
 
 def test_booking_starts_with_a_pending_ticket(client, tokens, free_seat):
     """
-    Booking turant confirm hoti hai — ticket baad me banta hai.
+    Booking is confirmed immediately — the ticket is generated later.
 
-    ⭐ Yahi is phase ka poora point hai: API user ko 2-3 second wait nahi
-    karati.
+    ⭐ This is the whole point of this phase: the API does not make the user wait for 2-3 seconds.
     """
     seat_id = free_seat["id"]
     res = client.post("/api/bookings", json={"seat_id": seat_id}, headers=_headers(tokens[0]))
@@ -755,16 +752,16 @@ def test_worker_generates_a_downloadable_ticket(client, tokens, free_seat):
     res = client.get(f"/api/bookings/{booking['id']}/ticket", headers=_headers(token))
     assert res.status_code == 200
     assert res.headers["content-type"] == "application/pdf"
-    # Asli PDF hai? Header check karo — status 200 kaafi nahi
+    # Is it a real PDF? Check the header — status 200 is not enough.
     assert res.content[:5] == b"%PDF-"
     assert len(res.content) > 1000
 
 
 def test_cannot_download_someone_elses_ticket(client, tokens, free_seat):
     """
-    ⚠️ Sabse zaroori ticket test.
+    ⚠️ The most critical ticket test.
 
-    Ticket me QR hai. Doosre ka ticket download kar lena = free entry.
+    The ticket contains a QR code. Downloading someone else's ticket = free entry.
     """
     seat_id = free_seat["id"]
     owner, attacker = tokens[0], tokens[1]
@@ -790,8 +787,7 @@ def test_ticket_needs_authentication(client, tokens, free_seat):
 
 def test_qr_token_is_not_the_booking_id(client, tokens, free_seat):
     """
-    ⚠️ QR me sequential id nahi honi chahiye — koi bhi 1,2,3 ka QR bana ke
-    gate pe chala jata.
+    ⚠️ The QR should not contain a sequential ID — anyone could generate a QR for 1, 2, or 3 and enter the gate.
     """
     from sqlalchemy import select
 
@@ -801,7 +797,7 @@ def test_qr_token_is_not_the_booking_id(client, tokens, free_seat):
     if booking is None:
         pytest.skip("Worker nahi chal raha")
 
-    # Token DB me hai aur lamba/random hai
+    # The token is in the DB and is long/random.
     from database import SessionLocal
     from models import Booking
 
@@ -820,7 +816,7 @@ def test_qr_token_is_not_the_booking_id(client, tokens, free_seat):
 # ---------------------------------------------------------------------------
 
 def _booked_with_ticket(client, token, seat_id):
-    """Book karo aur ticket ready hone ka intezaar karo — QR token wapas do."""
+    """Book and wait for the ticket to be ready — return the QR token."""
     client.post("/api/bookings", json={"seat_id": seat_id}, headers=_headers(token))
     booking = _wait_for_ticket(client, token, seat_id)
     if booking is None or booking["ticket_status"] != "ready":
@@ -852,10 +848,9 @@ def test_valid_ticket_checks_in(client, tokens, role_tokens, free_seat):
 
 def test_same_qr_cannot_be_used_twice(client, tokens, role_tokens, free_seat):
     """
-    ⭐ Ye phase ka core test.
+    ⭐ The core test for this phase.
 
-    Do log ek hi QR ka screenshot leke alag gates pe jaayein — dono andar
-    nahi jaane chahiye.
+    If two people take a screenshot of the same QR and go to different gates — neither should be allowed in.
     """
     seat_id = free_seat["id"]
     _, qr = _booked_with_ticket(client, tokens[0], seat_id)
@@ -867,15 +862,15 @@ def test_same_qr_cannot_be_used_twice(client, tokens, role_tokens, free_seat):
     assert first["ok"] is True
     assert second["ok"] is False
     assert second["reason"] == "already_checked_in"
-    # Duplicate pe "kab" bhi milna chahiye — gate pe yahi poocha jata hai
+    # The "when" should also be returned on duplicates — this is what is asked at the gate.
     assert second["checked_in_at"] == first["checked_in_at"]
 
 
 def test_concurrent_scans_admit_exactly_one(client, tokens, role_tokens, free_seat):
     """
-    ⭐ Asli race — 10 gates ek saath.
+    ⭐ The real race — 10 gates simultaneously.
 
-    Wahi "exactly once" problem jo seat booking me thi, alag kapdon me.
+    The same "exactly once" problem as in seat booking, just in a different context.
     """
     seat_id = free_seat["id"]
     _, qr = _booked_with_ticket(client, tokens[0], seat_id)
@@ -887,7 +882,7 @@ def test_concurrent_scans_admit_exactly_one(client, tokens, role_tokens, free_se
     with ThreadPoolExecutor(max_workers=10) as pool:
         reasons = list(pool.map(scan, range(10)))
 
-    assert reasons.count("checked_in") == 1, f"Ek se zyada entry mili: {reasons}"
+    assert reasons.count("checked_in") == 1, f"More than one entry found: {reasons}"
     assert reasons.count("already_checked_in") == 9
 
 
@@ -900,13 +895,13 @@ def test_invalid_token_is_rejected(client, role_tokens):
 
     assert res["ok"] is False
     assert res["reason"] == "invalid_ticket"
-    # ⚠️ Koi detail leak nahi honi chahiye — warna tokens brute-force ho sakte hain
+    # ⚠️ No details should be leaked — otherwise, tokens could be brute-forced.
     assert res["booking_id"] is None
     assert res["seat_label"] is None
 
 
 def test_attendee_cannot_scan_tickets(client, tokens, role_tokens, free_seat):
-    """Gate portal sirf organizer/admin ke liye hai."""
+    """The gate portal is only for organizers/admins."""
     seat_id = free_seat["id"]
     _, qr = _booked_with_ticket(client, tokens[0], seat_id)
 
@@ -942,46 +937,46 @@ def test_checkin_stats(client, role_tokens):
 # ---------------------------------------------------------------------------
 # Phase 14 — Dynamic pricing
 #
-# Yahan do alag cheezein test ho rahi hain:
-#   1. FORMULA sahi hai (pure functions, koi DB nahi)
-#   2. QUOTED PRICE ka waada nibhta hai (poora HTTP flow)
+# Two separate things are being tested here:
+#   1. The FORMULA is correct (pure functions, no DB).
+#   2. The QUOTED PRICE promise is kept (full HTTP flow).
 #
-# (2) zyada important hai. Formula galat ho to price thoda ajeeb lagega.
-# Price lock toota to user se galat paisa katega — wo bug alag level ka hai.
+# (2) is more important. If the formula is wrong, the price might look odd.
+# If the price lock breaks, the user will be charged incorrectly — that is a different level of bug.
 # ---------------------------------------------------------------------------
 
 from pricing import apply, multiplier_for, pricing_for_event
 
 
 def test_multiplier_grows_with_demand():
-    """0% bika = base, 100% bika = base x (1 + demand_factor)."""
+    """0% sold = base, 100% sold = base x (1 + demand_factor)."""
     assert multiplier_for(0, 100, 0.5, 2.0) == 1.0
     assert multiplier_for(50, 100, 0.5, 2.0) == 1.25
     assert multiplier_for(100, 100, 0.5, 2.0) == 1.5
 
 
 def test_max_surge_is_a_hard_ceiling():
-    """demand_factor kitna bhi ho, max_surge se upar nahi ja sakta."""
+    """Regardless of the demand_factor, it cannot exceed the max_surge."""
     # 100% bika, factor 5.0 -> formula 6.0 kehta hai, cap 1.5 hai
     assert multiplier_for(100, 100, 5.0, 1.5) == 1.5
 
 
 def test_empty_event_does_not_divide_by_zero():
-    """total=0 pe crash nahi hona chahiye — naya event banate waqt ye hota hai."""
+    """Should not crash when total=0 — this happens when creating a new event."""
     assert multiplier_for(0, 0, 0.5, 2.0) == 1.0
 
 
 def test_price_rounds_to_a_clean_number():
-    """₹827.43 nahi, ₹830. Ajeeb price pe user ko shak hota hai."""
+    """Not ₹827.43, but ₹830. Users get suspicious of odd prices."""
     assert apply(827.43, 1.0) == 830.0
     assert apply(1000, 1.25) == 1250.0
 
 
 def test_disabled_pricing_never_surges():
     """
-    Off hone par multiplier hamesha 1.0 — chahe event pura bik jaaye.
+    When disabled, the multiplier is always 1.0 — even if the event is sold out.
 
-    Ye default hai, aur ye default hi zyada events pe lagega.
+    This is the default, and it will apply to most events.
     """
     info = pricing_for_event(
         enabled=False, sold=100, total=100, demand_factor=0.5, max_surge=2.0
@@ -997,9 +992,7 @@ def test_seats_until_increase_counts_forward():
       1 bika -> 1.005x -> ₹1005 -> ₹10 pe round -> ₹1000  (koi badlaav nahi)
       2 bika -> 1.010x -> ₹1010                            <- yahan badla
 
-    Matlab jawab 2 hai, 1 nahi. Ye pehli baar likhne pe 1 lagta hai —
-    par ₹5 ka farq ₹10 ke round me gayab ho jata hai. Isiliye ye function
-    seedha loop chalata hai formula se andaza lagane ke bajaye.
+    So the answer is 2, not 1. It seems like 1 at first glance — but the ₹5 difference disappears due to the ₹10 rounding. That is why this function runs a loop instead of estimating with a formula.
     """
     info = pricing_for_event(
         enabled=True, sold=0, total=100, demand_factor=0.5, max_surge=2.0,
@@ -1016,7 +1009,7 @@ def test_seats_until_increase_counts_forward():
 
 
 def test_max_surge_reached_reports_no_further_increase():
-    """Cap pe pahunch gaye to 'aur badhega' ka jhoot mat bolo."""
+    """Don't lie about 'further increases' once the cap is reached."""
     info = pricing_for_event(
         enabled=True, sold=50, total=100, demand_factor=5.0, max_surge=1.0,
         sample_base=1000.0,
@@ -1025,22 +1018,19 @@ def test_max_surge_reached_reports_no_further_increase():
     assert info.seats_until_increase is None
 
 
-# ---- Ab HTTP flow — asli waada yahan test hota hai ----
+# ---- Now the HTTP flow — the real promise is tested here ----
 
-# surge_event fixture ki bookings cleanup ke liye — kaunse tokens ne is
-# event pe kuch kharida. Module-level isliye ki fixture ko test ke andar
-# banaye gaye tokens ka pata chal sake.
+# Cleanup for surge_event fixture bookings — which tokens purchased something
+# for this event. Module-level so the fixture can know about tokens created inside the test.
 tokens_cache: list[str] = []
 
 
 @pytest.fixture
 def surge_event(client, role_tokens):
     """
-    Dynamic pricing wala chhota event, apna khud ka.
+    A small event with dynamic pricing, its own.
 
-    Event 1 use nahi kar sakte — uspe dusre tests bookings banate/hatate
-    rehte hain, aur multiplier sold-count se aata hai. Shared event pe ye
-    test kabhi pass kabhi fail hoti (flaky), aur flaky test bekaar test hai.
+    Cannot use Event 1 — other tests keep creating/deleting bookings on it, and the multiplier comes from the sold-count. On a shared event, this test would sometimes pass and sometimes fail (flaky), and a flaky test is a bad test.
     """
     token = role_tokens["organizer"]
     res = client.post(
@@ -1063,7 +1053,7 @@ def surge_event(client, role_tokens):
 
     yield event
 
-    # Cleanup: bookings hatao, phir event (booking wale event delete nahi hote)
+    # Cleanup: remove bookings, then the event (events with bookings cannot be deleted).
     for t in [role_tokens["organizer"], role_tokens["admin"]] + tokens_cache:
         for b in client.get("/api/bookings", headers=_headers(t)).json():
             if b["event_id"] == event["id"] and b["status"] == "confirmed":
@@ -1083,7 +1073,7 @@ def test_new_event_starts_at_base_price(client, surge_event):
 
 
 def test_price_rises_after_a_booking(client, tokens, surge_event):
-    """Ek seat bikte hi baaki seats mehngi ho jaani chahiye."""
+    """The remaining seats should increase in price as soon as one is sold."""
     tokens_cache.append(tokens[0])
     seats = client.get(f"/api/events/{surge_event['id']}/seats").json()
 
@@ -1097,48 +1087,47 @@ def test_price_rises_after_a_booking(client, tokens, surge_event):
     after = client.get(f"/api/events/{surge_event['id']}/seats").json()
     unsold = [s for s in after if s["status"] == "available"]
 
-    # 1/10 bika, factor 1.0 -> 1.1x -> ₹1100
+    # 1/10 sold, factor 1.0 -> 1.1x -> ₹1100
     assert all(s["current_price"] == 1100.0 for s in unsold)
-    # BASE price nahi badla — ye poore design ki buniyaad hai
+    # BASE price did not change — this is the foundation of the entire design
     assert all(s["price"] == 1000.0 for s in unsold)
 
 
 def test_held_price_survives_a_price_rise(client, tokens, surge_event):
     """
-    ⭐ Is poore feature ka sabse zaroori test.
+    ⭐ The most critical test for this feature.
 
-    User A seat hold karta hai (₹1000 quote milta hai). Phir User B ek aur
-    seat khareed leta hai, jisse demand badh jati hai. A ab bhi ₹1000 hi
-    dega — kyunki usse ₹1000 kaha gaya tha.
+    User A holds a seat (quoted ₹1000). Then User B buys another seat, increasing demand.
+    A must still pay ₹1000 — because that was the quoted price.
 
-    Ye tootne par user se chup-chaap zyada paisa kat jayega.
+    If this breaks, the user will be silently overcharged.
     """
     tokens_cache.extend([tokens[0], tokens[1]])
     seats = client.get(f"/api/events/{surge_event['id']}/seats").json()
     a_seat, b_seat = seats[0], seats[1]
 
-    # A hold karta hai — quote lock ho jata hai
+    # A holds the seat — quote is locked
     lock = client.post(
         f"/api/seats/{a_seat['id']}/lock", headers=_headers(tokens[0])
     ).json()
     quoted = lock["price"]
     assert quoted == 1000.0
 
-    # B khareedta hai — demand upar
+    # B buys — demand increases
     assert client.post(
         "/api/bookings", headers=_headers(tokens[1]), json={"seat_id": b_seat["id"]}
     ).status_code == 201
 
-    # Baaki sabke liye price badh gaya...
+    # Price increased for everyone else...
     fresh = client.get(f"/api/events/{surge_event['id']}/seats").json()
     others = [s for s in fresh if s["status"] == "available"]
     assert others and all(s["current_price"] > 1000.0 for s in others)
 
-    # ...par A ka hold abhi bhi ₹1000 pe hai
+    # ...but A's hold is still at ₹1000
     held = next(s for s in fresh if s["id"] == a_seat["id"])
     assert held["held_price"] == 1000.0
 
-    # Aur booking me exactly wahi amount charge hua
+    # And exactly the same amount was charged in the booking
     booking = client.post(
         "/api/bookings", headers=_headers(tokens[0]), json={"seat_id": a_seat["id"]}
     )
@@ -1148,10 +1137,10 @@ def test_held_price_survives_a_price_rise(client, tokens, surge_event):
 
 def test_releasing_a_hold_drops_the_locked_price(client, tokens, surge_event):
     """
-    Hold chhoda to purana price bhi gaya.
+    Releasing a hold removes the locked price.
 
-    Bina iske user hold-release-hold karke hamesha ke liye sabse sasta
-    price pakad leta — surge ka koi matlab hi na bachta.
+    Without this, a user could hold-release-hold to keep the lowest price
+    indefinitely — rendering surge pricing meaningless.
     """
     seats = client.get(f"/api/events/{surge_event['id']}/seats").json()
     seat = [s for s in seats if s["status"] == "available"][-1]
@@ -1164,7 +1153,7 @@ def test_releasing_a_hold_drops_the_locked_price(client, tokens, surge_event):
 
 
 def test_organizer_can_turn_surge_off(client, role_tokens, surge_event):
-    """Sales slow hain to organizer surge band kar sake — base price wapas."""
+    """Allow organizer to disable surge if sales are slow — revert to base price."""
     res = client.patch(
         f"/api/organizer/events/{surge_event['id']}",
         headers=_headers(role_tokens["organizer"]),
@@ -1181,11 +1170,10 @@ def test_organizer_can_turn_surge_off(client, role_tokens, surge_event):
 
 def test_base_price_cannot_be_edited(client, role_tokens, surge_event):
     """
-    Base price PATCH se nahi badal sakta.
+    Base price cannot be changed via PATCH.
 
-    Purani bookings uske reference pe tiki hain — badla to unki receipt
-    jhoothi ho jayegi. Pydantic extra fields chup-chaap ignore karta hai,
-    isliye check karte hain ki asar HUA hi nahi.
+    Existing bookings rely on it — changing it would invalidate their receipts.
+    Pydantic silently ignores extra fields, so we verify that no change occurred.
     """
     client.patch(
         f"/api/organizer/events/{surge_event['id']}",
@@ -1197,7 +1185,7 @@ def test_base_price_cannot_be_edited(client, role_tokens, surge_event):
 
 
 def test_absurd_surge_settings_are_rejected(client, role_tokens, surge_event):
-    """demand_factor=50 galti se type ho jaye to server mana kare."""
+    """Server should reject accidental typos like demand_factor=50."""
     res = client.patch(
         f"/api/organizer/events/{surge_event['id']}",
         headers=_headers(role_tokens["organizer"]),
@@ -1209,23 +1197,23 @@ def test_absurd_surge_settings_are_rejected(client, role_tokens, surge_event):
 # ---------------------------------------------------------------------------
 # Phase 15 — Locking strategies
 #
-# ⭐ Ye tests dono modes me pass hone chahiye.
+# ⭐ These tests must pass in both modes.
 #
-# BENCHMARK_MODE off ho to server `strategy` param ignore kar deta hai aur
-# optimistic chalata hai. On ho to pessimistic path chalta hai. Dono soorat
-# me ek hi cheez sach honi chahiye: **ek seat, ek booking**.
+# When BENCHMARK_MODE is off, the server ignores the `strategy` param and runs
+# optimistic. When on, it runs the pessimistic path. In both cases, one thing
+# must hold true: **one seat, one booking**.
 #
-# Test isi invariant par likhi hai, kisi internal detail par nahi — isliye
-# ye mode ke hisaab se skip nahi hoti, aur benchmark mode galti se on chhut
-# jaye to bhi meaningful rehti hai.
+# The test is written for this invariant, not internal details — so it is not
+# skipped based on mode, and remains meaningful even if benchmark mode is
+# accidentally left on.
 # ---------------------------------------------------------------------------
 
 def test_pessimistic_strategy_also_prevents_double_booking(client, tokens, free_seat):
     """
-    Pessimistic path se bhi overselling nahi honi chahiye.
+    Pessimistic path must also prevent overselling.
 
-    Ye benchmark ka pehla sawaal hai: dono strategies SAHI hain kya?
-    "Kaunsa tez hai" ka koi matlab nahi agar ek galat ho.
+    This is the first question of the benchmark: are both strategies CORRECT?
+    "Which is faster" is irrelevant if one is wrong.
     """
     seat_id = free_seat["id"]
 
@@ -1239,18 +1227,17 @@ def test_pessimistic_strategy_also_prevents_double_booking(client, tokens, free_
     with ThreadPoolExecutor(max_workers=len(tokens)) as pool:
         codes = list(pool.map(book, tokens))
 
-    assert codes.count(201) == 1, f"exactly ek booking honi thi, mili: {codes}"
-    # Baaki sabko 409 (ya rate limit se 429) — 500 kabhi nahi
+    assert codes.count(201) == 1, f"exactly one booking expected, got: {codes}"
+    # Others should get 409 (or 429 for rate limit) — never 500
     assert all(c in (201, 409, 429) for c in codes), codes
 
 
 def test_unknown_strategy_falls_back_to_optimistic(client, tokens, free_seat):
     """
-    Kachra `strategy` value bheji to server safe default pe jaye, 500 na de.
+    Server should fall back to a safe default on garbage `strategy` values, not 500.
 
-    Ye chhoti baat lagti hai par zaroori hai: ye param public API me nahi
-    hai, matlab ise koi bhi kuch bhi bhej sakta hai. Unknown value pe
-    crash hona ek DoS ban jata.
+    This seems minor but is critical: this param is not in the public API, so
+    anyone can send anything. Crashing on an unknown value would be a DoS.
     """
     res = client.post(
         "/api/bookings?strategy=../../etc/passwd",
@@ -1262,11 +1249,11 @@ def test_unknown_strategy_falls_back_to_optimistic(client, tokens, free_seat):
 
 def test_both_strategies_write_identical_seat_state(client, tokens, role_tokens):
     """
-    Dono strategies ke baad seat ka state bilkul same dikhna chahiye.
+    Seat state must look identical after both strategies.
 
-    Agar pessimistic path `version` badhana bhool jata (usse row lock ki
-    wajah se zaroorat nahi hai), to WebSocket clients ko update dikhta hi
-    nahi — aur benchmark do ALAG cheezein maap raha hota.
+    If the pessimistic path forgets to increment `version` (not needed due to
+    row locks), WebSocket clients won't see the update — and the benchmark
+    would be measuring two DIFFERENT things.
     """
     token = role_tokens["organizer"]
     states = []
@@ -1307,7 +1294,7 @@ def test_both_strategies_write_identical_seat_state(client, tokens, role_tokens)
                 client.delete(f"/api/bookings/{b['id']}", headers=_headers(tokens[0]))
         client.delete(f"/api/organizer/events/{ev['id']}", headers=_headers(token))
 
-    assert states[0] == states[1], f"strategies ne alag state chhoda: {states}"
+    assert states[0] == states[1], f"strategies left different states: {states}"
     assert states[0]["status"] == "booked"
     assert states[0]["version_delta"] == 1
 
@@ -1315,25 +1302,25 @@ def test_both_strategies_write_identical_seat_state(client, tokens, role_tokens)
 # ---------------------------------------------------------------------------
 # Phase 17 — Group booking (split payment)
 #
-# Yahan ka core sawaal single-seat booking se alag hai. Wahan "exactly once"
-# ka matlab tha: ek seat, ek booking. Yahan matlab hai: **sab ya koi nahi**,
-# N alag payments ke paar.
+# The core question here differs from single-seat booking. There, "exactly once"
+# meant: one seat, one booking. Here it means: **all or nothing**,
+# across N separate payments.
 # ---------------------------------------------------------------------------
 
 def _clear_user_rate_limits():
     """
-    Per-user rate limit buckets saaf karo (`rl:user:*`).
+    Clear per-user rate limit buckets (`rl:user:*`).
 
-    ⚠️ Ye zaroori hai, aur wajah test-specific hai.
+    ⚠️ This is necessary for test-specific reasons.
 
-    BOOKING limit 5 burst / 1 per second hai. Ek group test ek hi user se
-    kai calls karta hai — group banao, phir har share ka checkout. Suite
-    me pehle chal chuke booking aur rate-limit tests wahi bucket already
-    khaali kar chuke hote hain, to group tests 429 khaane lagte hain.
+    The BOOKING limit is 5 burst / 1 per second. A group test makes multiple
+    calls from one user — create group, then checkout each share. Previous
+    booking and rate-limit tests in the suite have already exhausted that
+    bucket, causing group tests to hit 429s.
 
-    Wo 429 group logic ka nateeja nahi, test order ka hai. Isliye sirf
-    per-user buckets saaf karte hain — `rl:login:*` ko haath nahi lagate,
-    kyunki brute-force wali test usi par tiki hai.
+    That 429 is a result of test order, not group logic. Therefore, we only
+    clear per-user buckets — we don't touch `rl:login:*`, as the brute-force
+    test relies on it.
     """
     from redis_client import redis_client
 
@@ -1343,19 +1330,19 @@ def _clear_user_rate_limits():
 
 @pytest.fixture
 def group_seats(client, tokens):
-    """3 available seats — test ke baad jo bache use saaf kar do."""
+    """3 available seats — clean up remaining ones after the test."""
     _clear_user_rate_limits()
 
     seats = client.get("/api/events/1/seats").json()
     available = [s["id"] for s in seats if s["status"] == "available"]
     if len(available) < 3:
-        pytest.skip("3 available seats nahi hain — reset_state.py chalao")
+        pytest.skip("Not enough available seats — run reset_state.py")
 
     picked = available[:3]
     yield picked
 
-    # Cleanup: bachi hui bookings hatao. Group cancel karna kaafi nahi —
-    # confirm ho chuka group cancel nahi hota.
+    # Cleanup: remove remaining bookings. Canceling the group is not enough —
+    # confirmed groups cannot be canceled.
     for token in tokens[:6]:
         for b in client.get("/api/bookings", headers=_headers(token)).json():
             if b["seat_id"] in picked and b["status"] == "confirmed":
@@ -1392,10 +1379,10 @@ def _seat(client, seat_id):
 
 def test_group_holds_seats_without_booking_them(client, tokens, group_seats):
     """
-    Group banane par seats hold hoti hain, book NAHI hoti.
+    Seats are held when a group is created, NOT booked.
 
-    Ye faraq poore feature ki neev hai: paisa aane se pehle kisi ki seat
-    pakki nahi hoti.
+    This distinction is the foundation of the feature: no seat is confirmed
+    until payment is received.
     """
     group = _make_group(client, tokens[0], group_seats)
 
@@ -1411,9 +1398,9 @@ def test_group_holds_seats_without_booking_them(client, tokens, group_seats):
 
 def test_partial_payment_confirms_nobody(client, tokens, group_seats):
     """
-    ⭐ 2 me se 3 ne pay kiya — kisi ki bhi seat book nahi honi chahiye.
+    ⭐ 2 out of 3 paid — no one's seat should be booked.
 
-    Ye "sab ya koi nahi" ka asli test hai.
+    This is the real test of "all or nothing".
     """
     group = _make_group(client, tokens[0], group_seats)
     st = group["share_token"]
@@ -1426,7 +1413,7 @@ def test_partial_payment_confirms_nobody(client, tokens, group_seats):
 
     after = client.get(f"/api/groups/{st}", headers=_headers(tokens[0])).json()
     assert after["paid_shares"] == 2
-    assert after["status"] == "collecting", "3 me se 2 pe confirm nahi hona chahiye"
+    assert after["status"] == "collecting", "Should not confirm with 2 out of 3"
 
     # Ek bhi seat booked nahi
     for seat_id in group_seats:
@@ -1454,7 +1441,7 @@ def test_all_paid_confirms_everyone(client, tokens, group_seats):
     for seat_id in group_seats:
         assert _seat(client, seat_id)["status"] == "booked"
 
-    # Teen alag users ki teen alag bookings — ek user ki 3 nahi
+    # Three separate bookings for three different users, not three for one user.
     owners = set()
     for i in (0, 1, 2):
         for b in client.get("/api/bookings", headers=_headers(tokens[i])).json():
@@ -1465,10 +1452,9 @@ def test_all_paid_confirms_everyone(client, tokens, group_seats):
 
 def test_expired_group_releases_seats_and_refunds(client, tokens, group_seats):
     """
-    ⭐ Deadline nikal gayi — seats chhooti hain aur jo paisa aaya wo refund.
+    ⭐ Deadline passed — seats are released and payments are refunded.
 
-    Deadline ko DB me peeche khiska dete hain; asli 30 minute ka wait
-    test me mumkin nahi.
+    Shift the deadline back in the DB; a real 30-minute wait is not feasible in tests.
     """
     from datetime import timedelta
 
@@ -1491,7 +1477,7 @@ def test_expired_group_releases_seats_and_refunds(client, tokens, group_seats):
             .values(expires_at=utcnow() - timedelta(minutes=1))
         )
         db.commit()
-        # Job ko seedha call karte hain — cron ka 30 second wait nahi
+        # Call the job directly — no need to wait for the 30-second cron.
         expire_due_groups(db)
     finally:
         db.close()
@@ -1499,7 +1485,7 @@ def test_expired_group_releases_seats_and_refunds(client, tokens, group_seats):
     after = client.get(f"/api/groups/{st}", headers=_headers(tokens[0])).json()
     assert after["status"] == "expired"
 
-    # Jisne pay kiya tha uska refund, baaki unpaid hi rahe
+    # Refund the payer, leave others as unpaid.
     statuses = [s["status"] for s in after["shares"]]
     assert statuses.count("refunded") == 1
     assert statuses.count("unpaid") == 2
@@ -1510,11 +1496,9 @@ def test_expired_group_releases_seats_and_refunds(client, tokens, group_seats):
 
 def test_pending_payment_dies_with_the_group(client, tokens, group_seats):
     """
-    Group toota to jo checkout khula pada tha wo bhi mar jata hai.
+    If the group breaks, any open checkout is invalidated.
 
-    User gateway page pe tha jab deadline nikli. Sabse achha nateeja ye
-    hai ki uska paisa kate hi NA — refund se behtar hai charge hi na karna.
-    Isliye `break_group` share ke pending payments ko expire kar deta hai.
+    The user was on the gateway page when the deadline passed. The best outcome is to avoid charging them entirely — not charging is better than a refund. Therefore, `break_group` expires pending payments.
     """
     from datetime import timedelta
 
@@ -1545,7 +1529,7 @@ def test_pending_payment_dies_with_the_group(client, tokens, group_seats):
 
         assert db.get(Payment, payment_id).status == "expired"
         share = db.get(GroupShare, share_id)
-        assert share.status == "unpaid", "paisa kata hi nahi to 'paid' nahi hona chahiye"
+        assert share.status == "unpaid", "Should not be 'paid' if no money was charged."
         assert share.booking_id is None
     finally:
         db.close()
@@ -1555,18 +1539,13 @@ def test_pending_payment_dies_with_the_group(client, tokens, group_seats):
 
 def test_late_webhook_after_expiry_is_refunded_not_booked(client, tokens, group_seats):
     """
-    ⭐⭐ Sabse mushkil case: group toot chuka hai, aur ab gateway kehta hai
-    "paisa aa gaya".
+    ⭐⭐ The most difficult case: the group has expired, but the gateway reports "payment received".
 
-    Upar wala test dikhata hai ki hum checkout ko band kar dete hain. Par
-    asli gateway hamare band karne se नहीं rukta — webhook der se aa
-    sakta hai, aur tab paisa sach me kat chuka hota hai.
+    The previous test shows we close the checkout. However, the real gateway does not stop when we do — webhooks can arrive late, after the payment has already been processed.
 
-    Us haalat me seat wapas nahi mil sakti (chhoot chuki, shayad kisi aur
-    ne le li). To ek hi sahi jawab bachta hai: **refund**.
+    In that situation, the seat cannot be reclaimed (it was released and perhaps taken by someone else). The only correct response is a **refund**.
 
-    Yahan `_fulfil` seedha call karte hain, kyunki `/simulate` endpoint
-    expired payment ko chhoota hi nahi — aur asli webhook chhoota hai.
+    We call `_fulfil` directly here because the `/simulate` endpoint does not handle expired payments, whereas a real webhook would.
     """
     from datetime import timedelta
 
@@ -1595,12 +1574,12 @@ def test_late_webhook_after_expiry_is_refunded_not_booked(client, tokens, group_
         db.commit()
         expire_due_groups(db)
 
-        # Gateway ka der se aaya "succeeded"
+        # Late "succeeded" notification from the gateway.
         _fulfil(db, db.get(Payment, payment_id))
 
         share = db.get(GroupShare, share_id)
-        assert share.status == "refunded",             "der se aaya paisa refund hona chahiye"
-        assert share.booking_id is None, "expired group me booking nahi banni chahiye"
+        assert share.status == "refunded",             "Late payments must be refunded."
+        assert share.booking_id is None, "No booking should be created for an expired group."
         assert db.get(Payment, payment_id).status == "refunded"
     finally:
         db.close()
@@ -1622,7 +1601,7 @@ def test_only_one_person_can_claim_a_share(client, tokens, group_seats):
     with ThreadPoolExecutor(max_workers=2) as pool:
         codes = list(pool.map(claim, [tokens[1], tokens[2]]))
 
-    assert codes.count(200) == 1, f"exactly ek claim chahiye tha: {codes}"
+    assert codes.count(200) == 1, f"Exactly one claim expected: {codes}"
     assert codes.count(409) == 1
 
     client.delete(f"/api/groups/{st}", headers=_headers(tokens[0]))
@@ -1645,10 +1624,9 @@ def test_cannot_pay_someone_elses_share(client, tokens, group_seats):
 
 def test_group_creation_is_all_or_nothing(client, tokens, group_seats):
     """
-    ⭐ Ek seat bhi na mile to POORA group nahi banna chahiye.
+    ⭐ If even one seat is unavailable, the ENTIRE group should fail.
 
-    Aadhi hold kisi kaam ki nahi — user 2 seats leke 3rd ka intezaar
-    karta rehta jo kabhi milegi hi nahi.
+    Partial holds are useless — a user shouldn't be left waiting for a 3rd seat that will never be available.
     """
     # Ek seat ko book kar do
     taken = group_seats[2]
@@ -1662,10 +1640,10 @@ def test_group_creation_is_all_or_nothing(client, tokens, group_seats):
     )
     assert res.status_code == 409
 
-    # ⭐ Baaki do seats CHHOOTI honi chahiye — group_held me atki nahi
+    # ⭐ The remaining two seats should be RELEASED — not stuck in group_held.
     for seat_id in group_seats[:2]:
         assert _seat(client, seat_id)["status"] == "available", \
-            "fail hui group creation ne seats hold me chhod di"
+            "Failed group creation left seats in hold."
 
 
 def test_unknown_share_token_is_404(client, tokens):
@@ -1688,20 +1666,16 @@ def test_only_creator_can_cancel(client, tokens, group_seats):
 
 def test_confirm_and_expiry_race_has_exactly_one_winner(client, tokens, group_seats):
     """
-    ⭐⭐ Phase 17 ka sabse mushkil test.
+    ⭐⭐ The most difficult test in Phase 17.
 
-    Aakhri banda pay kar raha hai us waqt jab expiry job group todh raha
-    hai. Exactly ek ko jeetna chahiye, aur haarne wale ko sahi cleanup:
+    The last person is paying while the expiry job is breaking the group. Exactly one must win, with proper cleanup for the loser:
 
-      confirm jeeta -> saari seats booked, sabki bookings bani
-      expire jeeta  -> saari seats available, jo paisa aaya wo refunded
+      confirm wins -> all seats booked, all bookings created
+      expire wins  -> all seats available, payments refunded
 
-    Kabhi bhi aadhi haalat nahi: na 'collecting' me atka group, na paid
-    share bina booking ke.
+    Never a partial state: no group stuck in 'collecting', no paid share without a booking.
 
-    Ye race bina `FOR UPDATE` ke asal me TOOTI thi — payment thread group
-    ka status padh leta tha, expiry job usse expire kar deta tha, aur
-    share 'paid' hi reh jata tha bina refund ke.
+    This race condition was broken without `FOR UPDATE` — the payment thread would read the group status, the expiry job would expire it, and the share would remain 'paid' without a refund.
     """
     import random
     import threading
@@ -1722,7 +1696,7 @@ def test_confirm_and_expiry_race_has_exactly_one_winner(client, tokens, group_se
 
     _pay_share(client, tokens[0], st, group["shares"][0]["id"])
 
-    # Aakhri share ka checkout ban gaya, settle abhi baaki
+    # Checkout for the final share created, settlement pending.
     res = client.post(f"/api/groups/{st}/shares/{group['shares'][1]['id']}/pay",
                       headers=_headers(tokens[1]))
     assert res.status_code == 200
@@ -1748,8 +1722,7 @@ def test_confirm_and_expiry_race_has_exactly_one_winner(client, tokens, group_se
 
     def expire():
         barrier.wait()
-        # Jitter — bina iske expiry hamesha jeet jati hai (seedha function
-        # call vs poora HTTP stack), aur doosra raasta test hi nahi hota
+        # Jitter — without this, expiry always wins (direct function call vs full HTTP stack), and the other path is never tested.
         time.sleep(random.uniform(0, 0.12))
         d = SessionLocal()
         try:
@@ -1768,7 +1741,7 @@ def test_confirm_and_expiry_race_has_exactly_one_winner(client, tokens, group_se
         ).all()
 
         assert g.status in ("confirmed", "expired"), \
-            f"group '{g.status}' me atka — koi jeeta hi nahi"
+            f"Group stuck in '{g.status}' — no winner."
 
         seat_states = [_seat(client, s.seat_id)["status"] for s in shares]
 
@@ -1778,25 +1751,23 @@ def test_confirm_and_expiry_race_has_exactly_one_winner(client, tokens, group_se
         else:
             assert all(x == "available" for x in seat_states), seat_states
             assert all(s.booking_id is None for s in shares)
-            # ⭐ Jiska paisa aa chuka tha uska refund hona hi chahiye
+            # ⭐ Payments already received must be refunded.
             for s in shares:
                 assert s.status in ("refunded", "unpaid"), \
-                    f"expired group me share '{s.status}' — paisa phansa hua hai"
+                    f"Share '{s.status}' in expired group — payment is stuck."
     finally:
         db.close()
 
 
 def test_broken_group_does_not_leave_pending_payments(client, tokens, group_seats):
     """
-    Group toota to uske PENDING payments bhi band hone chahiye.
+    If a group is cancelled, its PENDING payments must also be closed.
 
-    Warna do dikkatein:
-      1. `uq_one_pending_payment_per_seat` us seat par naya checkout banne
-         hi nahi deta — seat 'available' dikhti par khareedi nahi ja sakti
-      2. User purana checkout complete karke ek mare hue group ko paisa
-         de deta hai
+    Otherwise, two issues arise:
+      1. `uq_one_pending_payment_per_seat` prevents new checkouts for that seat — it appears 'available' but cannot be purchased.
+      2. A user could complete an old checkout and pay for a defunct group.
 
-    Ye bug asal me tha aur race test likhte waqt pakda gaya.
+    This was a real bug discovered while writing race condition tests.
     """
     from sqlalchemy import select as sa_select
 
@@ -1819,18 +1790,17 @@ def test_broken_group_does_not_leave_pending_payments(client, tokens, group_seat
                 Payment.seat_id.in_(group_seats), Payment.status == "pending"
             )
         ).all()
-        assert not still_pending, f"{len(still_pending)} pending payments latke hain"
+        assert not still_pending, f"{len(still_pending)} pending payments remain stuck"
     finally:
         db.close()
 
-    # Aur ab wahi seat normally khareedi ja sakti hai — yahi asli check hai.
-    # Pehle ye 409 deta tha kyunki purana pending payment index rok raha tha.
+    # Now the same seat can be purchased normally — this is the actual check.
+    # Previously, this returned 409 because the old pending payment index blocked it.
     res = client.post("/api/payments/checkout",
                       json={"seat_id": group_seats[0]}, headers=_headers(tokens[3]))
     assert res.status_code == 201, res.text
 
-    # Apne peeche pending payment mat chhodo — warna agla test isi index
-    # se takrayega. (Wahi galti jo abhi test kar rahe hain.)
+    # Do not leave pending payments behind — otherwise, the next test will collide with this index. (The same error we are currently testing.)
     client.post(f"/api/payments/{res.json()['payment_id']}/simulate",
                 json={"outcome": "fail"}, headers=_headers(tokens[3]))
 
@@ -1838,11 +1808,11 @@ def test_broken_group_does_not_leave_pending_payments(client, tokens, group_seat
 # ---------------------------------------------------------------------------
 # Phase 18 — Seat layout
 #
-# Do hisse:
-#   1. validate/expand — pure functions, koi DB nahi
-#   2. HTTP flow — dono raaste (layout aur price_tiers) same manzil pe
+# Two parts:
+#   1. validate/expand — pure functions, no DB access.
+#   2. HTTP flow — both paths (layout and price_tiers) lead to the same destination.
 #
-# Sabse zaroori invariant: **purane events (layout NULL) na tootein.**
+# Most important invariant: **existing events (layout NULL) must not break.**
 # ---------------------------------------------------------------------------
 
 import layout as seat_layout
@@ -1869,19 +1839,17 @@ def test_expand_produces_every_seat():
     )
     assert len(plan) == 9
     assert {p.section for p in plan} == {"Ground", "Balcony"}
-    # Price section se aata hai, row se nahi
+    # Price comes from the section, not the row.
     assert {p.price for p in plan if p.section == "Balcony"} == {800.0}
-    # Numbering har row me 1 se shuru
+    # Numbering starts at 1 in every row.
     assert sorted(p.seat_number for p in plan if p.row_label == "A") == [1, 2, 3]
 
 
 def test_aisles_do_not_create_or_skip_seats():
     """
-    ⭐ Aisle sirf DIKHNE ki cheez hai.
+    ⭐ Aisles are purely visual.
 
-    Ye aasan galti hai: aisle ko ek "khali seat" bana dena, ya uske baad
-    numbering skip kar dena. Dono galat hain — attendee "seat 5" maangta
-    hai aur usse seat 6 mil jati.
+    A common mistake is treating an aisle as an "empty seat" or skipping numbering after it. Both are wrong — an attendee requesting "seat 5" should not receive seat 6.
     """
     with_aisle = seat_layout.expand(_layout(_section("X", 100, _row("A", 6, [3]))))
     without = seat_layout.expand(_layout(_section("X", 100, _row("A", 6))))
@@ -1892,12 +1860,11 @@ def test_aisles_do_not_create_or_skip_seats():
 
 def test_duplicate_row_label_across_sections_is_rejected():
     """
-    ⭐ `seats` par UNIQUE(event_id, row_label, seat_number) hai.
+    ⭐ `seats` has a UNIQUE(event_id, row_label, seat_number) constraint.
 
-    Ye pakde bina expansion 500 seats insert karne ke BAAD IntegrityError
-    se marta — aur tab tak transaction bhaari ho chuki hoti.
+    Without catching this, expansion would fail with an IntegrityError AFTER inserting 500 seats — by which time the transaction would be heavy.
     """
-    with pytest.raises(seat_layout.LayoutError, match="do jagah"):
+    with pytest.raises(seat_layout.LayoutError, match="duplicate"):
         seat_layout.validate(
             _layout(
                 _section("Ground", 100, _row("A", 5)),
@@ -1907,19 +1874,19 @@ def test_duplicate_row_label_across_sections_is_rejected():
 
 
 def test_aisle_outside_row_is_rejected():
-    """Aakhri seat ke baad aisle ka koi matlab nahi — wo row ka ant hai."""
+    """An aisle after the last seat is meaningless — it is the end of the row."""
     with pytest.raises(seat_layout.LayoutError, match="aisle position"):
         seat_layout.validate(_layout(_section("X", 100, _row("A", 5, [5]))))
 
     with pytest.raises(seat_layout.LayoutError, match="aisle position"):
         seat_layout.validate(_layout(_section("X", 100, _row("A", 5, [9]))))
 
-    # 4 theek hai — 5 seats me seat 4 ke baad gap ban sakti hai
+    # 4 is valid — in 5 seats, a gap can be created after seat 4.
     seat_layout.validate(_layout(_section("X", 100, _row("A", 5, [4]))))
 
 
 def test_duplicate_section_name_is_rejected():
-    with pytest.raises(seat_layout.LayoutError, match="naam ek hi"):
+    with pytest.raises(seat_layout.LayoutError, match="duplicate name"):
         seat_layout.validate(
             _layout(
                 _section("Ground", 100, _row("A", 5)),
@@ -1944,10 +1911,9 @@ def test_empty_and_oversized_layouts_are_rejected():
 
 def test_price_tiers_convert_to_the_same_shape():
     """
-    Purana raasta bhi layout se hi guzarta hai.
+    The legacy path also uses the layout generator.
 
-    Do alag generators rakhne ka matlab hota do jagah bugs — aur wo
-    dheere-dheere alag behave karne lagte.
+    Maintaining two separate generators leads to bugs in two places — and they eventually start behaving differently.
     """
     converted = seat_layout.from_price_tiers(
         [{"rows": 1, "price": 1500}, {"rows": 2, "price": 500}],
@@ -1988,7 +1954,7 @@ def test_create_event_from_layout(client, role_tokens):
     assert {s["section"] for s in seats} == {"Ground", "Balcony"}
     assert {s["price"] for s in seats if s["section"] == "Balcony"} == {900.0}
 
-    # Layout store hua — grid isse aisles dikhata hai
+    # Layout stored — the grid uses this to show aisles.
     detail = client.get(f"/api/events/{event['id']}").json()
     assert detail["layout"]["sections"][0]["rows"][0]["aisles_after"] == [4]
 
@@ -1999,10 +1965,9 @@ def test_create_event_from_layout(client, role_tokens):
 
 def test_bad_layout_creates_no_event(client, role_tokens):
     """
-    ⭐ Galat layout par ek bhi seat (aur event) nahi banna chahiye.
+    ⭐ No seats (or events) should be created with an invalid layout.
 
-    Validation expansion se PEHLE chalti hai, isliye DB ko haath hi nahi
-    lagta. Aadha bana hua event sabse gandi haalat hoti.
+    Validation runs BEFORE expansion, so the DB remains untouched. A partially created event is the worst-case scenario.
     """
     token = role_tokens["organizer"]
     before = len(client.get("/api/organizer/events", headers=_headers(token)).json())
@@ -2021,16 +1986,15 @@ def test_bad_layout_creates_no_event(client, role_tokens):
         },
     )
     assert res.status_code == 422
-    assert "do jagah" in res.json()["detail"]
+    assert "duplicate" in res.json()["detail"]
 
     after = len(client.get("/api/organizer/events", headers=_headers(token)).json())
-    assert after == before, "fail hone par bhi event ban gaya"
+    assert after == before, "event was created even though it should have failed"
 
 
 def test_price_tiers_path_still_works_and_stores_a_layout(client, role_tokens):
     """
-    Backwards compatibility — purana request body bilkul waise hi chalna
-    chahiye jaise Phase 10 me chalta tha.
+    Backwards compatibility — the legacy request body must work exactly as it did in Phase 10.
     """
     token = role_tokens["organizer"]
     res = client.post(
@@ -2048,7 +2012,7 @@ def test_price_tiers_path_still_works_and_stores_a_layout(client, role_tokens):
     event = res.json()
     assert event["total_seats"] == 12
 
-    # price_tiers se aaya event bhi layout store karta hai
+    # Events created via price_tiers also store a layout.
     detail = client.get(f"/api/events/{event['id']}").json()
     assert detail["layout"] is not None
     assert len(detail["layout"]["sections"]) == 2
@@ -2061,11 +2025,9 @@ def test_price_tiers_path_still_works_and_stores_a_layout(client, role_tokens):
 
 def test_old_events_without_a_layout_still_work(client):
     """
-    ⭐⭐ Sabse zaroori test.
+    ⭐⭐ Most important test.
 
-    Event 1 seed se aata hai aur uska `layout` NULL hai. 17 phases ka
-    demo data, tests aur bookings usi par tike hain. Naya column optional
-    hai, aur usse KUCH nahi tootna chahiye.
+    Event 1 comes from the seed and has a NULL `layout`. 17 phases of demo data, tests, and bookings rely on it. The new column is optional, and nothing should break because of it.
     """
     detail = client.get("/api/events/1").json()
     assert detail["layout"] is None
@@ -2073,26 +2035,23 @@ def test_old_events_without_a_layout_still_work(client):
     seats = client.get("/api/events/1/seats").json()
     assert len(seats) == 100
     assert all(s["section"] is None for s in seats)
-    # Baaki sab fields waise hi hain
+    # All other fields remain the same.
     assert all("price" in s and "status" in s and "version" in s for s in seats)
 
 
 # ---------------------------------------------------------------------------
 # Phase 19 — Seat search
 #
-# ⭐ In tests me se EK BHI ko Gemini ki zaroorat nahi.
+# ⭐ NONE of these tests require Gemini.
 #
-# Wo jaan-boojh ke hai. LLM sirf "text -> filters" karta hai; uske baad ka
-# poora search normal code hai. Agar search ko test karne ke liye API key
-# chahiye hoti, to CI me ye tests skip ho jaate — aur skipped tests green
-# dikhte hain (Phase 16 me yahi galti pakdi thi).
+# This is intentional. The LLM only performs "text -> filters"; the entire search process thereafter is standard code. If these tests required an API key, they would be skipped in CI — and skipped tests appear green (a mistake caught in Phase 16).
 # ---------------------------------------------------------------------------
 
 import seat_search
 
 
 class _FakeSeat:
-    """Test ke liye ek chhota seat — poora ORM object banane ki zaroorat nahi."""
+    """A minimal seat for testing — no need to create a full ORM object."""
 
     def __init__(self, id, row, num, price=1000, status="available", section=None):
         self.id = id
@@ -2130,7 +2089,7 @@ def test_single_seat_search_returns_cheapest_first():
 
 
 def test_together_needs_consecutive_seats():
-    """Beech me ek booked seat ho to wo 'saath' nahi hai."""
+    """If there is a booked seat in between, they are not 'together'."""
     # A: seats 1,2,[3 booked],4,5  -> 3 saath wali seats nahi milengi
     seats = _seat_row("A", 5, taken=(3,))
 
@@ -2141,9 +2100,9 @@ def test_together_needs_consecutive_seats():
 
 def test_together_false_returns_individual_seats():
     """
-    "3 seats chahiye, saath nahi" ka matlab hai "koi bhi 3 dikha do".
+    "I need 3 seats, not necessarily together" means "show me any 3 seats".
 
-    Unhe artificially group karke dikhana jhooth hoga.
+    Artificially grouping them would be misleading.
     """
     seats = _seat_row("A", 5, taken=(3,))
     found = seat_search.find(seats, quantity=3, together=False)
@@ -2154,13 +2113,11 @@ def test_together_false_returns_individual_seats():
 
 def test_aisle_breaks_togetherness():
     """
-    ⭐⭐ Phase 18 ka layout data yahan kaam aata hai.
+    ⭐⭐ Phase 18 layout data is used here.
 
-    Seat 2 aur 3 ke beech aisle hai. Numbers lagatar hain, par wo seats
-    saath NAHI hain — beech me log guzar rahe honge.
+    There is an aisle between seats 2 and 3. The numbers are consecutive, but the seats are NOT together — people will be passing through.
 
-    Bina is check ke search "saath wali seats" bata deta jo asal me saath
-    hoti hi nahi, aur wo galti user ko venue pahunch kar pata chalti.
+    Without this check, the search would suggest "adjacent seats" that aren't actually together, which the user would only discover upon arriving at the venue.
     """
     seats = _seat_row("A", 6)
     layout = {
@@ -2169,10 +2126,10 @@ def test_aisle_breaks_togetherness():
         ]
     }
 
-    # Bina layout ke: 1-2-3, 2-3-4, 3-4-5, 4-5-6 = 4 groups
+    # Without layout: 1-2-3, 2-3-4, 3-4-5, 4-5-6 = 4 groups
     assert len(seat_search.find(seats, quantity=3, together=True)) == 4
 
-    # Layout ke saath: aisle 2 ke baad hai, to sirf 3-4-5 aur 4-5-6 bachte hain
+    # With layout: aisle is after 2, so only 3-4-5 and 4-5-6 remain
     with_layout = seat_search.find(seats, quantity=3, together=True, layout=layout)
     assert len(with_layout) == 2
     assert all(m.seat_numbers[0] >= 3 for m in with_layout)
@@ -2200,9 +2157,9 @@ def test_section_filter_is_case_insensitive():
 
 def test_row_preference_beats_price():
     """
-    "stage ke paas" bola hai to sasti seat ke chakkar me peeche mat bhejo.
+    If "near the stage" is requested, don't prioritize cheaper seats further back.
 
-    Row A stage ke sabse paas hai — wahi convention Phase 3 se hai.
+    Row A is closest to the stage — this has been the convention since Phase 3.
     """
     seats = _seat_row("A", 2, price=3000, start_id=1) + _seat_row("Z", 2, price=100, start_id=10)
 
@@ -2212,7 +2169,7 @@ def test_row_preference_beats_price():
     back = seat_search.find(seats, quantity=1, row_preference="back")
     assert back[0].row_label == "Z"
 
-    # Bina preference ke sasti pehle
+    # Without preference, prioritize cheaper seats
     default = seat_search.find(seats, quantity=1)
     assert default[0].row_label == "Z"
 
@@ -2223,7 +2180,7 @@ def test_booked_seats_never_appear():
 
 
 def test_quantity_is_clamped():
-    """Model ya user kuch bhi bhej de — 10 se zyada nahi."""
+    """Regardless of model or user input, cap at 10."""
     seats = _seat_row("A", 40)
     assert seat_search.find(seats, quantity=999, together=True) != []
 
@@ -2232,11 +2189,9 @@ def test_quantity_is_clamped():
 
 def test_search_endpoint_works_without_ai(client, tokens):
     """
-    ⭐ Filters se search AI ke bina chalna chahiye.
+    ⭐ Search must work with filters even without AI.
 
-    Ye poore feature ka sabse zaroori invariant hai: AI ek addition hai,
-    dependency nahi. Key na ho, model down ho, quota khatam ho — search
-    phir bhi kaam kare.
+    This is the most critical invariant of the feature: AI is an addition, not a dependency. If the key is missing, the model is down, or the quota is exhausted — search must still function.
     """
     res = client.post(
         "/api/events/1/seats/search",
@@ -2268,9 +2223,7 @@ def test_search_respects_max_price(client, tokens):
 
 def test_search_needs_auth(client):
     """
-    Login zaroori hai — data private isliye nahi (seats public hain),
-    balki isliye ki rate limit per-user lagti hai aur AI calls ka kharcha
-    kisi ke naam hona chahiye.
+    Login is required — not because the data is private (seats are public), but because rate limits are per-user and AI call costs must be attributed to a specific user.
     """
     res = client.post("/api/events/1/seats/search", json={"filters": {"quantity": 1}})
     assert res.status_code == 401
@@ -2287,11 +2240,9 @@ def test_search_on_unknown_event_is_404(client, tokens):
 
 def test_absurd_filters_are_rejected(client, tokens):
     """
-    ⭐ Ye security boundary ka test hai.
+    ⭐ This is a security boundary test.
 
-    `SeatFilters` wo jagah hai jahan LLM ka output validate hota hai.
-    Agar wo kachra values pass hone de, to model (ya koi bhi caller)
-    unbounded query bana sakta hai.
+    `SeatFilters` is where LLM output is validated. If it allows garbage values, the model (or any caller) could create an unbounded query.
     """
     res = client.post(
         "/api/events/1/seats/search",
@@ -2309,7 +2260,7 @@ def test_absurd_filters_are_rejected(client, tokens):
 
 
 def test_config_exposes_ai_flag(client):
-    """Frontend isse decide karta hai ki search box dikhana hai ya nahi."""
+    """The frontend uses this to decide whether to show the search box."""
     body = client.get("/api/auth/config").json()
     assert "ai_search_enabled" in body
     assert isinstance(body["ai_search_enabled"], bool)
@@ -2318,17 +2269,15 @@ def test_config_exposes_ai_flag(client):
 # ---------------------------------------------------------------------------
 # Phase 20 — AI event copy
 #
-# In tests ko bhi API key ki zaroorat nahi. Jo cheezein test ho rahi hain —
-# RBAC, validation, aur "AI off ho to saaf 503" — wo sab AI ke bina bhi
-# sach honi chahiye.
+# These tests do not require an API key. The things being tested —
+# RBAC, validation, and "clean 503 if AI is off" — must hold true even without AI.
 #
-# AI ka OUTPUT test nahi kiya ja sakta (model har baar alag likhta hai,
-# aur likhna hi chahiye). Isliye yahan uske AASPAAS ka contract test hota
-# hai, andar ka content nahi.
+# AI OUTPUT cannot be tested (the model writes differently every time, as it should).
+# Therefore, we test the surrounding contract here, not the internal content.
 # ---------------------------------------------------------------------------
 
 def test_draft_needs_organizer_role(client, tokens, role_tokens):
-    """Attendee event nahi bana sakta, to draft bhi nahi maang sakta."""
+    """An attendee cannot create an event, so they cannot request a draft."""
     res = client.post(
         "/api/organizer/events/draft",
         headers=_headers(role_tokens["attendee"]),
@@ -2360,14 +2309,11 @@ def test_draft_rejects_empty_or_huge_briefs(client, role_tokens):
 
 def test_draft_returns_the_three_form_fields(client, role_tokens):
     """
-    Draft me wahi teen fields aane chahiye jo form bharta hai.
+    The draft should return the same three fields that the form populates.
 
-    ⚠️ Content check NAHI karte — model har baar alag likhega, aur likhna
-    hi chahiye. Contract test karte hain, prose nahi.
+    ⚠️ We do NOT check content — the model will write differently every time, as it should. We test the contract, not the prose.
 
-    AI off ho to 503 milta hai, aur wo bhi valid outcome hai — is test ka
-    matlab hai "endpoint sahi shape deta hai YA saaf mana karta hai",
-    kabhi 500 nahi.
+    If AI is off, we get a 503, which is a valid outcome — this test ensures the endpoint returns the correct shape OR explicitly denies the request, never a 500.
     """
     res = client.post(
         "/api/organizer/events/draft",
@@ -2387,13 +2333,11 @@ def test_draft_returns_the_three_form_fields(client, role_tokens):
 
 def test_draft_does_not_create_an_event(client, role_tokens):
     """
-    ⭐ Sabse zaroori test.
+    ⭐ Most important test.
 
-    AI draft kuch SAVE nahi karta. Organizer ko form me dikhta hai aur wo
-    edit karke khud publish karta hai.
+    AI draft does not SAVE anything. The organizer sees it in the form and publishes it themselves after editing.
 
-    Event ka description attendee se kiya gaya waada hai — us par insaan
-    ka haath hona chahiye. AI ko publish button tak pahunchne nahi dete.
+    The event description is a promise made to the attendee — it must be human-verified. We do not allow AI to reach the publish button.
     """
     token = role_tokens["organizer"]
     before = len(client.get("/api/organizer/events", headers=_headers(token)).json())
@@ -2405,4 +2349,4 @@ def test_draft_does_not_create_an_event(client, role_tokens):
     )
 
     after = len(client.get("/api/organizer/events", headers=_headers(token)).json())
-    assert after == before, "draft ne event bana diya — ye kabhi nahi hona chahiye"
+    assert after == before, "draft created an event — this should never happen"

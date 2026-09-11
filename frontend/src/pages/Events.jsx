@@ -26,7 +26,7 @@ export default function Events() {
               className="overflow-hidden rounded-2xl border border-[var(--border)]
                          bg-[var(--panel)] transition hover:border-violet-500/30"
             >
-              {/* Chhota gradient banner — hero jaisa, par compact */}
+              {/* Compact header banner */}
               <div className="relative h-24 bg-gradient-to-br from-violet-800 via-indigo-900 to-slate-950">
                 <span
                   className="absolute left-3 top-3 rounded-full bg-black/40 px-2 py-0.5
@@ -58,8 +58,7 @@ export default function Events() {
                   </p>
                 </div>
 
-                {/* Live counts sirf us event ke hain jo abhi load hai.
-                    Multi-event support aane par har card apna data layega. */}
+                {/* Live counts reflect the active event. Future updates will support per-card data. */}
                 {isActive && (
                   <div className="mt-3 flex gap-3 border-t border-[var(--border)] pt-3 text-xs">
                     <span className="text-emerald-400">{counts.available || 0} available</span>
@@ -93,8 +92,7 @@ export default function Events() {
       </div>
 
       <p className="text-xs text-slate-600">
-        Abhi ek hi event seed hota hai. Organizer portal aane par yahan se
-        events create honge — roadmap me hai.
+        Currently limited to one active event. Event creation via the organizer portal is on the roadmap.
       </p>
     </div>
   )

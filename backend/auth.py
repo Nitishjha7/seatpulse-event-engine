@@ -1,25 +1,18 @@
 """
-Authentication ka core — password hashing, JWT tokens, current-user dependency.
+Core authentication logic: password hashing, JWT tokens, and current-user dependency.
 
-Token strategy (ye design decision hai, interview me poocha jata hai):
+Token strategy (design decision, often discussed in interviews):
 
-  ACCESS TOKEN   30 min   -> JSON me wapas jata hai, frontend RAM me rakhta hai
-  REFRESH TOKEN  7 din    -> httpOnly cookie me, JavaScript use chhoo hi nahi sakta
+  ACCESS TOKEN   30 min   -> Returned in JSON, stored in frontend RAM.
+  REFRESH TOKEN  7 days   -> Stored in httpOnly cookie, inaccessible to JavaScript.
 
-Kyu aisa:
-  - localStorage me token rakho to koi bhi XSS use padh sakta hai (koi bhi
-    npm package, koi bhi injected script). httpOnly cookie JS se readable
-    hi nahi hoti.
-  - Par har request cookie se karna CSRF ka darwaza kholta hai. Isliye
-    ASLI kaam access token karta hai (Authorization header se — jo CSRF
-    me automatically nahi jata), aur cookie sirf naya access token lene
-    ke liye use hoti hai.
-  - Access token short hai, isliye chori ho bhi jaye to 30 min me mar jata hai.
+Rationale:
+  - Storing tokens in localStorage exposes them to XSS (via npm packages or injected scripts). httpOnly cookies are inaccessible to JS.
+  - Using cookies for every request risks CSRF. Therefore, the access token handles authorization via the Authorization header (which is not automatically sent in CSRF scenarios), while the cookie is used solely to obtain a new access token.
+  - Access tokens are short-lived, limiting the impact if compromised.
 
 Refresh token revocation:
-  Har refresh token me ek `jti` (unique id) hota hai jo Redis me whitelist
-  hota hai. Logout pe wo id Redis se hat jati hai -> token turant bekaar.
-  Sirf JWT expiry par depend karte to logout ke baad bhi token 7 din chalta.
+  Each refresh token contains a `jti` (unique ID) whitelisted in Redis. On logout, the ID is removed from Redis, immediately invalidating the token. Relying solely on JWT expiry would leave tokens active for 7 days post-logout.
 """
 
 import secrets
@@ -39,8 +32,8 @@ from redis_client import redis_client
 
 REFRESH_COOKIE_NAME = "seatpulse_refresh"
 
-# auto_error=False -> token na ho to FastAPI khud 403 na de, hum apna
-# saaf 401 message dena chahte hain.
+# auto_error=False: Prevent FastAPI from raising 403 automatically;
+# allows us to return custom 401 messages.
 _bearer = HTTPBearer(auto_error=False)
 
 
@@ -50,18 +43,18 @@ _bearer = HTTPBearer(auto_error=False)
 
 def hash_password(password: str) -> str:
     """
-    bcrypt — jaan-boojh ke DHEEMA algorithm.
+    bcrypt: A deliberately slow hashing algorithm.
 
-    SHA256 jaisa fast hash yahan galat hai: attacker ek second me crores
-    guesses kar leta. bcrypt har hash pe ~100ms leta hai, jisse brute force
-    practically namumkin ho jata hai. Salt bhi apne aap andar aa jata hai.
+    Fast hashes like SHA256 are unsuitable here as they allow millions of
+    guesses per second. bcrypt takes ~100ms per hash, making brute force
+    computationally infeasible. Salts are handled automatically.
     """
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
 def verify_password(password: str, hashed: str | None) -> bool:
     if not hashed:
-        # Google se bana user — iska koi password hai hi nahi
+        # User created via Google; no password exists.
         return False
     try:
         return bcrypt.checkpw(password.encode(), hashed.encode())
@@ -78,7 +71,7 @@ def _create_token(payload: dict, expires: timedelta, token_type: str) -> str:
     return jwt.encode(
         {
             **payload,
-            "type": token_type,   # access token ko refresh ki tarah use na kiya ja sake
+            "type": token_type,   # Prevent access tokens from being used as refresh tokens
             "iat": now,
             "exp": now + expires,
         },
@@ -97,10 +90,10 @@ def create_access_token(user_id: int) -> str:
 
 def create_refresh_token(user_id: int) -> str:
     """
-    Refresh token banao aur uski id Redis me whitelist karo.
+    Generate a refresh token and whitelist its ID in Redis.
 
-    Redis key ki TTL token ki expiry ke barabar hai — purani entries
-    apne aap saaf ho jaati hain, koi cleanup job nahi chahiye.
+    The Redis key TTL matches the token expiry, ensuring automatic cleanup
+    without requiring a separate maintenance job.
     """
     jti = uuid.uuid4().hex
     token = _create_token(
@@ -122,10 +115,9 @@ def _refresh_key(user_id: int, jti: str) -> str:
 
 def decode_token(token: str, expected_type: str) -> dict:
     """
-    Token verify karo. Kuch bhi galat ho to 401.
+    Verify token. Raises 401 on failure.
 
-    jwt.decode() signature aur expiry dono khud check karta hai —
-    hume manually kuch compare nahi karna.
+    jwt.decode() automatically validates the signature and expiry.
     """
     try:
         payload = jwt.decode(
@@ -151,7 +143,7 @@ def refresh_token_is_valid(user_id: int, jti: str) -> bool:
 
 
 def revoke_all_refresh_tokens(user_id: int) -> int:
-    """Sab devices se logout. Password badalne par ye chalana chahiye."""
+    """Logout from all devices. Should be called on password changes."""
     keys = list(redis_client.scan_iter(f"refresh:{user_id}:*"))
     return redis_client.delete(*keys) if keys else 0
 
@@ -165,16 +157,15 @@ def get_current_user(
     db: Session = Depends(get_db),
 ) -> User:
     """
-    Har protected route isse user nikalta hai.
+    Extracts the user for protected routes.
 
-    ⭐ Ab `user_id` request body se NAHI aata — token se aata hai.
-    Pehle koi bhi {"user_id": 7} bhej ke kisi aur ke naam booking kar
-    sakta tha. Ab token hi batata hai ki tum kaun ho.
+    ⭐ `user_id` is derived from the token, not the request body, preventing
+    ID spoofing.
     """
     if creds is None:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
-            "Login karna zaroori hai",
+            "Authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -182,32 +173,28 @@ def get_current_user(
     user = db.get(User, int(payload["sub"]))
 
     if user is None or not user.is_active:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User nahi mila ya inactive hai")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found or inactive")
 
     return user
 
 
 def require_role(*roles: str):
     """
-    Sirf in roles wale users ko andar aane do.
+    Restrict access to specific roles.
 
     Use:
         @router.post("", dependencies=[Depends(require_role(ROLE_ORGANIZER, ROLE_ADMIN))])
-        # ya user object chahiye to:
-        user: User = Depends(require_role(ROLE_ORGANIZER))
 
-    ⚠️ 403 dete hain, 404 nahi.
-    Booking wale IDOR case me 404 dete hain — wahan chhupana hai ki wo
-    booking exist karti hai. Yahan chhupane ko kuch hai hi nahi: endpoint
-    public knowledge hai (`/docs` me dikh raha hai), bas is user ke paas
-    permission nahi. 403 hi sahi jawab hai.
+    ⚠️ Returns 403 Forbidden. Unlike IDOR cases where 404 is used to hide
+    resource existence, these endpoints are public knowledge; the user simply
+    lacks the required permissions.
     """
 
     def dependency(user: User = Depends(get_current_user)) -> User:
         if user.role not in roles:
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
-                f"Is kaam ke liye {' ya '.join(roles)} role chahiye",
+                f"This action requires the {' or '.join(roles)} role",
             )
         return user
 
@@ -218,7 +205,7 @@ def get_current_user_optional(
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: Session = Depends(get_db),
 ) -> User | None:
-    """Login ho to user do, na ho to None — error mat do."""
+    """Returns the user if logged in, otherwise None."""
     if creds is None:
         return None
     try:
@@ -230,13 +217,13 @@ def get_current_user_optional(
 
 def user_from_ws_token(token: str | None, db: Session) -> User | None:
     """
-    WebSocket ke liye — token query param se aata hai.
+    WebSocket authentication via query parameter.
 
-    WebSocket handshake me custom headers nahi bhej sakte (browser API me
-    wo option hi nahi hai), isliye `?token=...` use karte hain.
+    WebSocket handshakes do not support custom headers in browser APIs,
+    necessitating the use of `?token=...`.
 
-    Trade-off: URL server logs me aa sakta hai. Isliye yahan sirf SHORT-LIVED
-    access token bhejte hain, refresh token kabhi nahi.
+    Trade-off: URLs may appear in server logs. Only short-lived access tokens
+    are permitted here; refresh tokens are never used.
     """
     if not token:
         return None
@@ -255,11 +242,11 @@ def set_refresh_cookie(response, token: str) -> None:
     response.set_cookie(
         key=REFRESH_COOKIE_NAME,
         value=token,
-        httponly=True,      # JavaScript padh hi nahi sakta -> XSS se safe
-        secure=settings.COOKIE_SECURE,   # dev me http hai isliye False
-        samesite="lax",     # cross-site POST me cookie nahi jayegi -> CSRF se safe
+        httponly=True,      # Prevents JS access (XSS protection)
+        secure=settings.COOKIE_SECURE,   # False in dev (HTTP)
+        samesite="lax",     # Prevents cross-site POST (CSRF protection)
         max_age=settings.REFRESH_TOKEN_DAYS * 24 * 3600,
-        path="/api/auth",   # sirf auth routes pe jayegi, har request pe nahi
+        path="/api/auth",   # Scoped to auth routes
     )
 
 
@@ -272,5 +259,5 @@ def read_refresh_cookie(request: Request) -> str | None:
 
 
 def random_state() -> str:
-    """OAuth CSRF protection ke liye random string."""
+    """Generates a random string for OAuth CSRF protection."""
     return secrets.token_urlsafe(24)

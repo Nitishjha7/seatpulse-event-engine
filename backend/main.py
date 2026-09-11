@@ -22,15 +22,13 @@ from websocket import manager, start_subscriber
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    App start hone par Redis pub/sub subscriber chalu karo,
-    band hone par saaf se rok do.
+    Initialize Redis pub/sub subscriber on startup and clean up on shutdown.
 
-    Ye task poori app ki zindagi bhar chalta rehta hai — Redis se messages
-    sunta hai aur is worker ke WebSocket clients ko forward karta hai.
+    This task runs for the duration of the application, listening for Redis
+    messages and forwarding them to WebSocket clients.
     """
-    # Threadpool admission limit se BADA rakha hai, taki jo request andar
-    # aa chuki hai wo thread ka wait na kare (aur us dauraan DB connection
-    # pakde na baithi rahe).
+    # Set threadpool limit higher than the default to prevent requests from
+    # waiting for threads while holding database connections.
     anyio.to_thread.current_default_thread_limiter().total_tokens = 40
 
     task = start_subscriber()
@@ -45,15 +43,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS: frontend 5173 pe hai, backend 8000 pe. Browser inhe alag websites
-# maanta hai, isliye explicitly allow karna padta hai.
+# CORS: Frontend (5173) and backend (8000) are treated as distinct origins by browsers.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
-    # ⚠️ Ab ye ZAROORI hai — refresh token cookie iske bina cross-origin
-    # (5173 -> 8000) na bhejegi na set hogi. Aur credentials=True ke saath
-    # allow_origins=["*"] browser reject kar deta hai, isliye specific
-    # origins hi list me hain.
+    # ⚠️ Required for cross-origin cookie authentication (5173 -> 8000).
+    # allow_credentials=True prevents the use of allow_origins=["*"].
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -62,25 +57,19 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Admission control
 # ---------------------------------------------------------------------------
-# ⭐ Ye load test se aaya hua fix hai.
+# ⭐ Load test optimization.
 #
-# Problem: hamare routes sync hain, aur `get_db` request ke SHURU me ek DB
-# connection pakad leta hai — phir request threadpool slot ka wait karti
-# hai, aur us poore intezaar me connection pakda hi rehta hai.
-#
-# Isliye "held connections" threadpool size se ZYADA ho jaate the. 200
-# concurrent users pe pool khatam ho gaya aur users ko 500 milne lage:
+# Problem: Synchronous routes acquire a DB connection via `get_db` before
+# entering the threadpool. If the threadpool is saturated, connections remain
+# idle in transaction, leading to pool exhaustion and 500 errors:
 #     QueuePool limit of size 20 overflow 20 reached, connection timed out
 #
-# Measure karke dekha tha: 40 me se 40 connections "idle in transaction",
-# sirf 1 active. Matlab kaam koi nahi kar raha tha, sab connection pakde
-# baithe the.
+# Observation: 40/40 connections were "idle in transaction" during peak load.
 #
-# Fix: darwaze pe hi rok lagao. Ek waqt me utni hi requests andar aane do
-# jitni pool sambhal sake. Baaki queue me lagengi.
+# Fix: Implement admission control to limit concurrent requests to the
+# capacity of the connection pool.
 #
-# Slow response >>> 500 error. Ye "admission control" kehlata hai aur
-# har load-bearing service me hota hai.
+# Slow response is preferable to 500 errors.
 _request_slots = asyncio.Semaphore(settings.MAX_CONCURRENT_REQUESTS)
 
 
@@ -90,7 +79,7 @@ async def limit_concurrency(request, call_next):
         return await call_next(request)
 
 
-# Routes ab alag files me hain. main.py sirf app banata aur jodta hai.
+# Routes are modularized; main.py handles application assembly.
 app.include_router(auth_router.router)
 app.include_router(admin.router)
 app.include_router(organizer.router)
@@ -106,23 +95,20 @@ app.include_router(search.router)
 @app.websocket("/ws/events/{event_id}")
 async def event_socket(websocket: WebSocket, event_id: int, token: str | None = None):
     """
-    Ek event ke live seat updates.
+    Live seat updates for a specific event.
 
-    Client connect karta hai, phir sirf sunta rehta hai. Jab bhi koi seat
-    lock/unlock/book/cancel hoti hai, ye message aata hai:
-
-        { "type": "seat_update", "action": "locked", "seat": { ...poora seat... } }
+    Clients receive messages in the format:
+        { "type": "seat_update", "action": "locked", "seat": { ... } }
 
     ---- Auth ----
-    Token QUERY PARAM se aata hai (`?token=...`), header se nahi — browser
-    ka WebSocket API custom headers bhejne hi nahi deta.
+    Tokens are passed via query parameter (?token=...) because the browser
+    WebSocket API does not support custom headers.
 
-    Trade-off: URL server logs me aa sakta hai. Isliye sirf short-lived
-    ACCESS token bhejte hain (30 min), refresh token kabhi nahi.
+    Trade-off: Tokens may appear in server logs. Use short-lived access tokens
+    (30 min) only.
 
-    Token galat ho to 1008 (policy violation) ke saath band kar dete hain.
-    Seat data khud public hai, par connection authenticate karna zaroori
-    hai — warna koi bhi socket khol ke resources khaa sakta hai.
+    Invalid tokens result in a 1008 (policy violation) close code. Authentication
+    is required to prevent unauthorized resource consumption.
     """
     db = SessionLocal()
     try:
@@ -137,9 +123,8 @@ async def event_socket(websocket: WebSocket, event_id: int, token: str | None = 
     await manager.connect(websocket, event_id)
     try:
         while True:
-            # Client se kuch expect nahi kar rahe. Ye receive isliye hai ki
-            # connection zinda rahe aur disconnect ka pata chale.
-            # Bina iske function turant return kar jata aur socket band ho jata.
+            # Keep the connection alive and detect disconnections.
+            # Without this, the function would return and close the socket.
             await websocket.receive_text()
     except WebSocketDisconnect:
         pass
@@ -155,9 +140,7 @@ def read_root():
 @app.get("/api/health", tags=["meta"])
 def health_check(db: Session = Depends(get_db)):
     """
-    Health check. Database bhi verify karta hai.
-
-    Sirf "app zinda hai" kaafi nahi — DB down ho to app kaam ka nahi.
+    Health check including database and Redis connectivity.
     """
     try:
         db.execute(text("SELECT 1"))
@@ -174,14 +157,10 @@ def health_check(db: Session = Depends(get_db)):
         "version": "0.6.0",
         "database": db_status,
         "redis": redis_status,
-        # Kis worker process ne ye request handle ki.
+        # Worker PID for debugging multi-worker deployments.
         #
-        # Multi-worker me ye debugging ke liye zaroori hai: "sirf kabhi-kabhi
-        # fail hota hai" ka matlab aksar "chaar me se ek worker kharab hai"
-        # hota hai. Bina is field ke pata hi nahi chalta kaunsa.
-        #
-        # Phase 16 ka proof bhi isi se banta hai — alag PIDs dikhein to
-        # sabit hota hai ki load sach me kai processes me bant raha hai.
+        # Helps identify if specific workers are failing.
+        # Phase 16: Validates load distribution across processes.
         "worker_pid": os.getpid(),
         "time": datetime.now(timezone.utc).isoformat(),
     }
@@ -189,7 +168,7 @@ def health_check(db: Session = Depends(get_db)):
 
 @app.get("/api/stats", tags=["meta"])
 def stats(db: Session = Depends(get_db)):
-    """Quick overview — seed data aur booking counts."""
+    """Quick overview of seat counts by status."""
     seats_by_status = db.execute(
         select(Seat.status, func.count(Seat.id)).group_by(Seat.status)
     ).all()
@@ -201,5 +180,4 @@ def stats(db: Session = Depends(get_db)):
     }
 
 
-# NOTE: purana /api/me hata diya gaya — wo bina auth ke pehla user
-# return karta tha. Ab GET /api/auth/me hai, jo token se user nikalta hai.
+# NOTE: Removed legacy /api/me. Use GET /api/auth/me for token-based user retrieval.

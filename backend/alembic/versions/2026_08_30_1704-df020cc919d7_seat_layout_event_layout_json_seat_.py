@@ -1,4 +1,4 @@
-"""seat layout: event.layout json + seat.section
+"""Add layout column to events and section column to seats.
 
 Revision ID: df020cc919d7
 Revises: 14a521ae0df4

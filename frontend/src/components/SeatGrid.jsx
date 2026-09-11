@@ -3,32 +3,30 @@ import { Fragment } from 'react'
 import { seatPrice } from '../booking/BookingContext'
 
 /**
- * Seat grid — event ki saari seats rows me.
+ * Seat grid — displays all event seats organized by row.
  *
- * WebSocket update aane par sirf badli hui seat re-render hoti hai
- * (state me pura array replace nahi hota, sirf ek item).
+ * WebSocket updates trigger re-renders only for the specific seat changed,
+ * rather than replacing the entire array in state.
  */
 
-// Har status ka look ek jagah — grid aur legend kabhi alag na dikhein
+// Centralized styles for seat statuses to ensure consistency between grid and legend.
 const SEAT_STYLES = {
   available:
     'bg-emerald-500/85 text-emerald-950 hover:bg-emerald-400 hover:-translate-y-0.5 cursor-pointer',
   locked: 'bg-amber-400/80 text-amber-950 cursor-not-allowed',
-  // Payment chal raha hai — locked se alag rang, taki dusre users ko dikhe
-  // ki ye seat bikne ke kagaar pe hai, sirf hold me nahi
+  // Payment in progress — distinct color to signal the seat is being purchased, not just held.
   payment_pending: 'bg-orange-600/80 text-orange-50 cursor-not-allowed animate-pulse',
   booked: 'bg-rose-600/70 text-rose-100/70 cursor-not-allowed line-through',
-  // Group booking ne rok rakhi hai — abhi biki nahi, par kisi aur ke liye
-  // available bhi nahi. Alag rang isliye ki wait bahut lamba (30 min tak)
-  // ho sakta hai, aur user ko pata chalna chahiye ki ye jaldi nahi khulegi.
+  // Group booking hold — unavailable for individual purchase. Distinct color indicates
+  // a long hold duration (up to 30 mins), signaling it will not be released soon.
   group_held: 'bg-sky-600/70 text-sky-50 cursor-not-allowed',
-  // Meri hold — dusre ki hold (peeli) se साफ alag dikhni chahiye
+  // User's own hold — visually distinct from other users' holds (yellow).
   selected:
     'bg-violet-500 text-white ring-2 ring-violet-300 ring-offset-2 ring-offset-[var(--panel)] cursor-pointer',
 }
 
 function Seat({ seat, isSelected, isMine, onSelect, busy }) {
-  // Available click kar sakte ho, aur apni hold bhi (deselect ke liye)
+  // Seats are clickable if available or if currently held by the user (to deselect).
   const clickable = !busy && (seat.status === 'available' || isMine)
   const style = isSelected
     ? SEAT_STYLES.selected
@@ -48,12 +46,10 @@ function Seat({ seat, isSelected, isMine, onSelect, busy }) {
 }
 
 /**
- * Layout se ek lookup banao: row label -> kis seat ke baad aisle hai.
+ * Creates a lookup map: row label -> set of seat numbers followed by an aisle.
  *
- * ⚠️ Layout OPTIONAL hai. Phase 18 se pehle bane events me `layout` NULL
- * hai, aur unhe waise hi render karna hai jaise pehle hota tha. Isliye
- * har jagah fallback rakha hai — `layout` na ho to ye khali Map deta hai
- * aur grid uniform rows dikhata hai.
+ * ⚠️ Layout is optional. Events created before Phase 18 have a NULL layout.
+ * Fallbacks ensure backward compatibility, returning an empty Map for uniform rows.
  */
 function aisleMap(layout) {
   const map = new Map()
@@ -77,7 +73,7 @@ export default function SeatGrid({
   busy,
   layout,
 }) {
-  // Flat list ko rows me todo. Backend already sorted bhejta hai.
+  // Group flat list into rows. Backend provides sorted data.
   const rows = seats.reduce((acc, seat) => {
     ;(acc[seat.row_label] ||= []).push(seat)
     return acc
@@ -85,16 +81,14 @@ export default function SeatGrid({
 
   const aisles = aisleMap(layout)
 
-  // Section headings tabhi dikhao jab SACH ME ek se zyada section ho.
-  //
-  // Ek hi section wale event me "Ground" likhna sirf shor hai — wo koi
-  // jaankari nahi deta. Aur purane events me section hai hi nahi.
+  // Only show section headings if multiple sections exist.
+  // Single-section events don't require redundant labels.
   const sectionNames = [...new Set(seats.map((s) => s.section).filter(Boolean))]
   const showSections = sectionNames.length > 1
 
   return (
     <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-5">
-      {/* Stage — bina iske samajh nahi aata ki aage kaunsi taraf hai */}
+      {/* Stage indicator for spatial orientation */}
       <div className="relative mx-auto mb-7 w-4/5 max-w-md">
         <div
           className="rounded-b-3xl border-b-2 border-violet-500/40 bg-gradient-to-b
@@ -110,7 +104,7 @@ export default function SeatGrid({
           {Object.entries(rows).map(([rowLabel, rowSeats], rowIndex, allRows) => {
             const gaps = aisles.get(rowLabel)
             const section = rowSeats[0]?.section
-            // Section badla? Heading dikhao. Pehli row par bhi.
+            // Show section heading if the section changes or at the start.
             const prevSection =
               rowIndex > 0 ? rows[allRows[rowIndex - 1][0]][0]?.section : null
             const newSection = showSections && section && section !== prevSection
@@ -139,9 +133,7 @@ export default function SeatGrid({
                         onSelect={onSelect}
                         busy={busy}
                       />
-                      {/* Aisle — sirf ek khali jagah. Yahan koi seat nahi
-                          hoti aur numbering bhi nahi rukti; ye purely
-                          dikhne ke liye hai taki venue ka shape samajh aaye. */}
+                      {/* Aisle — visual gap to represent venue layout without affecting numbering */}
                       {gaps?.has(seat.seat_number) && (
                         <span className="w-4 shrink-0 sm:w-5" aria-hidden="true" />
                       )}

@@ -1,9 +1,9 @@
 """
-Job enqueue karne ka helper.
+Helper for job enqueuing.
 
-API side se use hota hai. Worker ke code se alag rakha hai taki API ko
-worker import na karna pade (aur uske saath reportlab/qrcode bhi load na
-hon — API ko unki zaroorat hi nahi).
+Used by the API. Kept separate from worker code to prevent the API from
+importing the worker, which avoids loading unnecessary dependencies like
+reportlab and qrcode.
 """
 
 import asyncio
@@ -28,30 +28,29 @@ async def _enqueue(function: str, *args) -> str | None:
 
 def enqueue_ticket(booking_id: int) -> None:
     """
-    Ticket generation queue me daalo.
+    Add ticket generation to the queue.
 
-    ⚠️ Ye kabhi raise NAHI karta.
+    ⚠️ This never raises an exception.
 
-    Wajah: ye booking ho jaane ke BAAD call hota hai. Agar Redis down hai
-    aur hum raise kar dein, to user ko 500 milega — jabki uska paisa kat
-    chuka hai aur booking database me ban chuki hai. Wo sabse bura outcome
-    hai.
+    Rationale: Called after booking completion. Raising an error if Redis is
+    down would return a 500 to the user despite a successful database
+    transaction, which is unacceptable.
 
-    Fail hone par booking `ticket_status = pending` me rehti hai, aur
-    `retry_pending_tickets.py` use baad me utha leta hai.
+    On failure, the booking remains `ticket_status = pending` and is
+    subsequently processed by `retry_pending_tickets.py`.
 
-    Yahi soch WebSocket broadcast me bhi hai (Phase 5): notification
-    "nice to have" hai, booking "must have".
+    This follows the same design as WebSocket broadcasts (Phase 5):
+    notifications are "nice to have," while bookings are "must have."
     """
     try:
-        # Ye sync context (FastAPI route) se call hota hai, isliye apna
-        # chhota event loop chala ke turant band kar dete hain.
+        # Executed from a synchronous context (FastAPI route); run in a
+        # temporary event loop.
         asyncio.run(_enqueue("generate_ticket", booking_id))
         logger.info("Ticket job queued — booking %s", booking_id)
     except Exception as exc:
         logger.warning(
-            "Ticket job queue nahi hua — booking %s: %s. "
-            "retry_pending_tickets.py isse utha lega.",
+            "Ticket job failed to queue — booking %s: %s. "
+            "retry_pending_tickets.py will handle this.",
             booking_id,
             exc,
         )

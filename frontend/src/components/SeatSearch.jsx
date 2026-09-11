@@ -6,24 +6,19 @@ import { useAuth } from '../auth/AuthContext'
 /**
  * Natural language seat search.
  *
- * ---- Sabse zaroori UX faisla: interpretation DIKHAO ----
+ * ---- UX Strategy: Transparency ----
  *
- * User likhta hai "3 seats together under 1500 near the stage" aur usse
- * 0 results milte hain. Ab wo kya kare?
+ * If a user searches "3 seats together under 1500 near the stage" and gets
+ * 0 results, they need to know why. Was the query misinterpreted, or are
+ * there simply no matching seats?
  *
- * Agar hum sirf "kuch nahi mila" dikhayein to usse pata hi nahi chalega
- * ki galti kahan hui — usne galat likha, ya seats sach me nahi hain, ya
- * AI ne kuch aur samajh liya.
+ * We display the interpreted filters (e.g., "3 seats · together · under ₹1500 · front")
+ * so the user can verify if the AI correctly parsed their intent.
  *
- * Isliye hum hamesha dikhate hain ki query ka kya MATLAB nikala gaya:
- * "3 seats · saath me · ₹1500 tak · aage". Ab user turant dekh leta hai
- * ki "1500" ko max_price samjha gaya ya nahi.
+ * ---- Feature Flagging ----
  *
- * ---- Aur ek: ye component AI ke bina bhi kaam karta hai ----
- *
- * `aiSearchEnabled` false ho to search box render hi nahi hota. Wahi
- * pattern jo Google login button ka hai — feature na ho to wo gayab ho,
- * toota hua na dikhe.
+ * This component is hidden if `aiSearchEnabled` is false. This follows the
+ * standard pattern for optional features to avoid UI clutter.
  */
 export default function SeatSearch({ eventId, onPick }) {
   const { aiSearchEnabled } = useAuth()
@@ -33,7 +28,6 @@ export default function SeatSearch({ eventId, onPick }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
-  // Key nahi hai — box dikhao hi mat.
   if (!aiSearchEnabled) return null
 
   async function run(e) {
@@ -56,10 +50,10 @@ export default function SeatSearch({ eventId, onPick }) {
     <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
       <form onSubmit={run}>
         <label className="block text-sm font-medium text-slate-300">
-          Seats dhoondo
+          Search seats
         </label>
         <p className="mt-0.5 text-xs text-slate-600">
-          Apne shabdon me likho — "3 seats saath me, 1500 se kam, stage ke paas"
+          Describe your preference — "3 seats together, under 1500, near stage"
         </p>
 
         <div className="mt-2 flex gap-2">
@@ -97,25 +91,24 @@ export default function SeatSearch({ eventId, onPick }) {
 function Results({ result, onPick }) {
   const f = result.filters
 
-  // Query ka kya matlab nikala gaya — user ko dikhna chahiye
+  // Display parsed filters to provide feedback on AI interpretation
   const chips = [
     f.quantity > 1 && `${f.quantity} seats`,
-    f.quantity > 1 && (f.together ? 'saath me' : 'alag-alag chalega'),
-    f.max_price != null && `₹${f.max_price} tak`,
-    f.min_price != null && `₹${f.min_price} se upar`,
+    f.quantity > 1 && (f.together ? 'together' : 'any arrangement'),
+    f.max_price != null && `under ₹${f.max_price}`,
+    f.min_price != null && `above ₹${f.min_price}`,
     f.section && f.section,
-    f.row_preference === 'front' && 'aage',
-    f.row_preference === 'back' && 'peeche',
+    f.row_preference === 'front' && 'front',
+    f.row_preference === 'back' && 'back',
   ].filter(Boolean)
 
   return (
     <div className="mt-3 border-t border-[var(--border)] pt-3">
       <div className="flex flex-wrap items-center gap-1.5">
         {!result.interpreted && (
-          // Imaandari: AI ne query samjhi hi nahi, to ye mat jataao ki
-          // samajh ke result diya hai
+          // If AI fails to parse, show all available seats without misleading labels
           <span className="rounded bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-300">
-            Query samajh nahi aayi — saari available seats dikha rahe hain
+            Could not parse query — showing all available seats
           </span>
         )}
         {chips.map((c) => (
@@ -130,7 +123,7 @@ function Results({ result, onPick }) {
 
       {result.matches.length === 0 ? (
         <p className="mt-3 text-sm text-slate-500">
-          In filters pe kuch nahi mila. Kam seats ya zyada budget try karo.
+          No matches found. Try adjusting your filters or budget.
         </p>
       ) : (
         <ul className="mt-3 space-y-1.5">

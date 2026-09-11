@@ -3,21 +3,20 @@ import { useMemo } from 'react'
 const COLORS = ['#a78bfa', '#34d399', '#fbbf24', '#f472b6', '#60a5fa', '#f87171']
 
 /**
- * CSS-only confetti.
+ * CSS-only confetti implementation.
  *
- * Koi library nahi (canvas-confetti ~30KB hai). 40 chhote divs hain, har ek
- * ka apna random direction, rotation, color aur delay — CSS variables ke
- * through animation me jaate hain.
+ * Avoids heavy external libraries (e.g., canvas-confetti). Uses 40 divs with
+ * randomized CSS variables for direction, rotation, color, and delay.
  *
- * `useMemo` zaroori hai: bina iske har render pe naye random numbers
- * bante aur confetti jhatke se jagah badalta rehta.
+ * `useMemo` is required to prevent re-randomization on every render, which
+ * would cause the confetti to jitter.
  */
 export default function Confetti({ count = 40 }) {
   const pieces = useMemo(
     () =>
       Array.from({ length: count }, () => ({
         left: Math.random() * 100,
-        // Do taraf bikhare — kabhi left, kabhi right
+        // Randomize horizontal trajectory
         x: `${(Math.random() - 0.5) * 220}px`,
         r: `${Math.random() * 720 - 360}deg`,
         delay: Math.random() * 0.5,
@@ -30,7 +29,7 @@ export default function Confetti({ count = 40 }) {
   )
 
   return (
-    // pointer-events-none — confetti ke upar click karne pe button dabna chahiye
+    // pointer-events-none ensures clicks pass through to underlying elements
     <div className="pointer-events-none absolute inset-x-0 top-0 h-full overflow-hidden" aria-hidden="true">
       {pieces.map((p, i) => (
         <span

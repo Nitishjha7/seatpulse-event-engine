@@ -4,22 +4,22 @@ import { draftEvent } from '../api'
 import { useAuth } from '../auth/AuthContext'
 
 /**
- * Chhote brief se event listing ka draft.
+ * Generates an event draft from a brief description.
  *
- * ---- Sabse zaroori design faisla: ye kuch SAVE nahi karta ----
+ * ---- Critical Design Decision: This does not persist data ----
  *
- * Draft seedha form ke fields me bhar jata hai, aur organizer usse edit
- * karke khud publish karta hai. AI ko publish button tak pahunchne hi
- * nahi dete.
+ * The draft populates form fields directly, requiring the organizer to
+ * review and publish manually. The AI is strictly prohibited from
+ * triggering a publish action.
  *
- * Wajah cosmetic nahi hai: event ka description ticket kharidne wale ke
- * liye ek **waada** hai. Model "featuring special guests" gadh de aur wo
- * bina padhe publish ho jaye — to jhooth attendee tak pahunch jata hai,
- * aur uska zimmedar organizer hai, AI nahi.
+ * Rationale: An event description is a binding promise to the attendee.
+ * If the model hallucinates details (e.g., "featuring special guests"),
+ * the organizer—not the AI—is responsible for the misinformation.
  *
- * Isliye do jagah guard hai:
- *   1. Prompt me model ko facts gadhne se saaf mana kiya gaya hai
- *   2. Yahan — insaan ke haath se guzre bina kuch publish nahi hota
+ * Safeguards:
+ *   1. System prompt explicitly forbids hallucination.
+ *   2. Human-in-the-loop requirement ensures no content is published
+ *      without manual verification.
  */
 export default function AiDraft({ onDraft }) {
   const { aiSearchEnabled } = useAuth()
@@ -29,8 +29,7 @@ export default function AiDraft({ onDraft }) {
   const [error, setError] = useState(null)
   const [filled, setFilled] = useState(false)
 
-  // Key nahi hai to ye box dikhta hi nahi — form haath se bharna waise
-  // bhi poori tarah chalta hai.
+  // If the feature is disabled, hide the component. Manual entry remains available.
   if (!aiSearchEnabled) return null
 
   async function run() {
@@ -52,10 +51,10 @@ export default function AiDraft({ onDraft }) {
       className="rounded-2xl border border-violet-500/25 bg-violet-500/[0.04] p-4"
     >
       <h2 className="text-sm font-medium text-violet-200">
-        ✨ AI se draft banao
+        ✨ Generate draft with AI
       </h2>
       <p className="mt-0.5 text-xs text-slate-500">
-        Ek line likho — naam, description aur category apne aap bhar jaayenge
+        Enter a brief description to auto-populate the name, details, and category.
       </p>
 
       <div className="mt-2.5 flex gap-2">
@@ -64,8 +63,7 @@ export default function AiDraft({ onDraft }) {
           onChange={(e) => setBrief(e.target.value)}
           maxLength={200}
           placeholder="Arijit Singh concert, DY Patil Mumbai, December"
-          // Enter par form submit ho jata (ye ek form ke andar hai), isliye
-          // rok ke draft chalate hain
+          // Prevent default form submission on Enter to trigger the draft process instead.
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault()
@@ -83,7 +81,7 @@ export default function AiDraft({ onDraft }) {
           className="rounded-lg bg-violet-600 px-4 text-sm font-medium transition
                      hover:bg-violet-500 disabled:opacity-40"
         >
-          {busy ? 'Likh raha hai…' : 'Draft'}
+          {busy ? 'Generating…' : 'Draft'}
         </button>
       </div>
 
@@ -94,11 +92,10 @@ export default function AiDraft({ onDraft }) {
       )}
 
       {filled && !error && (
-        // Ye line zaroori hai. Organizer ko pata hona chahiye ki jo neeche
-        // bhara hai wo ek MASHIN ne likha hai aur uski zimmedari uski hai.
+        // Disclaimer: Remind the organizer that AI-generated content requires manual review.
         <p className="mt-2 rounded-lg bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-200">
-          Draft neeche bhar diya hai — <strong>publish se pehle padh lo</strong>.
-          Jo likha hai wo tumhare naam se attendees tak jayega.
+          Draft populated — <strong>please review before publishing</strong>.
+          All content will be attributed to your event.
         </p>
       )}
     </section>

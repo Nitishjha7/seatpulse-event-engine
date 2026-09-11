@@ -12,7 +12,7 @@ export default function MyEvents() {
   const [events, setEvents] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  // CreateEvent page navigate karte waqt state me event ka naam bhejta hai
+  // Receives event name from CreateEvent page navigation state
   const [notice, setNotice] = useState(location.state?.created ?? null)
 
   const load = useCallback(async () => {
@@ -31,13 +31,13 @@ export default function MyEvents() {
   }, [load])
 
   async function handleDelete(event) {
-    if (!confirm(`"${event.name}" delete karein? Ye wapas nahi aayega.`)) return
+    if (!confirm(`Delete "${event.name}"? This action cannot be undone.`)) return
     try {
       await deleteEvent(event.id)
       setNotice(null)
       await load()
     } catch (err) {
-      // 409 = confirmed bookings hain. Ye normal business rule hai, crash nahi.
+      // 409 indicates existing confirmed bookings; expected business rule violation
       setError(err.message)
     }
   }
@@ -62,8 +62,8 @@ export default function MyEvents() {
           </h1>
           <p className="mt-1 text-sm text-slate-500">
             {isAdmin
-              ? 'Admin ko platform ke saare events dikhte hain'
-              : 'Sirf tumhare banaye hue events'}
+              ? 'View all events on the platform'
+              : 'Manage your created events'}
           </p>
         </div>
 
@@ -77,7 +77,7 @@ export default function MyEvents() {
 
       {notice && (
         <p className="rounded-xl bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
-          ✅ "{notice}" ban gaya
+          ✅ "{notice}" created successfully
         </p>
       )}
       {error && (
@@ -97,12 +97,12 @@ export default function MyEvents() {
       ) : events.length === 0 ? (
         <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] py-14 text-center">
           <p className="text-3xl">🎪</p>
-          <p className="mt-3 text-sm text-slate-400">Abhi koi event nahi</p>
+          <p className="mt-3 text-sm text-slate-400">No events found</p>
           <Link
             to="/organizer/events/new"
             className="mt-4 inline-block rounded-xl bg-violet-600 px-4 py-2 text-sm font-medium transition hover:bg-violet-500"
           >
-            Pehla event banao
+            Create your first event
           </Link>
         </div>
       ) : (

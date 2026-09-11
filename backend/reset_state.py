@@ -1,9 +1,9 @@
 """
-Sab kuch fresh — saari bookings hatao, saari seats available karo, locks saaf.
+Resets the system state: clears all bookings, restores seat availability, and removes locks.
 
-Testing ke beech me bar-bar chahiye hota hai.
+Used frequently during testing.
 
-Chalao:
+Usage:
     docker compose exec backend python reset_state.py
 """
 
@@ -17,7 +17,7 @@ from redis_client import redis_client
 def reset():
     db = SessionLocal()
     try:
-        # Payments pehle — unka booking_id FK bookings ko point karta hai
+        # Delete payments first to satisfy Booking FK constraints.
         payments = db.execute(delete(Payment)).rowcount
         bookings = db.execute(delete(Booking)).rowcount
         seats = db.execute(
@@ -33,10 +33,10 @@ def reset():
     finally:
         db.close()
 
-    # Pattern-wise delete karte hain, `flushall` nahi.
+    # Use pattern-based deletion instead of `flushall`.
     #
-    # flushall REFRESH TOKENS bhi uda deta — matlab har tester ka logout
-    # ho jata testing ke beech me. Ab wo bache rehte hain.
+    # `flushall` would clear refresh tokens, forcing testers to re-authenticate.
+    # Pattern-based deletion preserves session state.
     for pattern, label in [
         ("seat:*:lock", "seat locks"),
         ("rl:*", "rate limit buckets"),

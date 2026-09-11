@@ -1,22 +1,22 @@
 """
 Background worker — ARQ.
 
-Chalao:
-    docker compose up worker          (compose me service hai)
-    arq worker.WorkerSettings         (manually)
+Usage:
+    docker compose up worker          (service defined in compose)
+    arq worker.WorkerSettings         (manual execution)
 
----- ARQ kyu, Celery kyu nahi ----
+---- Why ARQ instead of Celery ----
 
-Celery ka ecosystem bada hai, par:
-  - usse ek broker chahiye (RabbitMQ ya Redis) — hamare paas Redis hai
-  - wo sync-first hai; hamari app ASGI hai
-  - config bahut zyada hai us kaam ke liye jo hume karna hai
+Celery has a large ecosystem, but:
+  - It requires a broker (RabbitMQ or Redis) — we already use Redis.
+  - It is sync-first; our app is ASGI.
+  - It is overly complex for our specific requirements.
 
-ARQ Redis pe hi chalta hai (koi nayi service nahi), asyncio-native hai,
-aur poora ~1500 lines ka hai. Is project ke size ke liye sahi fit.
+ARQ runs directly on Redis (no new services), is asyncio-native, and is
+compact (~1500 lines). It is a perfect fit for this project size.
 
-Agli baar Celery tab chahiye hoga jab: multiple queues with priorities,
-complex workflows (chains/groups), ya team ko uska ecosystem chahiye ho.
+We would only consider Celery if we needed: multiple queues with priorities,
+complex workflows (chains/groups), or if the team required its ecosystem.
 """
 
 import asyncio
@@ -46,11 +46,10 @@ logger = logging.getLogger("worker")
 
 def _generate(booking_id: int) -> str:
     """
-    Asli kaam — sync, kyunki SQLAlchemy aur reportlab dono sync hain.
+    Core logic — synchronous, as SQLAlchemy and reportlab are both sync.
 
-    Ye ek THREAD me chalta hai (neeche `asyncio.to_thread`), warna PDF
-    render karte waqt poora event loop block ho jata aur worker koi
-    dusra job nahi utha pata.
+    Runs in a separate thread (via `asyncio.to_thread`) to prevent blocking
+    the event loop during PDF rendering, which would otherwise stall the worker.
     """
     db = SessionLocal()
     try:
@@ -63,16 +62,15 @@ def _generate(booking_id: int) -> str:
         ).first()
 
         if row is None:
-            raise ValueError(f"Booking {booking_id} nahi mili")
+            raise ValueError(f"Booking {booking_id} not found")
 
         booking, seat, event, user = row
 
-        # ⚠️ IDEMPOTENT: job do baar chal sakta hai (ARQ retry karta hai,
-        # aur hum khud bhi re-enqueue kar sakte hain). Pehle se ready hai
-        # to dobara mat banao — QR token badal jata to purana ticket
-        # bekaar ho jata, jabki user uske paas already hai.
+        # ⚠️ IDEMPOTENT: Jobs may run multiple times (ARQ retries or manual
+        # re-enqueuing). Skip if already ready to avoid regenerating the
+        # QR token and invalidating existing tickets.
         if booking.ticket_status == TICKET_READY and booking.qr_token:
-            logger.info("Booking %s ka ticket pehle se ready hai — skip", booking_id)
+            logger.info("Ticket for booking %s is already ready — skipping", booking_id)
             return booking.qr_token
 
         token = booking.qr_token or new_qr_token()
@@ -126,7 +124,7 @@ def _mark_failed(booking_id: int, reason: str) -> None:
         if booking:
             booking.ticket_status = TICKET_FAILED
             db.commit()
-        logger.error("❌ Ticket fail — booking %s: %s", booking_id, reason)
+        logger.error("❌ Ticket failed — booking %s: %s", booking_id, reason)
     finally:
         db.close()
 
@@ -135,45 +133,39 @@ async def generate_ticket(ctx: dict, booking_id: int) -> str:
     """
     ARQ job.
 
-    ⚠️ Yahan koi bhi exception raise karna THEEK hai — ARQ khud retry
-    karta hai (`max_tries` neeche). Isliye hum error chupa nahi rahe.
-
-    Par jab saari koshishein khatam ho jaayein, tab booking ko `failed`
-    mark karte hain — warna user hamesha "generating..." dekhta rehta.
+    ⚠️ Raising exceptions is intentional — ARQ handles retries based on
+    `max_tries`. We only mark as `failed` after all retries are exhausted
+    to prevent the user from seeing a permanent "generating..." state.
     """
     attempt = ctx.get("job_try", 1)
-    logger.info("Ticket ban raha hai — booking %s (attempt %s)", booking_id, attempt)
+    logger.info("Generating ticket — booking %s (attempt %s)", booking_id, attempt)
 
     try:
-        # PDF render CPU ka kaam hai — thread me bhejo, warna event loop
-        # block hoga aur worker baaki jobs nahi utha payega
+        # PDF rendering is CPU-bound; offload to thread to keep event loop responsive.
         return await asyncio.to_thread(_generate, booking_id)
     except Exception as exc:
         if attempt >= WorkerSettings.max_tries:
             _mark_failed(booking_id, str(exc))
-        raise    # ARQ ko batao, wo retry karega
+        raise    # Propagate to ARQ for retry
 
 
 async def expire_groups(ctx) -> int:
     """
-    Jinki deadline nikal gayi un group bookings ko todo.
+    Expire and release group bookings that have passed their deadline.
 
-    ---- Ye cron kyu hai, lazy cleanup kyu nahi ----
+    ---- Why cron instead of lazy cleanup ----
 
-    Baaki jagah hum expired holds ko "lazy" saaf karte hain: jab koi seats
-    padhta hai, tab purane locks release ho jaate hain. Wo sasta hai aur
-    kaafi hai, kyunki wahan kuch khoya nahi jata — seat wapas available
-    ho jati hai, bas.
+    Other expired holds are cleaned up "lazily" when seats are accessed.
+    This is efficient and sufficient for simple locks.
 
-    Group me aisa nahi hai. Group todne ka matlab **refund** bhi hai.
-    Agar koi is event ka page hi na khole, to lazy cleanup kabhi chalta hi
-    nahi — aur log apne paise ka intezaar karte reh jaate hain.
+    Group bookings are different because they involve refunds. If no one
+    visits the event page, lazy cleanup would never trigger, leaving users
+    waiting indefinitely for their money.
 
-    Paisa wapas milna kisi ajnabi ke page kholne par nirbhar nahi ho sakta.
-    Isliye ye ek schedule par chalta hai.
+    Refunds cannot depend on external user activity. Thus, this runs on a schedule.
 
-    ⚠️ Job idempotent hai: `break_group` ek atomic conditional UPDATE se
-    chalta hai, to do worker ek saath chalein to bhi ek hi todega.
+    ⚠️ Job is idempotent: `break_group` uses an atomic conditional UPDATE,
+    ensuring safety even if multiple workers run concurrently.
     """
     db = SessionLocal()
     try:
@@ -188,28 +180,28 @@ async def expire_groups(ctx) -> int:
 class WorkerSettings:
     functions = [generate_ticket]
 
-    # Har 30 second. Group deadline minutes me hoti hai, to 30 second ka
-    # delay chalega — aur is se tez chalane ka matlab sirf khaali queries.
+    # Run every 30 seconds. Group deadlines are in minutes, so 30s is
+    # sufficient and avoids unnecessary database load.
     #
-    # `run_at_startup` isliye ki worker restart hone par jo groups us beech
-    # expire ho gaye the wo turant nipat jaayein, agle tick ka wait na karein.
+    # `run_at_startup` ensures groups that expired during downtime are
+    # processed immediately upon worker restart.
     cron_jobs = [
         cron(expire_groups, second={0, 30}, run_at_startup=True),
     ]
 
     redis_settings = RedisSettings.from_dsn(settings.REDIS_URL)
 
-    # 3 koshishein, beech me badhta hua gap. Transient failure (DB restart,
-    # disk busy) apne aap theek ho jaata hai.
+    # 3 attempts with exponential backoff. Handles transient failures
+    # (e.g., DB restarts, disk I/O spikes).
     max_tries = 3
     retry_delays = [5, 30]
 
-    # Ek job 60 second se zyada le to kuch to galat hai
+    # 60s timeout for job execution.
     job_timeout = 60
 
-    # Ek worker ek waqt me 5 tickets — PDF render CPU-bound hai, isse
-    # zyada rakhne se kuch faayda nahi
+    # Limit to 5 concurrent jobs; PDF rendering is CPU-bound, so higher
+    # concurrency provides no benefit.
     max_jobs = 5
 
-    # Job results kitni der Redis me rahen (debugging ke liye)
+    # Keep results in Redis for 1 hour for debugging.
     keep_result = 3600

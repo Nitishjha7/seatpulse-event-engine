@@ -1,430 +1,430 @@
 # SeatPulse — Interview Prep
 
-Har sawaal ka format: **sawaal → wo kyu pooch raha hai → jawab (asli numbers ke saath)**.
+Format for every question: **question → why they are asking → answer (with actual numbers)**.
 
-> **Ek usool:** jawab 30-60 second ka hona chahiye. Lamba jawab confidence nahi, ghabrahat dikhata hai. Chhota jawab do, phir ruk jao — interviewer khud khodega jahan usse interest hai.
+> **One rule:** Answers should be 30-60 seconds long. Long answers show nervousness, not confidence. Give a concise answer, then stop — the interviewer will dig where they are interested.
 
-**Is project ke asli numbers (yaad rakho, ye tumhari sabse badi taakat hain):**
+**Actual numbers for this project (remember, these are your greatest strength):**
 
-| Kya | Number |
+| What | Number |
 |---|---|
-| Flash sale test | 200 concurrent users, ek seat |
+| Flash sale test | 200 concurrent users, one seat |
 | Total requests | 8,154 · **0 failures** · 137 req/s |
-| Result | DB me **exactly 1** confirmed booking |
+| Result | **Exactly 1** confirmed booking in DB |
 | Latency (flash sale) | p50 1,000 ms · p99 1,400 ms |
 | Latency (50 users, normal) | p50 13-21 ms · p95 85-95 ms |
 | Tests | 29 (auth + RBAC + rate limit + concurrency) |
-| Load test se mile bugs | 3 (sab fix, sab measured) |
-| Test se mile bugs | 2 (rate-limit peek, SQLAlchemy cascade) |
+| Bugs found via load test | 3 (all fixed, all measured) |
+| Bugs found via tests | 2 (rate-limit peek, SQLAlchemy cascade) |
 
 ---
 
-## 1. Opening — pehle 60 second
+## 1. Opening — the first 60 seconds
 
-Ye sabse important hai. Yahi tay karta hai ki aage kaunse sawaal aayenge.
+This is the most important part. It determines the direction of the interview.
 
-> "SeatPulse ek event ticketing platform hai — BookMyShow jaisa. Asli problem jo maine solve ki: **flash sale me overselling**. Jab 5000 log ek saath ek hi seat pe click karte hain, naive `SELECT → check → UPDATE` wala flow wo seat kai baar bech deta hai.
+> "SeatPulse is an event ticketing platform — like BookMyShow. The real problem I solved: **overselling during flash sales**. When 5,000 people click on the same seat simultaneously, the naive `SELECT → check → UPDATE` flow sells that seat multiple times.
 >
-> Maine teen layers banayi — Redis distributed lock speed ke liye, Postgres optimistic locking correctness ke liye, aur ek partial unique index aakhri guarantee ke liye.
+> I built three layers — Redis distributed lock for speed, Postgres optimistic locking for correctness, and a partial unique index as a final guarantee.
 >
-> Aur maine sirf banaya nahi, **prove kiya**: Locust se 200 concurrent users ek hi seat pe, 8000+ requests, zero failures, aur database me exactly ek booking. Us load test ne teen asli race conditions pakdi jo maine `pg_stat_activity` se debug karke fix ki."
+> And I didn't just build it, I **proved it**: 200 concurrent users on one seat using Locust, 8,000+ requests, zero failures, and exactly one booking in the database. That load test caught three real race conditions, which I debugged and fixed using `pg_stat_activity`."
 
-**Is pitch me jaan-boojh ke teen hook chhode hain** — teen layers, load test numbers, aur "teen bugs". Interviewer inme se kisi ek pe khodega, aur tum tayyar ho.
+**I have intentionally left three hooks in this pitch** — three layers, load test numbers, and "three bugs". The interviewer will dig into one of these, and you are ready.
 
 ---
 
-## 2. Tech choices — "ye kyu, wo kyu nahi"
+## 2. Tech choices — "why this, why not that"
 
-> **Ye sawaal trap nahi hai.** Wo check kar raha hai ki tumne **soch ke chuna** ya tutorial copy kiya. Jawab ka shape hamesha:
-> *"Ye constraint tha → isliye ye chuna → constraint badalta to X leta."*
+> **This question is not a trap.** They are checking if you **chose deliberately** or just copied a tutorial. The shape of the answer should always be:
+> *"This was the constraint → that's why I chose this → if the constraint changed, I would have chosen X."*
 
-### FastAPI kyu?
+### Why FastAPI?
 
-> "Do cheezein chahiye thi — WebSockets aur high concurrency. FastAPI ASGI-native hai to WebSocket first-class hai; Django me Channels alag se lagana padta. Pydantic se validation aur OpenAPI docs free mile. Flask lete to async aur WebSocket dono bolt-on hote."
+> "I needed two things — WebSockets and high concurrency. FastAPI is ASGI-native, so WebSockets are first-class; in Django, you have to add Channels separately. Pydantic gave me validation and OpenAPI docs for free. If I had used Flask, both async and WebSockets would have been bolt-ons."
 
-### React kyu? Next.js kyu nahi?
+### Why React? Why not Next.js?
 
-> "Seat grid me 100 cells hain jinka state independently badalta hai — WebSocket message aane pe sirf ek seat re-render honi chahiye, poora grid nahi. React ka reconciliation exactly yahi karta hai.
+> "The seat grid has 100 cells that change state independently — when a WebSocket message arrives, only one seat should re-render, not the entire grid. React's reconciliation does exactly that.
 >
-> Next.js nahi liya kyunki ye poora authenticated dashboard hai — SSR ya SEO ka koi faayda nahi tha. Wo ek build layer extra add karta bina kuch diye."
+> I didn't use Next.js because this is a fully authenticated dashboard — there was no benefit to SSR or SEO. It would have added an extra build layer without providing any value."
 
-### PostgreSQL kyu, MongoDB nahi?
+### Why PostgreSQL, not MongoDB?
 
-**Ye sabse achha jawab hai — yahan poori taakat lagao.**
+**This is the best answer — put all your strength here.**
 
-> "Ye is project ki sabse important choice thi. Mera overselling ka aakhri bachav ek **partial unique index** hai — ek seat, ek confirmed booking, database level pe. Aur seat update + booking insert ek hi transaction me hone chahiye.
+> "This was the most important choice of the project. My final defense against overselling is a **partial unique index** — one seat, one confirmed booking, at the database level. Also, the seat update and booking insert must happen in a single transaction.
 >
-> Mongo me multi-document transactions hain, par wo uski strength nahi hai. Mujhe yahan **ACID chahiye tha, flexible schema nahi**. Seat ka schema kabhi badalta hi nahi — wo hamesha row, number, status, price rahega."
+> Mongo has multi-document transactions, but that isn't its strength. I needed **ACID here, not a flexible schema**. The seat schema never changes — it will always be row, number, status, price."
 
-### Redis kyu? Sirf database se kaam nahi chalta?
+### Why Redis? Doesn't the database suffice?
 
-> "**Chalta hai** — aur chal raha tha. Phase 3 me DB-only version tha aur wo 20 concurrent requests pe bilkul sahi kaam kar raha tha.
+> "**It does** — and it was working. In Phase 3, there was a DB-only version, and it worked perfectly at 20 concurrent requests.
 >
-> Redis correctness ke liye nahi hai, **load ke liye** hai. 5000 me se 4999 requests Redis pe hi ruk jaati hain, database tak pahunchti hi nahi. Aur TTL se abandoned cart ka cleanup free me mil gaya — koi cron job nahi likhna pada."
+> Redis isn't for correctness; it's for **load**. Out of 5,000 requests, 4,999 are stopped at Redis and never reach the database. And I got abandoned cart cleanup for free via TTL — I didn't have to write a cron job."
 
-> ⭐ Ye jawab isliye strong hai kyunki tum Redis ko **glorify nahi kar rahe**. Zyadatar candidates bolte hain "Redis se overselling rukti hai" — wo galat hai.
+> ⭐ This answer is strong because you aren't **glorifying Redis**. Most candidates say "Redis prevents overselling" — that is incorrect.
 
-### WebSocket kyu, polling kyu nahi?
+### Why WebSockets, not polling?
 
-> "1000 clients har 2 second poll karein to 500 req/s sirf 'kuch badla kya?' poochne me nikal jaate. WebSocket me traffic tabhi hota hai jab actually kuch badle.
+> "If 1,000 clients polled every 2 seconds, 500 req/s would be wasted just asking 'did anything change?'. With WebSockets, traffic only occurs when something actually changes.
 >
-> SSE bhi chal jata — flow one-directional hai. WebSocket isliye liya ki aage kuch two-way karna ho to base ready ho."
+> SSE would have worked too — the flow is one-directional. I chose WebSockets so the base is ready if I need two-way communication later."
 
-### Go ya Java behtar nahi hota?
+### Wouldn't Go or Java be better?
 
-**Yahan defensive mat hona. Maan lo, phir asli baat pe le aao.**
+**Don't get defensive here. Acknowledge it, then bring it back to the real issue.**
 
-> "Haan, is workload pe Go behtar hota — goroutines me per-request cost bahut kam hai, mujhe threadpool aur pool sizing ka poora jhamela hi na hota.
+> "Yes, Go would be better for this workload — the per-request cost in goroutines is very low; I wouldn't have had to deal with thread pools and pool sizing.
 >
-> Python isliye liya ki ecosystem — SQLAlchemy, Alembic, Pydantic — mujhe business logic pe focus karne deta hai.
+> I chose Python because of the ecosystem — SQLAlchemy, Alembic, Pydantic — which allowed me to focus on business logic.
 >
-> Par asli baat ye hai: **bottleneck runtime nahi tha, Postgres ki row-level contention thi.** Ek hi seat pe 200 log — wo row Go me bhi utni hi serialized rahegi. Language badal ke wo problem hal nahi hoti."
+> But the real point is: **the bottleneck wasn't the runtime, it was Postgres row-level contention.** 200 people on one seat — that row will be serialized just as much in Go. Changing the language doesn't solve that problem."
 
 ---
 
-## 3. Core — concurrency aur locking
+## 3. Core — concurrency and locking
 
-### Overselling kaise rokte ho? (sabse common sawaal)
+### How do you prevent overselling? (most common question)
 
-> "Teen layers, upar wali sabse tez aur neeche wali sabse pakki:
+> "Three layers, the top one is the fastest and the bottom one is the most robust:
 >
-> **1. Redis lock** — `SET seat:42:lock <user> NX EX 300`. Ek atomic command. 5000 requests me se theek ek ko `True` milta hai.
+> **1. Redis lock** — `SET seat:42:lock <user> NX EX 300`. An atomic command. Out of 5,000 requests, exactly one gets `True`.
 >
-> **2. Optimistic locking** — seat pe ek `version` column hai. Update aisa chalta hai: `UPDATE seats SET status='booked', version=version+1 WHERE id=? AND version=?`. Do parallel updates me ek ka `WHERE` match nahi karega, use `rowcount 0` milega, aur mai 409 return karta hoon.
+> **2. Optimistic locking** — there is a `version` column on the seat. The update runs like this: `UPDATE seats SET status='booked', version=version+1 WHERE id=? AND version=?`. In parallel updates, one will not match the `WHERE` clause, it will get `rowcount 0`, and I return 409.
 >
-> **3. Partial unique index** — `UNIQUE(seat_id) WHERE status='confirmed'`. Ye database ka apna niyam hai. Redis down ho, mere code me bug ho, do server chal rahe hon — Postgres dusri confirmed booking insert hone hi nahi dega."
+> **3. Partial unique index** — `UNIQUE(seat_id) WHERE status='confirmed'`. This is the database's own rule. If Redis is down, if there's a bug in my code, if two servers are running — Postgres will simply not allow a second confirmed booking to be inserted."
 
-### Teeno layers ki zaroorat kya hai? Ek se kaam nahi chalta?
+### Why are all three layers needed? Doesn't one suffice?
 
-**Ye sabse achha follow-up hai. Har layer ke bina kya tootta hai, wo batao:**
+**This is the best follow-up. Explain what breaks without each layer:**
 
-| Sirf ye layer | Kya tootega |
+| Only this layer | What breaks |
 |---|---|
-| Sirf Redis | Redis restart hote hi saare locks gayab. Us window me overselling ho sakti hai. Redis me durability hai hi nahi — aur maine jaan-boojh ke usme volume nahi diya |
-| Sirf version column | Correct hai, par **har** request DB tak jaati hai. 5000 requests = 5000 DB round trips |
-| Sirf unique index | Correct hai, par har failure ek `IntegrityError` ban jayega. Exception se flow control karna mehenga aur ganda hai |
+| Only Redis | All locks vanish on Redis restart. Overselling can happen in that window. Redis has no durability — and I intentionally didn't give it volume |
+| Only version column | Correct, but **every** request hits the DB. 5,000 requests = 5,000 DB round trips |
+| Only unique index | Correct, but every failure becomes an `IntegrityError`. Using exceptions for flow control is expensive and messy |
 
-> "To Redis speed deta hai, version column zyadatar clash pakad leta hai, aur index aakhri insurance hai jo umeed hai kabhi trigger na ho."
+> "So Redis provides speed, the version column catches most clashes, and the index is the final insurance that hopefully never triggers."
 
-### Optimistic vs Pessimistic — tumne optimistic kyu chuna?
+### Optimistic vs Pessimistic — why did you choose optimistic?
 
-> "Pessimistic matlab `SELECT ... FOR UPDATE` — row ko lock karke baaki sabko wait karwana. Optimistic matlab lock nahi lena, bas ye maan ke chalna ki clash kam hoga, aur clash ho jaye to **detect** kar lena.
+> "Pessimistic means `SELECT ... FOR UPDATE` — locking the row and making everyone else wait. Optimistic means not taking a lock, assuming clashes will be rare, and **detecting** them if they happen.
 >
-> Maine optimistic isliye chuna kyunki mere paas **upar Redis already hai**. Redis 99% requests pehle hi reject kar deta hai, to DB tak jo pahunchti hai unme clash bahut kam hota hai — aur wahi case optimistic ke liye best hai.
+> I chose optimistic because I **already have Redis on top**. Redis rejects 99% of requests beforehand, so the ones that reach the DB have very few clashes — and that is the best case for optimistic locking.
 >
-> Pessimistic me har request row lock ke liye queue me lagti, chahe clash ho ya na ho. Aur agar Redis na hota, to shayad pessimistic behtar hota."
+> In pessimistic, every request would queue for the row lock, regardless of whether there's a clash. If I didn't have Redis, pessimistic might have been better."
 
-**Follow-up "prove karo?":**
-> "Wo mere roadmap me hai — pessimistic variant likh ke usi Locust suite se dono ka p99 aur throughput compare karna. Abhi maine wo maapa nahi hai, isliye claim nahi karunga."
+**Follow-up "prove it?":**
+> "That's on my roadmap — to write a pessimistic variant and compare the p99 and throughput using the same Locust suite. I haven't measured it yet, so I won't claim it."
 
-> ⭐ "Maine maapa nahi to claim nahi karunga" — ye line tumhari credibility badha deti hai, ghatati nahi.
+> ⭐ "I haven't measured it, so I won't claim it" — this line increases your credibility, it doesn't decrease it.
 
-### `rowcount == 0` kaise pata chalta hai ki race hui?
+### How do you know `rowcount == 0` means a race occurred?
 
-> "`UPDATE ... WHERE id=? AND version=3` — agar koi aur pehle jeet gaya to version 4 ho chuka hoga aur mera `WHERE` kisi row se match nahi karega. Postgres `rowcount 0` deta hai. Wo mera signal hai ki mera data purana tha, aur mai 409 return kar deta hoon.
+> "`UPDATE ... WHERE id=? AND version=3` — if someone else won first, the version will have become 4, and my `WHERE` won't match any row. Postgres returns `rowcount 0`. That is my signal that my data was stale, and I return 409.
 >
-> Sabse zaroori baat: ye **ek atomic statement** hai. Read aur write alag steps nahi hain — isliye beech me koi ghus hi nahi sakta."
+> Most importantly: this is **one atomic statement**. Read and write are not separate steps — so no one can sneak in between."
 
-### Booking se pehle jo `if seat.status != 'available'` check hai, wo kaafi kyu nahi?
+### Why isn't the `if seat.status != 'available'` check before booking enough?
 
-**Ye tez interviewer ka sawaal hai. Iska jawab tumhe pata hona chahiye:**
+**This is a question for a sharp interviewer. You must know the answer:**
 
-> "Wo check bilkul kaafi nahi hai, aur wo maine sirf **achha error message** dene ke liye rakha hai.
+> "That check is absolutely not enough, and I kept it only to provide a **good error message**.
 >
-> Us line aur neeche wale UPDATE ke beech microseconds ka gap hai. Us gap me dusra request wahi seat le sakta hai. Asli guarantee UPDATE ke `WHERE` clause me hai — kyunki database ek row pe do UPDATE ek saath nahi chalne deta."
+> There is a microsecond gap between that line and the UPDATE below. In that gap, another request can take that seat. The real guarantee is in the UPDATE's `WHERE` clause — because the database doesn't allow two UPDATEs on one row to run simultaneously."
 
-### Isolation level kaunsa use kiya?
+### Which isolation level did you use?
 
-> "Postgres ka default — **READ COMMITTED**. Maine badla nahi.
+> "Postgres default — **READ COMMITTED**. I didn't change it.
 >
-> Wajah: mai isolation level pe depend hi nahi kar raha. Mera guarantee ek atomic conditional UPDATE se aata hai aur ek unique index se. Ye dono READ COMMITTED me bhi utne hi pakke hain.
+> Reason: I don't depend on the isolation level. My guarantee comes from an atomic conditional UPDATE and a unique index. Both are just as robust in READ COMMITTED.
 >
-> SERIALIZABLE pe jata to serialization failures pe retry logic likhna padta, aur throughput girta — bina kuch extra safety mile."
+> If I went to SERIALIZABLE, I would have to write retry logic for serialization failures, and throughput would drop — without gaining any extra safety."
 
 ---
 
-## 4. Redis — detail me
+## 4. Redis — in detail
 
-### `SET NX EX` — ye ek command kyu, do kyu nahi?
+### `SET NX EX` — why one command, why not two?
 
-> "`NX` matlab 'sirf tab set karo jab key exist na kare'. Ye Redis ke andar **atomic** hai.
+> "`NX` means 'only set if the key does not exist'. This is **atomic** inside Redis.
 >
-> Agar mai `EXISTS` check karke phir `SET` karta, to un do commands ke beech doosra client wahi key set kar sakta tha. Ek command me wo gap hai hi nahi. Redis single-threaded hai — commands ek-ek karke chalte hain.
+> If I checked `EXISTS` and then `SET`, another client could set the key between those two commands. In one command, that gap doesn't exist. Redis is single-threaded — commands run one by one.
 >
-> `EX 300` matlab 5 min ka TTL. Ye sabse elegant hissa hai: user cart chhod ke chala gaya, laptop band ho gaya, tab crash ho gaya — **seat apne aap free ho jayegi**. Mujhe koi cleanup job nahi likhna pada."
+> `EX 300` means a 5-minute TTL. This is the most elegant part: the user leaves the cart, the laptop closes, the tab crashes — the **seat frees itself automatically**. I didn't have to write any cleanup job."
 
-### Lock release me Lua script kyu? Seedha `DEL` kyu nahi?
+### Why a Lua script for lock release? Why not just `DEL`?
 
-> "Kyunki seedha `DEL` **kisi aur ka lock** delete kar sakta hai:
+> "Because a simple `DEL` could delete **someone else's lock**:
 >
-> 1. User A ka lock hai, wo 5 min me expire ho gaya
-> 2. User B ne turant lock le liya
-> 3. User A ka 'release' request ab aata hai aur `DEL` kar deta hai
-> 4. B ka lock ud gaya — jabki B ne kuch galat nahi kiya
+> 1. User A has a lock, it expires in 5 minutes.
+> 2. User B takes the lock immediately.
+> 3. User A's 'release' request arrives and executes `DEL`.
+> 4. B's lock is gone — even though B did nothing wrong.
 >
-> To pehle check karna padta hai 'lock mera hi hai?', tabhi delete. Par Python me `GET` phir `DEL` likhta to unke beech bhi wahi race reh jati. Lua script Redis ke andar atomic chalti hai — check aur delete ek saath."
+> So you have to check 'is this lock mine?' before deleting. But if I wrote `GET` then `DEL` in Python, the same race would exist between them. A Lua script runs atomically inside Redis — check and delete together."
 
-**Test bhi hai iska:** `test_cannot_release_someone_elses_lock` — response me `released: false` aata hai aur asli lock salamat rehta hai.
+**There is a test for this:** `test_cannot_release_someone_elses_lock` — the response returns `released: false` and the actual lock remains intact.
 
-### Redis mar jaye to?
+### What if Redis dies?
 
-> "Do alag sawaal hain isme.
+> "There are two separate questions here.
 >
-> **Correctness** — bilkul safe. Postgres ke version column aur unique index tab bhi kaam karte hain. Overselling phir bhi nahi hogi.
+> **Correctness** — completely safe. Postgres's version column and unique index still work. Overselling still won't happen.
 >
-> **Availability** — locks chale jaayenge, matlab jo seats hold thi wo turant available dikhne lagengi, aur load DB pe aa jayega. Degrade hoga, tootega nahi.
+> **Availability** — locks will be lost, meaning seats that were on hold will immediately appear available, and the load will hit the DB. It will degrade, not break.
 >
-> Aur maine Redis me **jaan-boojh ke volume nahi diya** — usme sirf 5-minute ke temporary locks hain. Paisa aur booking hamesha Postgres me hai. Redis kabhi source of truth nahi hai."
+> And I **intentionally didn't give Redis volume** — it only contains 5-minute temporary locks. Money and bookings are always in Postgres. Redis is never the source of truth."
 
-### Redis me persistence kyu nahi rakhi?
+### Why no persistence in Redis?
 
-> "Design decision hai, laparwahi nahi. Usme sirf temporary locks hain jo waise bhi 5 min me mar jaate hain. Restart pe wo chale bhi jaayein to nuksan kya — seats available ho jaayengi, jo already correct state hai. Persistence rakhta to disk I/O ka kharcha uthata bina kisi faayde ke."
+> "It's a design decision, not negligence. It only contains temporary locks that die in 5 minutes anyway. If they disappear on restart, what's the harm — seats become available, which is already the correct state. If I kept persistence, I would be paying for disk I/O without any benefit."
 
-### TTL 5 minute kyu? 1 minute ya 30 minute kyu nahi?
+### Why a 5-minute TTL? Why not 1 or 30 minutes?
 
-> "Trade-off hai. Chhota rakho to user payment ke beech me seat kho deta hai. Bada rakho to abandoned carts seats ghere baithe rehte hain aur inventory block ho jaati hai.
+> "It's a trade-off. Keep it short, and the user loses the seat during payment. Keep it long, and abandoned carts hold seats, blocking inventory.
 >
-> 5 minute checkout ka realistic time hai. Aur ye config me hai (`SEAT_LOCK_TTL`), hardcoded nahi — kyunki asli number production ke data se aata hai, meri guess se nahi."
+> 5 minutes is a realistic checkout time. And it's in the config (`SEAT_LOCK_TTL`), not hardcoded — because the real number comes from production data, not my guess."
 
 ---
 
 ## 5. WebSockets
 
-### Real-time update kaise kaam karta hai?
+### How do real-time updates work?
 
-> "Har event ka apna Redis pub/sub channel hai — `seatpulse:event:1`. Jab bhi koi seat lock, release, book ya cancel hoti hai, backend us channel pe publish karta hai. Har worker usi channel ko subscribe kiye baitha hai aur apne connected sockets ko forward kar deta hai."
+> "Every event has its own Redis pub/sub channel — `seatpulse:event:1`. Whenever a seat is locked, released, booked, or canceled, the backend publishes to that channel. Every worker is subscribed to that channel and forwards messages to its connected sockets."
 
-### Redis pub/sub kyu? Seedha sockets pe broadcast kyu nahi?
+### Why Redis pub/sub? Why not broadcast directly to sockets?
 
-**Ye system design ka asli sawaal hai:**
+**This is a real system design question:**
 
-> "Ek server ho to seedha broadcast kaafi hai. Par production me 2-3 uvicorn workers chalte hain, aur **har worker ke paas apne alag sockets hote hain**.
+> "If there were one server, direct broadcast would suffice. But in production, 2-3 uvicorn workers run, and **each worker has its own separate sockets**.
 >
-> Maan lo User A ka lock Worker 1 pe process hua, aur User B ka socket Worker 2 pe hai. Worker 1 sirf apne local sockets ko batayega to User B ko kabhi pata hi nahi chalega.
+> Suppose User A's lock is processed on Worker 1, and User B's socket is on Worker 2. If Worker 1 only tells its local sockets, User B will never know.
 >
-> Redis message bus ban jata hai — har worker publish bhi karta hai aur subscribe bhi. Aur Redis pehle se stack me tha, koi nayi service nahi lagi."
+> Redis becomes the message bus — every worker publishes and subscribes. And Redis was already in the stack, so no new service was added."
 
-### Message drop ho jaye to?
+### What if a message drops?
 
-> "Redis pub/sub **at-most-once** hai — koi persistence nahi, koi replay nahi. Message drop ho sakta hai.
+> "Redis pub/sub is **at-most-once** — no persistence, no replay. Messages can drop.
 >
-> Isliye maine WebSocket ko **optimization** rakha hai, source of truth nahi. Reconnect hone par frontend poori seat list dobara fetch karta hai. Aur booking khud kabhi WebSocket pe depend nahi karti — wo hamesha HTTP request se hoti hai jisme teeno safety layers hain.
+> That's why I kept WebSockets as an **optimization**, not the source of truth. Upon reconnecting, the frontend fetches the entire seat list again. And booking itself never depends on WebSockets — it's always an HTTP request with all three safety layers.
 >
-> Agar mujhe guaranteed delivery chahiye hoti — jaise payment events — tab Kafka ya Redis Streams lagta."
+> If I needed guaranteed delivery — like for payment events — I would use Kafka or Redis Streams."
 
-### Broadcast fail ho jaye to booking ka kya?
+### What if the broadcast fails, but the booking succeeds?
 
-> "Booking ho jayegi. Mera `publish()` exception swallow karta hai aur sirf warning log karta hai. Real-time update **nice-to-have** hai, booking **must-have** hai. Ek notification fail hone se paisa lene wala flow nahi tootna chahiye."
+> "The booking will succeed. My `publish()` swallows exceptions and only logs a warning. Real-time updates are **nice-to-have**, booking is **must-have**. A notification failure shouldn't break the payment flow."
 
-### Connection toot jaye to?
+### What if the connection breaks?
 
-> "Frontend hook me **exponential backoff** hai — 1s, 2s, 4s, 8s, max 15s. Fixed 1-second retry rakhta to server down hone par 100 clients har second hammer karte aur wo uthne hi na paata. Successful connect pe counter reset ho jata hai.
+> "The frontend hook has **exponential backoff** — 1s, 2s, 4s, 8s, max 15s. If I kept a fixed 1-second retry, 100 clients would hammer the server every second if it went down, and it would never recover. The counter resets on a successful connection.
 >
-> Reconnect ke baad poora state dobara fetch hota hai, taki disconnect ke dauraan chhoote hue messages ki bharpai ho jaye."
+> After reconnecting, the full state is fetched again to compensate for messages missed during the disconnect."
 
-### WebSocket authenticate kaise kiya?
+### How did you authenticate WebSockets?
 
-> "Access token query param me — `?token=...`. Header se nahi, kyunki **browser ka WebSocket API custom headers bhejne hi nahi deta**.
+> "Access token in the query param — `?token=...`. Not in headers, because **the browser's WebSocket API doesn't allow sending custom headers**.
 >
-> Trade-off ye hai ki URL server logs me aa sakta hai. Isliye wahan sirf short-lived access token bhejta hoon, 30 minute wala — refresh token kabhi nahi. Token galat ho to close code 1008 ke saath connection band."
+> The trade-off is that the URL can appear in server logs. That's why I only send a short-lived access token, 30 minutes — never a refresh token. If the token is invalid, the connection closes with code 1008."
 
 ---
 
 ## 6. Auth
 
-### Token kahan store karte ho? (ye zaroor poocha jayega)
+### Where do you store the token? (this will definitely be asked)
 
-> "Access token React ki **memory me** — localStorage me bilkul nahi. Refresh token **httpOnly cookie** me.
+> "Access token in React **memory** — never in localStorage. Refresh token in an **httpOnly cookie**.
 >
-> localStorage ko koi bhi JavaScript padh sakta hai — koi XSS, koi npm package, koi browser extension. httpOnly cookie JS se readable hi nahi hoti.
+> Anyone can read localStorage via JavaScript — XSS, npm packages, browser extensions. httpOnly cookies are not readable by JS.
 >
-> Par sab kuch cookie se bhi nahi karta, kyunki cookie har request me apne aap jaati hai — wo CSRF ka darwaza kholta hai. Isliye **asli kaam Authorization header karta hai** (jo CSRF me automatically nahi jata), aur cookie sirf naya access token lene ke liye use hoti hai, `path=/api/auth` aur `SameSite=Lax` ke saath."
+> But I don't do everything via cookies, because cookies are sent automatically with every request — that opens the door to CSRF. That's why the **Authorization header does the real work** (which isn't sent automatically in CSRF), and the cookie is only used to get a new access token, with `path=/api/auth` and `SameSite=Lax`."
 
-### Reload pe access token chala jata hai, phir?
+### What happens to the access token on reload?
 
-> "Wahi to chahiye. App mount hote hi ek `/refresh` maarti hai — cookie valid hui to session turant wapas, user ko pata bhi nahi chalta.
+> "That's exactly the point. As soon as the app mounts, it hits `/refresh` — if the cookie is valid, the session is restored immediately; the user doesn't even notice.
 >
-> Yahi mechanism Google login me bhi kaam aata hai: backend cookie set karke frontend pe redirect kar deta hai, aur mount-refresh session bana deta hai. **Token kabhi URL me nahi jata.**"
+> This same mechanism works for Google login: the backend sets the cookie and redirects to the frontend, and the mount-refresh creates the session. **The token never goes into the URL.**"
 
-### JWT stateless hai — logout kaise kaam karta hai?
+### JWT is stateless — how does logout work?
 
-**Ye tez sawaal hai. Zyadatar candidates yahan atak jaate hain.**
+**This is a sharp question. Most candidates get stuck here.**
 
-> "Sahi pakda — plain JWT me logout ka koi matlab hi nahi hota, token expiry tak zinda rehta hai.
+> "You're right — in plain JWT, logout has no meaning; the token stays alive until expiry.
 >
-> Isliye har refresh token me ek `jti` hai jo **Redis me whitelist** hoti hai, token ki expiry ke barabar TTL ke saath. Logout us key ko delete kar deta hai — token turant bekaar, bhale uski JWT expiry 7 din baaki ho.
+> That's why every refresh token has a `jti` that is **whitelisted in Redis**, with a TTL equal to the token's expiry. Logout deletes that key — the token becomes useless immediately, even if 7 days remain on the JWT expiry.
 >
-> Access token phir bhi 30 minute tak technically valid rahega. Isiliye maine use short rakha hai. Har request pe DB check karta to JWT ka stateless faayda hi khatam ho jata."
+> The access token will still technically be valid for 30 minutes. That's why I kept it short. If I checked the DB on every request, the stateless benefit of JWT would be gone."
 
-### Refresh token rotation kya hai?
+### What is refresh token rotation?
 
-> "Har `/refresh` call pe purana token revoke hota hai aur naya milta hai.
+> "Every `/refresh` call revokes the old token and provides a new one.
 >
-> Faayda: token chori ho jaye aur attacker use kare, to asli user ka token invalid ho jayega aur uska logout ho jayega. **Chori pakdi jaati hai** — chupchap chalti nahi rehti."
+> Benefit: if a token is stolen and the attacker uses it, the real user's token becomes invalid and they are logged out. **The theft is detected** — it doesn't just keep working."
 
-### bcrypt kyu, SHA256 kyu nahi?
+### Why bcrypt, not SHA256?
 
-> "Kyunki bcrypt **jaan-boojh ke dheema** hai — ~100ms. SHA256 fast hai, aur passwords ke liye fast hona hi problem hai: attacker ek second me crores guesses kar leta. bcrypt pe wahi attack practically namumkin ho jata hai. Salt bhi apne aap andar aa jata hai.
+> "Because bcrypt is **intentionally slow** — ~100ms. SHA256 is fast, and for passwords, speed is the problem: an attacker can make crores of guesses in a second. With bcrypt, that attack becomes practically impossible. Salt is also handled internally.
 >
-> Aur ye slowness ne mujhe load test me kaata bhi — us kahani pe aage aata hoon."
+> And this slowness actually bit me during the load test — I'll get to that story later."
 
-### Google OAuth me Authorization Code flow kyu?
+### Why Authorization Code flow for Google OAuth?
 
-> "Do wajah:
+> "Two reasons:
 >
-> Purana **Implicit flow** token seedha URL me deta tha — wo browser history aur server logs me chhap jata.
+> The old **Implicit flow** put the token directly in the URL — it would be printed in browser history and server logs.
 >
-> Aur **frontend-only OAuth** me `client_secret` browser me chala jata, jahan koi bhi use padh sakta hai. Authorization Code flow me code ka exchange **server-to-server** hota hai — secret kabhi browser tak pahunchta hi nahi.
+> And in **frontend-only OAuth**, the `client_secret` would go to the browser, where anyone could read it. In Authorization Code flow, the exchange of the code is **server-to-server** — the secret never reaches the browser.
 >
-> `state` parameter bhi hai CSRF ke liye — random string Redis me rakhta hoon, Google wahi wapas bhejta hai, match na kare to reject."
+> There is also a `state` parameter for CSRF — I keep a random string in Redis, Google sends it back, if it doesn't match, I reject it."
 
-### Google user ka email badal gaya to?
+### What if the Google user's email changes?
 
-> "Isiliye maine match **`google_id` (sub claim) pe** kiya hai, email pe nahi. Email badal sakta hai, `sub` kabhi nahi badalta.
+> "That's why I match on **`google_id` (sub claim)**, not email. Email can change, `sub` never changes.
 >
-> Aur agar us email se password wala account pehle se hai, to mai use **link** kar deta hoon — duplicate account nahi banata."
+> And if an account with that email already exists with a password, I **link** them — I don't create a duplicate account."
 
 ---
 
-## 7. ⭐ Load testing aur teen bugs — yahan sabse zyada number hain
+## 7. ⭐ Load testing and three bugs — this is where the most points are
 
-> Ye tumhara sabse strong section hai. Zyadatar candidates ke paas load test hai hi nahi, aur jinke paas hai unhone usse **bug nahi pakda**.
+> This is your strongest section. Most candidates don't have a load test, and those who do haven't **found bugs** with it.
 
-### Test kaise kiya?
+### How did you test?
 
-> "Locust se do scenarios. Ek flash sale — 200 concurrent users, sab ek hi seat pe. Dusra realistic browsing — 50 users grid dekh rahe hain aur kabhi-kabhi book kar rahe hain.
+> "Two scenarios with Locust. One flash sale — 200 concurrent users, all on the same seat. The second, realistic browsing — 50 users viewing the grid and booking occasionally.
 >
-> Par Locust ka 'zero failures' mere liye kaafi nahi tha. Wo dono requests ko 201 de sakta hai aur dono ko success gin sakta hai. Isliye maine ek `verify_integrity.py` likha jo test ke baad **database** se poochta hai — kya kisi seat ki do confirmed bookings hain, kya seat status aur bookings match karte hain.
+> But Locust's 'zero failures' wasn't enough for me. It could return 201 for both requests and count both as success. That's why I wrote `verify_integrity.py` which asks the **database** after the test — are there two confirmed bookings for any seat, do seat status and bookings match?
 >
-> Result: 8,154 requests, zero failures, aur database me exactly ek booking."
+> Result: 8,154 requests, zero failures, and exactly one booking in the database."
 
-### Load test se koi bug mila?
+### Did you find any bugs via load test?
 
-**Enthusiasm se bolo. Bug milna achhi baat hai.**
+**Say this with enthusiasm. Finding bugs is a good thing.**
 
-> "Teen mile, aur teeno alag-alag kism ke the."
+> "I found three, and all three were of different types."
 
 #### Bug 1 — Lost update race
 
-> "`lock_seat` ka DB update bina status guard ke tha. Sequence ye tha:
+> "The `lock_seat` DB update lacked a status guard. The sequence was:
 >
-> B ne seat padhi (A ke lock me thi), check pass ho gaya. A ne beech me book kar li — status `booked`, Redis lock release. B ko ab wo free Redis lock mil gaya, aur usne DB me `status = locked` likh diya — **`booked` ko overwrite kar diya**.
+> B read the seat (it was in A's lock), the check passed. A booked it in the meantime — status `booked`, Redis lock released. B now got that free Redis lock, and wrote `status = locked` in the DB — **overwriting `booked`**.
 >
-> Nateeja: ek confirmed booking thi, par seat booked dikhti hi nahi thi.
+> Result: there was a confirmed booking, but the seat didn't appear booked.
 >
-> **20-request test me ye kabhi nahi pakda gaya.** 500 users pe hi wo timing window khuli. Fix wahi guarded-update pattern se — `WHERE status IN ('available','locked')`, aur `rowcount 0` aaye to Redis lock wapas chhod ke 409."
+> **This was never caught in the 20-request test.** That timing window only opened at 500 users. Fixed with the guarded-update pattern — `WHERE status IN ('available','locked')`, and if `rowcount 0` comes, release the Redis lock and return 409."
 
-#### Bug 2 — bcrypt transaction khuli rakhta tha
+#### Bug 2 — bcrypt kept the transaction open
 
-> "Auth add karne ke baad load test phat gaya — 58 failures, p99 21 second, `QueuePool limit reached`.
+> "After adding auth, the load test exploded — 58 failures, p99 21 seconds, `QueuePool limit reached`.
 >
-> Guess karne ke bajaye maine Postgres se poocha:
+> Instead of guessing, I asked Postgres:
 >
 > ```sql
 > SELECT count(*) FILTER (WHERE state='idle in transaction'), count(*) FILTER (WHERE state='active')
 > FROM pg_stat_activity WHERE datname='seatpulse';
 > ```
 >
-> Jawab aaya: **50 me se 50 connections 'idle in transaction', sirf 1 active.** Matlab kaam koi nahi kar raha tha, sab connections pakde baithe the.
+> The answer: **50 out of 50 connections were 'idle in transaction', only 1 active.** Meaning no one was doing work, everyone was holding connections.
 >
-> Wajah: SQLAlchemy pehli query pe transaction khol deta hai aur commit tak khuli rehti hai. Login me user read karta hoon, phir 100ms bcrypt chalta hai — utni der connection block. Fix: read ke turant baad `db.commit()`, bcrypt se pehle."
+> Reason: SQLAlchemy opens a transaction on the first query and keeps it open until commit. In login, I read the user, then bcrypt runs for 100ms — the connection is blocked the whole time. Fix: `db.commit()` immediately after the read, before bcrypt."
 
 #### Bug 3 — In-flight requests > connection pool
 
-**Ye sabse achha wala hai — poora sunao.**
+**This is the best one — tell the whole story.**
 
-> "Pool badha ke bhi problem gayi nahi. Root cause ye tha:
+> "Increasing the pool didn't solve the problem. The root cause was:
 >
-> Mere routes sync hain, aur `get_db` request ke **shuru me** connection pakad leta hai. Phir request threadpool slot ka wait karti hai — aur us poore intezaar me connection pakda hi rehta hai. Isliye held connections threadpool size se bhi zyada ho gaye.
+> My routes are sync, and `get_db` grabs a connection at the **start** of the request. Then the request waits for a threadpool slot — and it holds the connection during that entire wait. That's why held connections exceeded the threadpool size.
 >
-> Aur pool badhana koi fix nahi hai — in-flight requests **unbounded** hain. Kitna bhi pool rakho, load badhne pe phir phategi.
+> And increasing the pool isn't a fix — in-flight requests are **unbounded**. No matter how big the pool, it will break again under load.
 >
-> To maine **admission control** lagaya — ek semaphore middleware jo pool se kam requests andar aane deta hai. Ab request connection pakadne se pehle darwaze pe rukti hai.
+> So I added **admission control** — a semaphore middleware that allows fewer requests than the pool size. Now the request stops at the door before grabbing a connection.
 >
-> Invariant साफ hai: `MAX_CONCURRENT_REQUESTS (30) < pool_size + max_overflow (40)`.
+> The invariant is clear: `MAX_CONCURRENT_REQUESTS (30) < pool_size + max_overflow (40)`.
 >
-> Result: **1,250 requests aur 58 failures se 8,154 requests aur zero failures.** Throughput 30 se 137 rps, p99 21 second se 1.4 second."
+> Result: **from 1,250 requests and 58 failures to 8,154 requests and zero failures.** Throughput from 30 to 137 rps, p99 from 21 seconds to 1.4 seconds."
 
-**Follow-up "p50 to badh gaya (470ms → 1000ms)?":**
-> "Haan, kyunki ab requests queue me lagti hain. Par pehle wala 470ms **jhootha** tha — usme 58 requests fail ho rahi thi aur p99 21 second tha. Ab har request poori hoti hai. **Slow response 500 error se hazaar guna behtar hai.**"
+**Follow-up "but p50 increased (470ms → 1000ms)?":**
+> "Yes, because requests now queue up. But the previous 470ms was **false** — 58 requests were failing and the p99 was 21 seconds. Now every request completes. **A slow response is a thousand times better than a 500 error.**"
 
-### Ye teen bug ek line me kya sikhate hain?
+### What do these three bugs teach you in one line?
 
-> "Ki correctness ko **maapna** padta hai, maan nahi sakte. Teeno bug ka code padh ke pata nahi chal sakta tha — teeno load ke neeche hi dikhe."
+> "That correctness must be **measured**, you can't assume it. None of these three bugs could be found by reading the code — all three only appeared under load."
 
 ---
 
-## 8. Scaling — "10x traffic aaye to?"
+## 8. Scaling — "what if 10x traffic comes?"
 
-### Ab scale kaise karoge?
+### How will you scale now?
 
-> "Order me:
+> "In this order:
 >
-> **1. Multiple workers** — abhi ek uvicorn worker hai. `--workers 4` pe jaunga. Mera design pehle se ready hai: Redis lock cross-worker kaam karta hai, aur WebSocket broadcast Redis pub/sub se hota hai — ye dono maine isiliye aise banaye.
+> **1. Multiple workers** — currently there is one uvicorn worker. I'll go to `--workers 4`. My design is already ready: Redis lock works cross-worker, and WebSocket broadcast uses Redis pub/sub — I built both that way for this reason.
 >
-> **2. Async database driver** — sync SQLAlchemy meri sabse badi limitation hai. `asyncpg` pe jaunga, tab ek worker kahin zyada concurrency handle karega.
+> **2. Async database driver** — sync SQLAlchemy is my biggest limitation. I'll move to `asyncpg`, then one worker will handle much higher concurrency.
 >
-> **3. Read replicas** — seat grid padhna sabse zyada hone wala operation hai. Wo replica pe ja sakta hai, writes primary pe.
+> **3. Read replicas** — reading the seat grid is the most frequent operation. That can go to a replica, writes to the primary.
 >
-> **4. Queue** — flash sale me sabko turant jawab dene ke bajaye ek waiting room, jaisa Ticketmaster karta hai."
+> **4. Queue** — instead of giving everyone an immediate answer during a flash sale, a waiting room, like Ticketmaster does."
 
-### Ek seat pe 50,000 log aa jaayein to?
+### What if 50,000 people come for one seat?
 
-> "Ye alag problem hai. Us case me lock lena hi bekaar hai — 49,999 log ko 409 milega aur experience ghatiya hoga.
+> "That's a different problem. In that case, taking a lock is useless — 49,999 people will get a 409 and the experience will be terrible.
 >
-> Asli hal **waiting room** hai: users ko ek queue me daalo, aur unhe batches me booking window do. Ye Redis sorted set se ho sakta hai. Ye mere roadmap ke aage ka kaam hai, abhi banaya nahi hai."
+> The real solution is a **waiting room**: put users in a queue and give them booking windows in batches. That can be done with a Redis sorted set. That's work beyond my current roadmap, I haven't built it yet."
 
-### Do datacenter me chalana ho to?
+### What if you have to run in two datacenters?
 
-> "Tab Redis lock kaafi nahi hai — cross-region Redis me latency aur split-brain ka issue aata hai. Wahan seat inventory ko region-wise **shard** karna padta, ya Redlock jaisa algorithm lagta.
+> "Then Redis lock isn't enough — cross-region Redis has latency and split-brain issues. There, you have to **shard** seat inventory region-wise, or use an algorithm like Redlock.
 >
-> Par imaandari se — ye is project ka scale nahi hai. Ek region me ek Redis bilkul theek hai."
+> But honestly — this isn't the scale of this project. One Redis in one region is perfectly fine."
 
 ---
 
-## 9. Kamzoriyan — khud bata do
+## 9. Weaknesses — admit them yourself
 
-> ⭐ Ye counter-intuitive lagta hai par **sabse strong move** hai. Jo apni limitation khud jaanta hai, wo senior lagta hai.
+> ⭐ This seems counter-intuitive but is the **strongest move**. Someone who knows their own limitations sounds senior.
 
-### "Kya dobara alag karte?"
+### "What would you do differently?"
 
-> "Teen cheezein:
+> "Three things:
 >
-> **1. Sync ki jagah async.** Maine sync routes aur sync SQLAlchemy use kiya. Isi wajah se mujhe admission control lagana pada. `asyncpg` + async SQLAlchemy hota to ek worker kahin zyada handle karta.
+> **1. Async instead of sync.** I used sync routes and sync SQLAlchemy. That's why I had to add admission control. With `asyncpg` + async SQLAlchemy, one worker would handle much more.
 >
-> **2. Payment ke saath booking ka consistency.** Abhi booking me payment hai hi nahi — aur wo sirf ek missing feature nahi, ek missing *problem* hai. Detail agle section me.
+> **2. Consistency between booking and payment.** Currently, there is no payment in booking — and that's not just a missing feature, it's a missing *problem*. Details in the next section.
 >
-> **3. Seat model.** Abhi har seat ek row hai. General admission events ke liye — jahan sirf count matter karta hai, seat number nahi — ye faltu hai. Wahan ek counter chahiye, 5000 rows nahi."
+> **3. Seat model.** Currently, every seat is a row. For general admission events — where only the count matters, not the seat number — this is wasteful. There, you need a counter, not 5,000 rows."
 
-### "Kya nahi kiya jo karna chahiye tha?"
+### "What didn't you do that you should have?"
 
-> "**Payments.** Booking payment ke bina aadhi hai — aur wo sirf ek missing feature nahi, ek missing *problem* hai. Jaise hi paisa aata hai, poora consistency ka sawaal khulta hai jo abhi mere project me nahi hai.
+> "**Payments.** Booking is incomplete without payment — and that's not just a missing feature, it's a missing *problem*. As soon as money enters, the whole consistency question opens up, which isn't in my project yet.
 >
-> Wo mera agla phase hai, aur mujhe pata hai usme kya karna padega — agle sawaal me bata deta hoon."
+> That's my next phase, and I know what I'll have to do — I can explain it in the next question."
 
-Aur agar wo aage nahi poochta, **tum khud le aao**. Ye section tumhare paas tayyar hona chahiye.
+And if they don't ask further, **bring it up yourself**. You should have this section ready.
 
 ---
 
-## 10. Payments — "isme add karte to kaise karte?"
+## 10. Payments — "how would you add it?"
 
-> ⚠️ Ye abhi **bana nahi hai**. Par ye sabse common follow-up hai ("aage kya?"), aur iska achha jawab dena ye dikhata hai ki tum feature nahi, **problem** sochte ho.
+> ⚠️ This is **not built yet**. But this is the most common follow-up ("what's next?"), and giving a good answer shows you think about **problems**, not features.
 >
-> Bolne ka tarika: "banaya nahi hai abhi, par design soch chuka hoon —" phir neeche wala.
+> How to say it: "haven't built it yet, but I've thought through the design —" then the following.
 
-### Asli problem gateway nahi hai
+### The real problem isn't the gateway
 
-> "Stripe ya Razorpay integrate karna docs padh ke koi bhi kar leta hai. Asli problem wo hai jo payments **majboori me** laate hain:
+> "Integrating Stripe or Razorpay is something anyone can do by reading the docs. The real problem is what payments **force** upon you:
 >
-> **Paisa kat gaya, par booking fail ho gayi.**
+> **Money was deducted, but the booking failed.**
 >
-> Ye classic **dual-write problem** hai — do systems, payment gateway aur mera database, dono ko consistent rakhna jab dono me se koi bhi kabhi bhi fail ho sakta hai."
+> This is the classic **dual-write problem** — keeping two systems, the payment gateway and my database, consistent when either can fail at any time."
 
-### Seat ka state machine badal jayega
+### The seat state machine will change
 
-> "Abhi flow hai: `available → locked → booked`, aur booked wahi API call pe hota hai.
+> "Currently the flow is: `available → locked → booked`, and booked happens in that same API call.
 >
-> Payments ke baad:
+> After payments:
 >
 > ```
 > available → locked → payment_pending → booked
@@ -432,775 +432,606 @@ Aur agar wo aage nahi poochta, **tum khud le aao**. Ye section tumhare paas tayy
 >                   (fail/timeout) → available
 > ```
 >
-> Seat **webhook aane tak** booked nahi hogi."
+> The seat won't be booked until the **webhook arrives**."
 
-### ⭐ Webhook source of truth, browser redirect nahi
+### ⭐ Webhook is the source of truth, not the browser redirect
 
-Ye is poore jawab ka sabse important hissa hai.
+This is the most important part of this entire answer.
 
-> "Payment ke baad gateway user ko mere site pe redirect karta hai. Us redirect par bharosa **nahi** kar sakta — do wajah:
+> "After payment, the gateway redirects the user to my site. You **cannot** trust that redirect — for two reasons:
 >
-> 1. User payment karke tab band kar de, to redirect aata hi nahi — par paisa kat chuka hai. Booking honi chahiye.
-> 2. Koi seedha wo redirect URL hit kar de, to bina paise ke booking ban jayegi.
+> 1. If the user closes the tab after paying, the redirect never arrives — but the money has been deducted. The booking must happen.
+> 2. If someone hits that redirect URL directly, a booking will be created without payment.
 >
-> Isliye asli confirmation **webhook** se aati hai — server-to-server, aur uska **signature verify** hota hai. Redirect sirf UI ke liye hai: 'thank you' page dikhane ke liye, decision lene ke liye nahi."
+> That's why the real confirmation comes from the **webhook** — server-to-server, and its **signature is verified**. The redirect is only for the UI: to show a 'thank you' page, not to make decisions."
 
-### Idempotency yahan aur zaroori ho jaati hai
+### Idempotency becomes even more important here
 
-> "Mere paas idempotency keys pehle se hain (Phase 9). Payments ke bina wo 'double-click se do booking na ho' tha.
+> "I already have idempotency keys (Phase 9). Without payments, that was 'don't create two bookings on a double-click'.
 >
-> Payments ke saath wahi cheez '**do baar paisa na kate**' ban jaati hai — same code, kahin zyada weight.
+> With payments, that becomes '**don't deduct money twice**' — same code, much higher stakes.
 >
-> Aur webhooks khud bhi **at-least-once** hote hain — gateway same event do baar bhej sakta hai agar pehla response miss ho jaye. To webhook handler ko bhi idempotent hona hi padta hai. Event id ko key bana ke wahi Redis wala pattern lagega."
+> And webhooks themselves are **at-least-once** — the gateway can send the same event twice if the first response is missed. So the webhook handler must also be idempotent. The same Redis pattern will apply, using the event ID as the key."
 
-### Card details kabhi apne server pe nahi
+### Card details never on my server
 
-> "Hosted checkout use karta — Stripe Checkout ya Payment Link. Card details mere backend ko chhuti hi nahi.
+> "I'd use hosted checkout — Stripe Checkout or Payment Links. Card details never touch my backend.
 >
-> Warna main **PCI-DSS scope** me aa jata, jo ek portfolio project ke liye bhi galat design hai — aur production me to compliance ka poora bojh aa jata."
+> Otherwise, I would fall under **PCI-DSS scope**, which is the wrong design even for a portfolio project — and in production, the entire burden of compliance would arrive."
 
-### Bina keys ke bhi project chalna chahiye
+### The project should run even without keys
 
-> "Interviewer mera repo clone karega to uske paas meri Stripe keys nahi hongi. Isliye `STRIPE_KEY` khali ho to ek 'Simulate payment' path dikhega jo wahi webhook internally fire karta hai.
+> "If the interviewer clones my repo, they won't have my Stripe keys. That's why if `STRIPE_KEY` is empty, a 'Simulate payment' path appears that fires the same webhook internally.
 >
-> Bilkul wahi pattern jo maine Google OAuth me use kiya — credentials na ho to button chhup jata hai, baaki sab chalta rehta hai."
+> The exact same pattern I used in Google OAuth — if credentials aren't there, the button hides, everything else keeps working."
 
-### Follow-ups jo aayenge
+### Follow-ups that will come
 
-| Sawaal | Jawab |
+| Question | Answer |
 |---|---|
-| "Webhook late aaya to?" | Seat `payment_pending` me apni TTL ke saath baithi rehti hai. TTL nikal gayi aur webhook nahi aaya to seat release, aur payment refund flow trigger. Warna ek failed payment seat hamesha ke liye block kar deta |
-| "Webhook do baar aaya to?" | Event id se idempotent — dusri baar wahi stored result, dobara kaam nahi |
-| "Webhook aaya hi nahi to?" | Gateway retry karta hai. Uske upar ek reconciliation job — pending payments ko gateway se poochh ke settle karna. Sirf webhook pe bharosa nahi |
-| "Refund kaise?" | Booking cancel → refund API → refund webhook aane par hi booking `refunded`. Wahi asymmetry: paisa hum bhejte hain, confirmation gateway deta hai |
-| "Ek transaction me dono kyu nahi?" | Kyunki gateway meri database transaction me nahi hai. External call ko DB transaction ke andar rakhna sabse aam galti hai — transaction network call jitni der khuli rehti hai |
+| "What if the webhook is late?" | The seat sits in `payment_pending` with its own TTL. If the TTL expires and no webhook arrives, release the seat, and trigger the refund flow. Otherwise, a failed payment would block the seat forever |
+| "What if the webhook arrives twice?" | Idempotent via event ID — the second time returns the same stored result, doesn't do work again |
+| "What if the webhook never arrives?" | The gateway retries. Above that, a reconciliation job — settle pending payments by asking the gateway. Never trust only the webhook |
+| "How to refund?" | Booking cancel → refund API → booking becomes `refunded` only when the refund webhook arrives. Same asymmetry: we send money, gateway gives confirmation |
+| "Why not both in one transaction?" | Because the gateway is not in my database transaction. Keeping an external call open inside a DB transaction is the most common mistake — the transaction stays open as long as the network call |
 
 
 ---
 
-## 11. Dynamic pricing — "quote ek waada hai"
+## 11. Dynamic pricing — "a quote is a promise"
 
-Ye section chhota lagta hai par **interview me bahut chalta hai**, kyunki
-isme ek aisa faisla hai jo zyada log miss kar dete hain.
+This section seems small but is **very popular in interviews**, because
+it contains a decision that most people miss.
 
-### "Dynamic pricing kaise kiya?"
+### "How did you do dynamic pricing?"
 
-> "Formula sabse boring hissa hai — `multiplier = 1 + (sold/total) x demand_factor`, ek `max_surge` cap ke saath. Do faisle interesting the.
+> "The formula is the most boring part — `multiplier = 1 + (sold/total) x demand_factor`, with a `max_surge` cap. Two decisions were interesting.
 >
-> **Pehla:** seat ka `price` column kabhi update nahi hota. Wo BASE hai, aur current price hamesha usse calculate hota hai.
+> **First:** the seat's `price` column never updates. That is the BASE, and the current price is always calculated from it.
 >
-> **Dusra:** jab user seat hold karta hai, tabhi uska price bhi lock ho jata hai."
+> **Second:** when a user holds a seat, their price is locked too."
 
-### ⭐ "Base price update karne me kya problem thi?"
+### ⭐ "What was the problem with updating the base price?"
 
-Ye wo sawaal hai jahan char alag wajah gina sakte ho — aur char wajah ek se
-kahin behtar sunai deti hai:
+This is the question where you can list four different reasons — and four reasons sound much better than one:
 
-> "Char cheezein tootti:
+> "Four things would break:
 >
-> 1. **History mit jati** — purani booking me ₹800 likha hai, seat pe ₹1400. 'Original price kya tha' ka jawab kahin nahi bachta.
-> 2. **Write amplification** — ek booking par 500 seats ka UPDATE. Flash sale me 500 bookings matlab 250,000 row updates.
-> 3. **Naya race condition** — do parallel bookings ab price update pe bhi ladtin. Maine ek nayi contention point paida kar di hoti.
-> 4. **Compounding** — `price x 1.1` baar-baar lagega to ₹800 → ₹880 → ₹968… wo formula ka matlab hi nahi tha.
+> 1. **History is erased** — the old booking says ₹800, the seat says ₹1400. There's no answer to 'what was the original price'.
+> 2. **Write amplification** — 500 UPDATEs for one booking. 500 bookings in a flash sale means 250,000 row updates.
+> 3. **New race condition** — two parallel bookings would now fight over the price update too. I would have created a new contention point.
+> 4. **Compounding** — `price x 1.1` applied repeatedly means ₹800 → ₹880 → ₹968… that wasn't the intent of the formula.
 >
-> Ab teen alag facts teen alag jagah hain: base price seat pe, multiplier calculated, aur jo actually charge hua wo booking pe."
+> Now three separate facts are in three separate places: base price on the seat, multiplier calculated, and what was actually charged on the booking."
 
-### ⭐⭐ "Checkout ke beech price badal gaya to?"
+### ⭐⭐ "What if the price changes during checkout?"
 
-**Ye poore feature ka sabse achha sawaal hai. Isko tayyar rakho.**
+**This is the best question of this entire feature. Keep it ready.**
 
-> "Ye maine feature banane se pehle socha, kyunki ye correctness ka sawaal hai, UX ka nahi.
+> "I thought about this before building the feature, because it's a question of correctness, not UX.
 >
-> User ₹1000 dekhta hai, seat hold karta hai, payment page pe jata hai. Beech me 4 seats aur bik gayi. Agar checkout ₹1400 charge kar de — to maine user se chup-chaap zyada paisa liya. Wo bug nahi, wo dhokha hai.
+> The user sees ₹1000, holds the seat, goes to the payment page. 4 more seats sold in the meantime. If checkout charges ₹1400 — I've quietly taken more money from the user. That's not a bug, that's deception.
 >
-> Solution: quote **hold ke saath lock** ho jata hai. `seats.held_price` column me jo price dikhaya tha wahi likh dete hain. Hold chhutne ya expire hone par NULL ho jata hai."
+> Solution: the quote is **locked with the hold**. We write the price shown to the `seats.held_price` column. It becomes NULL when the hold is released or expires."
 
-**Follow-up jo aayega — "column kyu, calculate kyu nahi?"**
+**Follow-up — "why a column, why not calculate?"**
 
-> "Kyunki 'us waqt price kya tha' ko baad me compute kiya hi nahi ja sakta — demand tab tak badal chuki hoti hai. Quote ek waada hai, aur waade store karne padte hain, derive nahi hote."
+> "Because 'what was the price at that moment' cannot be computed later — demand has changed by then. A quote is a promise, and promises must be stored, not derived."
 
-**Follow-up 2 — "user hold-release-hold karke sasta price pakad le to?"**
+**Follow-up 2 — "what if the user holds-releases-holds to catch a cheaper price?"**
 
-> "Isliye release par `held_price` NULL kar dete hain, aur lazy expiry cleanup me bhi. Naya hold matlab naya price. Ye maine specifically test kiya hai — `test_releasing_a_hold_drops_the_locked_price`."
+> "That's why `held_price` is set to NULL on release, and in lazy expiry cleanup too. A new hold means a new price. I specifically tested this — `test_releasing_a_hold_drops_the_locked_price`."
 
-### "Payments me isse related koi bug mila?"
+### "Did you find any bugs related to this in payments?"
 
-Ye khud bata do — self-caught bug batana bahut strong lagta hai:
+Admit it yourself — admitting a self-caught bug sounds very strong:
 
-> "Ek chhupi hui galti thi. Maine pehle `price_now()` ko do baar call kiya tha — ek baar payment row banane me, ek baar gateway session banane me. Beech me hold expire ho sakta tha, aur tab gateway ₹1400 charge karta jabki mere DB me ₹1000 likha hota.
+> "There was a hidden error. I called `price_now()` twice — once to create the payment row, once to create the gateway session. The hold could expire in between, and the gateway would charge ₹1400 while my DB said ₹1000.
 >
-> Wo mismatch reconciliation job me hi pakda jata — tab tak user ka paisa kat chuka hota. Ab ek hi baar quote nikalta hai aur dono jagah wahi jata."
+> That mismatch would only be caught by the reconciliation job — by then the user's money would have been deducted. Now the quote is extracted once and the same value goes to both places."
 
-### "WebSocket pe price update kaise bheja?"
+### "How did you send price updates via WebSockets?"
 
-> "Seedha rasta hota har seat ka naya price broadcast karna — par 500 seats wale event me ek booking = 500 messages. Flash sale me wo khud ek DoS hai.
+> "The straightforward path is broadcasting the new price for every seat — but for an event with 500 seats, one booking = 500 messages. In a flash sale, that's a DoS attack.
 >
-> Asli baat ye hai ki multiplier **poore event ka ek hi hai**, aur base price frontend ke paas pehle se hai. To ek event-level `pricing_update` message bhejta hoon. Ek message vs 500, result same."
+> The real point is that the multiplier is **the same for the entire event**, and the base price is already on the frontend. So I send an event-level `pricing_update` message. One message vs 500, same result."
 
-**Follow-up — "phir frontend base x multiplier kar leta na?"**
+**Follow-up — "wouldn't the frontend just do base x multiplier?"**
 
-Yahan ek achhi detail hai jo interviewer ko surprise karti hai:
+Here is a nice detail that surprises the interviewer:
 
-> "Maine try kiya tha, par nahi rakha. JavaScript ka `Math.round(100.5)` 101 deta hai, Python ka `round(100.5)` 100 — banker's rounding. Ties par dono alag jawab dete hain.
+> "I tried, but didn't keep it. JavaScript's `Math.round(100.5)` gives 101, Python's `round(100.5)` gives 100 — banker's rounding. They give different answers on ties.
 >
-> Matlab UI ₹1010 dikhata aur server ₹1000 charge karta. ₹10 chhota lagta hai, par is feature ki poori buniyaad hi 'jo dikha wahi kata' hai — wahi toot jata.
+> Meaning the UI shows ₹1010 and the server charges ₹1000. ₹10 sounds small, but the entire foundation of this feature is 'what you see is what you pay' — that breaks.
 >
-> To banner turant update hota hai (wahi user dekhta hai), aur exact prices 400ms debounce ke baad server se aate hain."
+> So the banner updates immediately (what the user sees), and exact prices come from the server after a 400ms debounce."
 
-### "UI me urgency kaise dikhayi?"
+### "How did you show urgency in the UI?"
 
-> "Sirf jab sach ho. 'N seats left at this price' tabhi dikhta hai jab server ne actually calculate kiya ho ki N seats me price badhega — aur wo loop chala kar nikalta hai, formula se andaza nahi lagata.
+> "Only when it's true. 'N seats left at this price' only appears when the server has actually calculated that the price will increase in N seats — and it runs a loop to find that, not a guess from a formula.
 >
-> Agar price abhi nahi badhne wala, ya max surge aa chuka hai, to wo line **dikhati hi nahi**. Jhoothi urgency banane se behtar khaali jagah hai. Wahi 'price locked' badge ke saath — wo tabhi aata hai jab market price actually locked price se upar ho."
+> If the price isn't going to change, or max surge has been reached, that line **doesn't appear at all**. Empty space is better than fake urgency. Along with the 'price locked' badge — that only appears when the market price is actually above the locked price."
 
 ### Rapid fire
 
-| Sawaal | Ek-line jawab |
+| Question | One-line answer |
 |---|---|
-| Default on ya off? | Off. Free community meetup pe surge bhaddha lagta hai — organizer khud on kare |
-| `max_surge` kyu chahiye? | Bina cap ke pricing bekaboo lagti hai. Aur `demand_factor` ka upper bound bhi hai — galti se 50 type ho jaana bahut mehnga |
-| Organizer base price edit kar sakta hai? | Nahi. Wo purani bookings ko jhootha bana deta. Surge knobs edit kar sakta hai — wo sirf aage ki bookings pe lagte hain |
-| Multiplier cache kyu nahi kiya? | 2 count queries hain, per-seat nahi. Aur galat cached price dikhana us saving se kahin mehnga hai |
-| Time-based surge kyu nahi? | Bina asli historical data ke wo sirf random constants hote. Jo nahi maapa, use claim nahi karta |
+| Default on or off? | Off. Surge feels predatory for free community meetups — the organizer turns it on |
+| Why `max_surge`? | Without a cap, pricing feels out of control. And there's an upper bound on `demand_factor` — typing 50 by mistake is very expensive |
+| Can the organizer edit the base price? | No. It would make old bookings false. They can edit surge knobs — those only apply to future bookings |
+| Why not cache the multiplier? | 2 count queries, not per-seat. And showing the wrong cached price is more expensive than that saving |
+| Why not time-based surge? | Without real historical data, those are just random constants. I don't claim what I haven't measured |
 
 ---
 
-## 12. ⭐ Locking benchmark — "maine measure kiya, aur main galat tha"
+## 12. ⭐ Locking benchmark — "I measured, and I was wrong"
 
-Ye section interview me **sabse zyada** kaam aayega, kyunki isme ek aisi
-baat hai jo bahut kam log bolte hain: *mera andaza galat nikla.*
+This section is **most useful** in an interview, because
+it contains something very few people say: *my guess was wrong.*
 
-### "`SELECT ... FOR UPDATE` kyu nahi use kiya?"
+### "Why didn't you use `SELECT ... FOR UPDATE`?"
 
-Purana jawab theory tha. Ab numbers hain:
+The old answer was theory. Now there are numbers:
 
-> "Maine dono implement kiye aur same load pe chalaye. Teen cheezein mili,
-> aur teeno interesting hain.
+> "I implemented both and ran them under the same load. Three things were found,
+> and all three are interesting.
 >
-> **Pehli:** Redis layer on ho to ye sawaal hi bekaar ho jata hai. 1433
-> contended requests me se sirf **1** database tak pahunchi — baaki 1432
-> Redis lock pe hi ruk gayi. Production config me DB strategy ka code
-> chalta hi nahi hai.
+> **First:** if the Redis layer is on, this question is moot. Out of 1433
+> contended requests, only **1** reached the database — the rest 1432
+> were stopped at the Redis lock. The DB strategy code doesn't even run in production config.
 >
-> **Doosri:** Redis hata ke maapa to pessimistic **5-7% tez** nikla, dhima
-> nahi. Ye mere andaze ke ulta tha.
+> **Second:** when I measured without Redis, pessimistic was **5-7% faster**,
+> not slower. This was contrary to my guess.
 >
-> **Teesri, aur asli jawab:** ek booking request **33 SQL statements** hai.
-> Locking strategy unme se **ek** badalti hai. Isliye farak dikhna hi nahi
-> tha — jo 5% dikha wo run-to-run variance jitna hi hai."
+> **Third, and the real answer:** a booking request is **33 SQL statements**.
+> The locking strategy changes **one** of them. That's why the difference
+> wasn't visible — the 5% difference is just run-to-run variance."
 
-### "Pessimistic tez kaise ho gaya?"
+### "How did pessimistic become faster?"
 
-Ye follow-up zaroor aayega. Jawab code me hai:
+This follow-up will definitely come. The answer is in the code:
 
-> "Seat book hone ke baad aane wale losers ke liye:
+> "For the losers arriving after the seat is booked:
 >
-> - **optimistic** — `UPDATE ... WHERE version=?` chalta hai, 0 rows match
->   karte hain, phir rollback. Write statement fir bhi chali.
-> - **pessimistic** — `SELECT ... FOR UPDATE` (lock free hai, turant
->   milta hai), status check karo, `booked` mila, return. **Koi UPDATE hi
->   nahi.**
+> - **optimistic** — `UPDATE ... WHERE version=?` runs, 0 rows match,
+>   then rollback. The write statement still ran.
+> - **pessimistic** — `SELECT ... FOR UPDATE` (lock is free, acquired
+>   immediately), check status, found `booked`, return. **No UPDATE at all.**
 >
-> Yaani losers ke liye pessimistic path me kam kaam hota hai. Blocking
-> hoti hi nahi, kyunki jeetne wala millisecond me commit kar deta hai."
+> Meaning for losers, there is less work in the pessimistic path. There is no blocking, because the winner commits in milliseconds."
 
-### ⭐⭐ "To phir optimistic kyu rakha?"
+### ⭐⭐ "So why keep optimistic?"
 
-**Ye is poore section ka sabse important jawab hai.** Yahan galti ye hoti
-hai ki log numbers ko ghuma ke apna faisla sahi sabit karne lagte hain.
-Ussey ulta karo:
+**This is the most important answer of this entire section.** The mistake here is to twist the numbers to prove your decision right. Do the opposite:
 
-> "Speed ki wajah se nahi — numbers ne speed ka farak dikhaya hi nahi.
-> **Failure mode** ki wajah se.
+> "Not because of speed — the numbers didn't show a speed difference.
+> Because of the **failure mode**.
 >
-> Optimistic me haarne wali request turant nikal jati hai aur apna DB
-> connection chhod deti hai. Pessimistic me wo qataar me khadi rehti hai
-> aur connection **pakde** rehti hai. Pool me 40 connections hain.
+> In optimistic, the losing request exits immediately and releases its DB connection. In pessimistic, it stands in line and **holds** the connection. There are 40 connections in the pool.
 >
-> Ye mere benchmark me nahi dikha, aur main dikhane ka daawa bhi nahi
-> karta — kyunki jeetne wali transaction ~2ms me commit kar deti hai, to
-> koi rukta hi nahi. Pessimistic ka kharcha us waqt ke saath badhta hai
-> jitni der lock pakda jata hai.
+> This didn't show up in my benchmark, and I don't claim it would — because the winning transaction commits in ~2ms, so no one waits. The cost of pessimistic grows with the time the lock is held.
 >
-> Khatra ye hai ki wo waqt badh sakta hai — ek external call, ek slow
-> query, ek badi report transaction me aa gayi. Tab pessimistic seedha
-> pool exhaustion me badal jayega, jabki optimistic ka behaviour waisa hi
-> rahega.
+> The danger is that time can grow — an external call, a slow query, a large report in the transaction. Then pessimistic turns directly into pool exhaustion, while optimistic's behavior remains the same.
 >
-> Ek line me: maine optimistic isliye nahi choose kiya ki wo aaj tez hai —
-> wo nahi hai. Isliye choose kiya ki wo kal bura nahi hoga."
+> In one line: I didn't choose optimistic because it's faster today — it isn't. I chose it because it won't be bad tomorrow."
 
-### "Benchmark me koi bug mila?"
+### "Did you find any bugs in the benchmark?"
 
-Ye khud bata do — ye sabse strong cheez hai jo is section me hai:
+Admit it yourself — this is the strongest thing in this section:
 
-> "Haan, aur usne mujhe poori tarah galat conclusion likhne se bachaya.
+> "Yes, and it saved me from writing a completely wrong conclusion.
 >
-> Pehle micro-benchmark run me maine rate limit buckets clear karne ka
-> code likha tha galat prefix ke saath — `ratelimit:*`, jabki asli prefix
-> `rl:` hai. Buckets clear hote hi nahi the, aur chauthe round se har
-> request 429 khaane lagti thi. Wo 429 latency numbers me ghul rahe the.
+> In the first micro-benchmark run, I wrote code to clear rate limit buckets with the wrong prefix — `ratelimit:*`, while the real prefix is `rl:`. The buckets never cleared, and from the fourth round, every request started getting 429s. Those 429 latencies were blending into the numbers.
 >
-> Isse mere `errors` column ne pakda — jo maine sirf sanity ke liye rakha
-> tha. Agar main bas p50/p99 chhapta, to numbers **bilkul theek dikhte**
-> aur main us par doc likh deta.
+> My `errors` column caught this — which I kept only for sanity. If I had just printed p50/p99, the numbers would have **looked perfectly fine** and I would have written a doc on it.
 >
-> Sabak: benchmark me hamesha ek invariant check rakho — 'har round me
-> theek ek booking jeetni chahiye' — sirf timing mat chhapo."
+> Lesson: always keep an invariant check in benchmarks — 'exactly one booking should win in every round' — don't just print timings."
 
-### "Aur kuch mila?"
+### "Anything else found?"
 
-> "Query counting ne ek asli inefficiency pakdi jiska locking se koi lena
-> dena nahi tha: `pricing_state()` har booking me **do baar** chalta hai —
-> ek baar price nikalne me, ek baar WebSocket broadcast me. Matlab har
-> booking me 6 faaltu queries.
+> "Query counting caught a real inefficiency that had nothing to do with locking: `pricing_state()` runs **twice** in every booking — once to extract the price, once for the WebSocket broadcast. Meaning 6 useless queries per booking.
 >
-> Maine wo abhi fix nahi kiya kyunki fix karne se saare benchmark numbers
-> badal jate. Roadmap me follow-up ke roop me likha hai."
+> I haven't fixed it yet because the benchmark numbers would change. It's written as a follow-up on my roadmap."
 
 ### Rapid fire
 
-| Sawaal | Ek-line jawab |
+| Question | One-line answer |
 |---|---|
-| Benchmark ne production code chalaya ya copy? | Wahi `_perform_booking()`. Alag endpoint banata to us cheez ko maapta jo deploy hi nahi hoti |
-| Strategy switch production me expose hai? | Nahi. `BENCHMARK_MODE=false` pe query param chupchaap ignore hota hai — ek param jo locking semantics badle wo footgun hai |
-| Redis off karna cheating nahi? | Wahi ek tareeka hai DB layer ko akela dekhne ka. Aur "Redis 1432/1433 rok deta hai" khud ek finding hai |
-| Ordering bias check kiya? | Haan — order ulta karke chalaya, wahi nateeja |
-| Deadlock ka risk? | Yahan nahi, ek hi row lock hoti hai. Multi-seat booking add karta to consistent order me lock lena padta |
+| Did the benchmark run production code or a copy? | The same `_perform_booking()`. If I made a separate endpoint, I would be measuring something that isn't deployed |
+| Is the strategy switch exposed in production? | No. `BENCHMARK_MODE=false` ignores the query param — a param that changes locking semantics is a footgun |
+| Isn't turning off Redis cheating? | It's the only way to see the DB layer alone. And "Redis stops 1432/1433" is a finding itself |
+| Did you check for ordering bias? | Yes — ran it with the order reversed, same result |
+| Risk of deadlock? | Not here, only one row is locked. If I added multi-seat booking, I would have to lock in a consistent order |
 
 ---
 
-## 13. Multi-worker + CI — "jo verify nahi hua, wo sirf umeed hai"
+## 13. Multi-worker + CI — "what isn't verified is just hope"
 
-### "Multi-worker pe deploy karoge to kya badlega?"
+### "What changes when you deploy to multi-worker?"
 
-> "Maine kiya, aur do cheezein mili.
+> "I did it, and found two things.
 >
-> **Pehli — jo mera daawa tha, wo aakhirkar verify hua.** Phase 5 me
-> maine broadcast Redis pub/sub se kiya tha, in-memory dict se nahi, ye
-> keh ke ki 'multi-worker me memory share nahi hoti'. Par dev me hamesha
-> ek hi worker chala, to wo baat kabhi test nahi hui thi.
+> **First — what I claimed was finally verified.** In Phase 5, I broadcast via Redis pub/sub, not an in-memory dict, claiming 'memory isn't shared in multi-worker'. But in dev, only one worker ever ran, so that was never tested.
 >
-> Ab test hai: 12 WebSocket clients connect karo, `/api/health` ke
-> `worker_pid` se sabit karo ki wo alag processes pe hain, ek seat book
-> karo — aur dekho ki sabko update mila. Milta hai.
+> Now it's tested: connect 12 WebSocket clients, prove they are on different processes via `/api/health`'s `worker_pid`, book a seat — and see that everyone got the update. They do.
 >
-> **Doosri — jo config ek worker pe sahi thi wo char pe toot gayi.** Har
-> worker apna alag process hai, apne connection pool ke saath.
-> `4 x (20 + 20) = 160 connections`, aur Postgres ki default limit 100
-> hai. Pool ab env se aata hai aur prod me 5+5 hai, matlab total 40."
+> **Second — the config that was fine on one worker broke on four.** Each worker is its own process, with its own connection pool. `4 x (20 + 20) = 160 connections`, and Postgres's default limit is 100. The pool now comes from env and is 5+5 in prod, meaning 40 total."
 
-### "In-memory broadcast se kya galat hota?"
+### "What goes wrong with in-memory broadcast?"
 
-Ye follow-up ka concrete jawab hai:
+This is the concrete answer to the follow-up:
 
-> "Sirf usi worker ke clients ko message milta jisme booking hui thi.
-> Baaki 8-9 clients chup rehte, aur unke seat grid me wo seat **hari
-> dikhti rehti jabki wo bik chuki hoti**. Wo user next click par 409
-> khaata — aur usse lagta app toota hua hai.
+> "Only the clients of the worker where the booking happened get the message. The other 8-9 clients stay silent, and that seat **stays green** on their grid even though it's sold. That user gets a 409 on the next click — and thinks the app is broken.
 >
-> Ye bug single worker pe kabhi reproduce nahi hota. Isiliye maine ise
-> test me daala, comment me nahi."
+> This bug never reproduces on a single worker. That's why I put it in the test, not in a comment."
 
-### ⭐ "CI se koi asli faayda hua?"
+### ⭐ "Did CI provide any real benefit?"
 
-**Ye sabse strong jawab hai jo is section me hai.**
+**This is the strongest answer in this section.**
 
-> "Haan — CI ne teen bugs pakde jo mahino se code me the. Teeno isliye
-> chhupe the ki meri local database purani thi. CI hamesha khaali volume
-> se shuru karta hai.
+> "Yes — CI caught three bugs that had been in the code for months. All three were hidden because my local database was old. CI always starts with an empty volume.
 >
-> **Ek:** `seed.py` user numbering users ki GINTI se banata tha. Named
-> accounts (demo/organizer/admin) banne ke baad counter 3 pe pahunch jata
-> tha, to `user1` aur `user2` kabhi bante hi nahi the. Tests unse login
-> karte hain — fixture skip ho jati thi. Result: **31 passed, 35 skipped**,
-> aur CI me wo bhi GREEN dikhta hai.
+> **One:** `seed.py` generated user numbering based on the COUNT of users. After named accounts (demo/organizer/admin) were created, the counter started at 3, so `user1` and `user2` were never created. Tests log in with them — the fixture was skipped. Result: **31 passed, 35 skipped**, and it looks GREEN in CI.
 >
-> **Do:** seeded event ka `organizer_id` NULL tha. Gate check-in 403 deta
-> tha. Ye sirf test failure nahi thi — demo data hi toota tha, event
-> organizer portal me dikhta hi nahi tha.
+> **Two:** the seeded event's `organizer_id` was NULL. Gate check-in returned 403. This wasn't just a test failure — the demo data itself was broken; the event didn't even appear in the organizer portal.
 >
-> **Teen:** do tests fixed idempotency key use karte the. Wo key Redis me
-> TTL tak zinda rehti hai, to agla run usi key par replay le aata:
-> 201 milta tha par nayi booking banti hi nahi thi."
+> **Three:** two tests used fixed idempotency keys. That key stays alive in Redis until TTL, so the next run gets a replay on the same key: 201 is returned but no new booking is created."
 
-### "Debug kaise kiya?"
+### "How did you debug?"
 
-Ye batana ki pehla andaza galat tha, bahut acha lagta hai:
+Admitting the first guess was wrong sounds very good:
 
-> "Teesra bug pehli baar prod multi-worker stack pe dikha, to pehla shak
-> multi-worker par gaya. Galat tha — wo test isolation ki dikkat thi.
+> "The third bug appeared on the prod multi-worker stack for the first time, so my first suspicion was multi-worker. I was wrong — it was a test isolation issue.
 >
-> Isliye ab main pehle poochta hoon 'kya ye single worker pe bhi hota
-> hai?' Yahan teeno baar asli wajah kuch aur nikli."
+> That's why now I first ask 'does this happen on a single worker too?' All three times, the real reason was something else."
 
 ### Rapid fire
 
-| Sawaal | Ek-line jawab |
+| Question | One-line answer |
 |---|---|
-| GitHub ka `services:` block kyu nahi? | Wo sirf DB/Redis deta hai, app runner pe alag chalti — matlab CI wo test karta jo deploy hi nahi hoti. Main wahi compose chalata hoon jo laptop pe chalti hai |
-| Prod image me kya alag hai? | Non-root user, dev tools nahi, `--reload` nahi. CI dono properties **assert** karta hai, sirf build nahi karta |
-| Frontend prod image ka size? | 74MB (nginx + built assets) vs 407MB dev. `node_modules` aur source hai hi nahi |
-| nginx me sabse zaroori line? | `try_files $uri $uri/ /index.html` — iske bina `/events/3` par refresh 404 deta hai |
-| `index.html` cache kyu nahi karte? | Wahi file naye asset names batati hai. Cache kiya to user deploy ke baad purane assets maangega jo exist nahi karte — blank page |
-| Sticky sessions chahiye WebSocket ke liye? | Nahi. Har worker khud Redis se subscribe karta hai, isliye client kisi bhi worker pe ja sakta hai |
-| CI me sirf "passed" dekhna kaafi hai? | Nahi — **skip count** bhi. "31 passed, 35 skipped" bilkul green dikhta hai |
+| Why not GitHub's `services:` block? | It only gives DB/Redis, the app runner runs separately — meaning CI tests something that isn't deployed. I run the same compose that runs on my laptop |
+| What's different in the prod image? | Non-root user, no dev tools, no `--reload`. CI asserts both properties, doesn't just build |
+| Frontend prod image size? | 74MB (nginx + built assets) vs 407MB dev. `node_modules` and source aren't there |
+| Most important line in nginx? | `try_files $uri $uri/ /index.html` — without it, refresh on `/events/3` returns 404 |
+| Why not cache `index.html`? | That file tells you the new asset names. If cached, the user will ask for old assets that don't exist after deploy — blank page |
+| Sticky sessions needed for WebSockets? | No. Every worker subscribes to Redis itself, so the client can go to any worker |
+| Is "passed" enough in CI? | No — **skip count** too. "31 passed, 35 skipped" looks perfectly green |
 
 ---
 
-## 14. ⭐ Group booking — "sab ya koi nahi"
+## 14. ⭐ Group booking — "all or nothing"
 
-Ye poore project ka sabse achha section hai, kyunki isme ek jagah aisi hai
-jahan mera apna default **kaam nahi aaya** — aur wo maine benchmark karke
-choose kiya tha.
+This is the best section of the entire project, because there is a place
+where my own default **didn't work** — and I chose it after benchmarking.
 
-### "Group booking me naya kya hai?"
+### "What's new in group booking?"
 
-> "Ab tak project ka har correctness sawaal ek hi shakal ka tha: **ek seat,
-> ek booking**. Redis lock, version column, partial unique index — teeno
-> usi ek sawaal ke jawab the.
+> "Until now, every correctness question in the project had the same face: **one seat, one booking**. Redis lock, version column, partial unique index — all three were answers to that one question.
 >
-> Group me sawaal badal jata hai: **sab ya koi nahi, N alag payments ke
-> paar.** Har payment apne waqt par aati hai, alag user se, alag browser
-> se — aur beech me deadline chal rahi hoti hai.
+> In groups, the question changes: **all or nothing, across N separate payments.** Every payment arrives at its own time, from a different user, a different browser — and the deadline is ticking.
 >
-> 3 ka paisa aa gaya, chauthe ka nahi, deadline aa gayi. Teen ko seat dena
-> aur chauthe ko nahi — us se poore group ka maqsad hi khatam. Wo saath
-> baithne aaye the. To group tootta hai, seats chhootti hain, teeno ka
-> paisa wapas."
+> 3 paid, 4th didn't, deadline hit. Giving seats to the three and not the fourth — that defeats the purpose of the group. They came to sit together. So the group breaks, seats are released, money is refunded to the three."
 
-### "N bookings bana ke ek group_id se jod dete?"
+### "Couldn't you just create N bookings and join them with a `group_id`?"
 
-Ye pehla suggestion aata hi hai:
+This is the first suggestion that always comes:
 
-> "Nahi, kyunki **booking ka matlab hi hai 'seat pakki ho gayi'**. Group me
-> seat kisi ki bhi pakki nahi hoti jab tak sabka paisa na aa jaye.
+> "No, because **booking means 'the seat is secured'**. In a group, no seat is secured until everyone pays.
 >
-> To beech ki ek haalat chahiye thi — seats roki hui, kuch paise aa chuke,
-> faisla baaki. Wo ek naya seat status hai (`group_held`) plus do tables.
-> Bookings tabhi banti hain jab group confirm hota hai, aur tab ek saath
-> sabki."
+> So I needed an intermediate state — seats held, some money paid, decision pending. That's a new seat status (`group_held`) plus two tables. Bookings are only created when the group is confirmed, and then all at once."
 
-### "`locked` status reuse kar lete?"
+### "Couldn't you reuse the `locked` status?"
 
-Chhota sawaal lagta hai, jawab bada hai:
+Seems like a small question, the answer is big:
 
-> "Nahi ho sakta. `locked` seats ko lazy cleanup chupchaap `available` kar
-> deta hai jab TTL nikal jati hai.
+> "It can't be. Lazy cleanup quietly makes `locked` seats `available` when the TTL expires.
 >
-> Group seats ke saath wo galat hai — unme se kuch logon ka **paisa kat
-> chuka** hota hai. Unhe chhodne ka matlab refund bhi hai, aur refund ek
-> faisla hai, side-effect nahi.
+> That's wrong for group seats — some of those people have **already paid**. Releasing them also means refunding, and refunding is a decision, not a side-effect.
 >
-> Isi wajah se expiry bhi cron job se hoti hai, lazy cleanup se nahi:
-> agar koi us event ka page hi na khole, lazy cleanup kabhi chalta hi nahi
-> aur log apne paise ka intezaar karte reh jaate. **Paisa wapas milna
-> kisi ajnabi ke page kholne par nirbhar nahi ho sakta.**"
+> That's why expiry happens via a cron job, not lazy cleanup: if someone never opens that event's page, lazy cleanup never runs and people are left waiting for their money. **Getting money back cannot depend on a stranger opening a page.**"
 
-### ⭐⭐ "Sabse mushkil race kya thi?"
+### ⭐⭐ "What was the hardest race?"
 
-**Ye is poore project ka sabse strong jawab hai. Tayyar rakho.**
+**This is the strongest answer in this entire project. Keep it ready.**
 
-> "Aakhri banda pay kar raha hai theek us waqt jab expiry job group todh
-> raha hai. Ek ko confirm karna hai, doosre ko todna hai.
+> "The last person is paying exactly when the expiry job is breaking the group. One needs to confirm, the other needs to break.
 >
-> Maine wahi pattern lagaya jo poore project me hai — atomic conditional
-> UPDATE. **Aur wo kaam nahi kiya.**
+> I applied the same pattern as the rest of the project — atomic conditional UPDATE. **And it didn't work.**
 >
-> Wajah: conditional UPDATE tabhi kaafi hai jab dono racers **ek hi row**
-> par faisla kar rahe hon. Yahan payment thread `group_shares` ki row
-> badalta hai aur expiry job `group_bookings` ki. Ek row ka conditional
-> UPDATE doosri row ki race nahi rok sakta.
+> Reason: conditional UPDATE is only enough when both racers are deciding on **the same row**. Here, the payment thread changes a row in `group_shares` and the expiry job changes a row in `group_bookings`. A conditional UPDATE on one row cannot stop a race on another row.
 >
-> Nateeja jo test me asal me aaya: expired group me ek `paid` share. Us
-> bande ka paisa kat gaya, seat mili nahi, refund bhi nahi hua — sabse
-> bura possible outcome.
+> Result that actually appeared in the test: a `paid` share in an expired group. That person's money was deducted, seat not received, refund didn't happen — the worst possible outcome.
 >
-> Fix: group ki row par `SELECT ... FOR UPDATE`. Ab dono transactions
-> serialize ho jaati hain."
+> Fix: `SELECT ... FOR UPDATE` on the group row. Now both transactions are serialized."
 
-**Follow-up jo pakka aayega — "par tumne to benchmark me optimistic choose
-kiya tha?"**
+**Follow-up that will definitely come — "but you chose optimistic in the benchmark?"**
 
-Ye jawab dono baaton ko jodta hai:
+This answer connects both points:
 
-> "Haan, aur dono baatein saath chalti hain.
+> "Yes, and both points go together.
 >
-> Phase 15 ka nateeja tha: **throughput** me farak measurable nahi, aur
-> pessimistic ka khatra ye hai ki uska kharcha lock hold time ke saath
-> badhta hai.
+> The result of Phase 15 was: **throughput** difference isn't measurable, and the danger of pessimistic is that its cost grows with lock hold time.
 >
-> Yahan main pessimistic **speed ke liye nahi, correctness ke liye** use
-> kar raha hoon — kyunki do alag rows serialize karni hain, aur uska koi
-> optimistic version hai hi nahi. Aur lock ~1ms rehta hai, to Phase 15
-> wala khatra lagta hi nahi.
+> Here I'm using pessimistic **not for speed, but for correctness** — because two separate rows need to be serialized, and there is no optimistic version for that. And the lock stays for ~1ms, so the Phase 15 danger doesn't apply.
 >
-> Matlab default optimistic hai, aur ye ek soch-samajh ke liya gaya apwaad
-> hai — 'pessimistic bura hai' wala andha niyam nahi."
+> Meaning optimistic is the default, and this is a deliberate exception — not a blind rule that 'pessimistic is bad'."
 
-### "Kaise pakda ye bug?"
+### "How did you catch this bug?"
 
-> "Ek race test likha jo 20 baar chalti hai, barrier se dono threads ek
-> lamhe me shuru karti hai, aur har run me invariants check karti hai:
-> group `confirmed` hai to saari seats booked, `expired` hai to saari
-> available aur paid share refunded, aur `collecting` me **kabhi nahi**
-> atka hona chahiye.
+> "Wrote a race test that runs 20 times, starts both threads at the same moment with a barrier, and checks invariants in every run: if the group is `confirmed`, all seats booked; if `expired`, all available and paid shares refunded; and it should **never** be stuck in `collecting`.
 >
-> Bug 20 me se 1 baar dikhta tha. Ek normal test kabhi na pakadta.
+> The bug appeared 1 in 20 times. A normal test would never catch it.
 >
-> Ek aur cheez seekhi: pehle expiry HAMESHA jeet rahi thi, kyunki wo seedha
-> function call thi aur payment poore HTTP stack se guzarta tha. Matlab
-> aadha raasta test hi nahi ho raha tha. Expiry par thoda random jitter
-> daala, tab dono outcomes aane lage — 60 runs me ~48 confirmed, ~12
-> expired, aur zero invariant violation."
+> Learned one more thing: the expiry was ALWAYS winning, because it was a direct function call and payment went through the entire HTTP stack. Meaning half the path wasn't being tested. Added a bit of random jitter to expiry, then both outcomes started appearing — ~48 confirmed, ~12 expired in 60 runs, and zero invariant violations."
 
-### "Aur koi bug mila?"
+### "Anything else found?"
 
-> "Haan, aur wo bhi isi race test ne diya. Group tootne par uske shares ke
-> **pending payments latke reh jaate the**.
+> "Yes, and the same race test found it. When the group broke, its shares' **pending payments were left hanging**.
 >
-> Do nateeje: pehla, us seat par naya checkout ban hi nahi sakta tha —
-> partial unique index rok deta hai. Seat `available` dikhti thi par
-> khareedi nahi ja sakti thi. Wo sabse bura kism ka bug hai, kyunki UI me
-> sab theek lagta hai.
+> Two results: first, no new checkout could be created for that seat — the partial unique index blocked it. The seat appeared `available` but couldn't be bought. That's the worst kind of bug, because everything looks fine in the UI.
 >
-> Doosra, user purana checkout page complete karke ek **mare hue group** ko
-> paisa de sakta tha."
+> Second, a user could complete an old checkout page and pay money to a **dead group**."
 
-### "Ye feature poora hai?"
+### "Is this feature complete?"
 
-Yahan imaandari se jawab dena, ye achha lagta hai:
+Answer honestly, it sounds good:
 
-> "Nahi, aur main uska daawa nahi karta. Teen cheezein jaan-boojh ke chhodi:
+> "No, and I don't claim it is. I intentionally left three things out:
 >
-> **Refund sirf status likhta hai**, asli refund API call nahi karta. Asli
-> gateway me refund ki confirmation bhi webhook se aati hai — yaani
-> `refund_pending` naam ka ek aur state chahiye, bilkul payment jaisa.
+> **Refund only writes the status**, doesn't call the real refund API. In the real gateway, refund confirmation also comes via webhook — meaning I need one more state called `refund_pending`, just like payment.
 >
-> **Email notification nahi hai** — 'tumhare dost ne pay kar diya', '1 ghanta
-> bacha'. Outbox pattern already hai to jodna aasan hoga.
+> **No email notification** — 'your friend paid', '1 hour left'. The outbox pattern is already there, so it will be easy to add.
 >
-> **Grace period nahi hai** — deadline sakht hai."
+> **No grace period** — the deadline is strict."
 
 ### Rapid fire
 
-| Sawaal | Ek-line jawab |
+| Question | One-line answer |
 |---|---|
-| Group id se address kyu nahi? | `share_token` (`secrets`) — sequential id hoti to koi bhi 1, 2, 3 chala ke doosron ke group dekh leta |
-| Response me email kyu nahi? | Link kisi ke paas bhi ja sakta hai; usme sab members ke email dikhana privacy leak hai |
-| Ek user do share le sakta hai? | Nahi — warna ek banda poora group claim kar leta aur "split" ka matlab khatam |
-| Group creation partial ho sakti hai? | Nahi. Ek bhi seat na mile to poora rollback — aadhi hold kisi ke kaam ki nahi |
-| Price kab freeze hota hai? | Group banate waqt. 30 minute me surge badal sakta hai (Phase 14 wala hi asool) |
-| Cron kitni baar? | Har 30 second, `run_at_startup` ke saath. Deadline minutes me hai, to 30s kaafi hai |
-| Do worker ek saath expire karein to? | `break_group` atomic conditional UPDATE se chalta hai — ek hi todega |
+| Why not address by group id? | `share_token` (`secrets`) — sequential IDs would allow anyone to run 1, 2, 3 and see others' groups |
+| Why no email in response? | The link can go to anyone; showing all members' emails there is a privacy leak |
+| Can one user take two shares? | No — otherwise one person would claim the whole group and the meaning of "split" would be gone |
+| Can group creation be partial? | No. If even one seat isn't secured, full rollback — partial holds are useless |
+| When is the price frozen? | When creating the group. Surge can change in 30 minutes (same principle as Phase 14) |
+| How often does the cron run? | Every 30 seconds, with `run_at_startup`. The deadline is in minutes, so 30s is enough |
+| What if two workers expire at once? | `break_group` runs via atomic conditional UPDATE — only one will break it |
 
 ---
 
-## 15. Seat layout — "purane data ko na todna"
+## 15. Seat layout — "don't break old data"
 
-Chhota feature hai, par isme ek sawaal hai jo interviewer aksar poochta hai.
+Small feature, but there is a question that interviewers often ask.
 
-### "Naya column add karte waqt purane rows ka kya karte ho?"
+### "What do you do with old rows when adding a new column?"
 
-> "Phase 18 me maine `Event.layout` aur `Seat.section` add kiye, dono
-> **nullable**. Aur wo convenience nahi, poora design hai.
+> "In Phase 18, I added `Event.layout` and `Seat.section`, both **nullable**. And that's not convenience, it's the entire design.
 >
-> 17 phases ka data — seed, tests, demo events — bina layout ke bana hai.
-> `NULL` ka matlab hai 'purana uniform event', aur frontend usse bilkul
-> waise render karta hai jaise pehle karta tha.
+> 17 phases of data — seeds, tests, demo events — were created without layout. `NULL` means 'old uniform event', and the frontend renders it exactly as it did before.
 >
-> Iska ek alag test hai: event 1 utha kar check karo ki `layout` null hai,
-> 100 seats hain, har seat ka `section` null hai, aur baaki sab fields
-> waise ke waise. Ye wahi cheez hai jo column add karte waqt sabse aasani
-> se tootti hai — aur uska pata bahut baad me chalta hai."
+> There is a separate test for this: take event 1, check that `layout` is null, there are 100 seats, every seat's `section` is null, and everything else is as it was. This is the thing that breaks most easily when adding a column — and it's only noticed much later."
 
-### "Purana API format hata diya?"
+### "Did you remove the old API format?"
 
-> "Nahi. `price_tiers` abhi bhi chalta hai.
+> "No. `price_tiers` still works.
 >
-> Par maine do generators nahi rakhe — wo dheere-dheere alag behave karne
-> lagte. `price_tiers` ko layout ke shape me **convert** karta hoon, aur
-> phir dono ek hi expansion function se guzarte hain.
+> But I didn't keep two generators — they start behaving differently over time. I **convert** `price_tiers` into the layout shape, and then both go through the same expansion function.
 >
-> Faayda: tier se bana event bhi layout store karta hai, to grid har event
-> ko ek hi tarah render karta hai."
+> Benefit: an event created from tiers also stores the layout, so the grid renders every event the same way."
 
-### ⭐ "Validation kahan karte ho?"
+### ⭐ "Where do you validate?"
 
-> "Do jagah, aur dono ka kaam alag hai.
+> "In two places, and both have different jobs.
 >
-> **Pydantic** shape dekhta hai — types, lengths, ranges. **`layout.py`**
-> business rules — duplicate row labels, seat cap, aisle position row ke
-> andar hai ya nahi.
+> **Pydantic** looks at the shape — types, lengths, ranges. **`layout.py`** looks at business rules — duplicate row labels, seat cap, aisle position within the row.
 >
-> Bantwara isliye ki 'do sections me same row label nahi ho sakta' jaise
-> rules ko poore layout ka context chahiye, aur unhe DB ke bina test karna
-> aasan hona chahiye.
+> Separated because rules like 'same row label cannot exist in two sections' need the context of the entire layout, and it should be easy to test them without the DB.
 >
-> Sabse zaroori rule duplicate row label wala hai. `seats` par
-> `UNIQUE(event_id, row_label, seat_number)` hai. Ye check na hota to
-> expansion **500 seats insert karne ke baad** IntegrityError se marta."
+> The most important rule is the duplicate row label one. There is a `UNIQUE(event_id, row_label, seat_number)` on `seats`. If this check didn't exist, expansion would die with an IntegrityError **after inserting 500 seats**."
 
-### "Aadha bana hua event ban sakta hai?"
+### "Can a half-built event be created?"
 
-> "Nahi, aur wo jaan-boojh ke hai. `expand()` DB ko haath hi nahi lagata —
-> wo sirf ek list lauta deta hai. Caller usse ek transaction me bulk
-> insert karta hai.
+> "No, and that's intentional. `expand()` doesn't touch the DB — it just returns a list. The caller inserts it in bulk in one transaction.
 >
-> Agar `expand` khud likhta, to 'aadhi seats ban gayi phir error' mumkin
-> ho jata. Test check karta hai ki galat layout ke baad organizer ke
-> events ki ginti wahi rahe."
+> If `expand` wrote itself, 'half seats created then error' would be possible. The test checks that the count of events for the organizer remains the same after a bad layout."
 
-### "Drag-and-drop kyu nahi banaya?"
+### "Why didn't you build drag-and-drop?"
 
-Ye sawaal aayega, aur "time nahi tha" galat jawab hai:
+This question will come, and "no time" is the wrong answer:
 
-> "Kyunki asli venue rows aur sections me hi bana hota hai. 'Row C me 12
-> seats, seat 4 ke baad aisle' **type** karna maus se 12 boxes ghaseetne
-> se tez bhi hai aur galti-proof bhi.
+> "Because real venues are built in rows and sections. '12 seats in Row C, aisle after seat 4' **typing** is faster and more error-proof than dragging 12 boxes with a mouse.
 >
-> Aur drag-and-drop apne saath pointer-events, undo/redo, snapping aur
-> touch handling ka poora pahaad laata hai — us feature ke liye jo saal me
-> kuch baar use hota hai.
+> And drag-and-drop brings a mountain of pointer-events, undo/redo, snapping, and touch handling — for a feature used a few times a year.
 >
-> Iske badle **live preview** rakha — bilkul wahi shape jo attendee ko
-> dikhega. Builder ka asli faayda wahi hai: 40 seats aur 4 aisles ko
-> numbers me sochna mushkil hai, dekh ke turant samajh aata hai."
+> Instead, I kept a **live preview** — the exact shape the attendee will see. That's the real benefit of a builder: it's hard to think of 40 seats and 4 aisles in numbers, it's immediately clear when you see it."
 
 ### Rapid fire
 
-| Sawaal | Ek-line jawab |
+| Question | One-line answer |
 |---|---|
-| Aisle ek seat hai? | Nahi — koi seat nahi banti, numbering bhi nahi rukti. Purely dikhne ke liye, isliye layout JSON me hai, seats table me nahi |
-| `section` layout JSON me hai, seat pe kyu? | Ticket PDF aur gate check-in ko section chahiye — unhe layout parse karwana galat hoga |
-| Layout edit ho sakta hai? | Nahi. Seats badalna matlab bookings ka reference todna — wahi asool jo base price ka hai |
-| Client-side validation duplicate nahi? | Hai, aur jaan-boojh ke. Server asli faisla karta hai; client sirf round-trip bachata hai |
-| Layout aur seats me farak aa jaye to? | Seats sach hain — bookings unhi se judi hain. Layout sirf naksha hai |
+| Is an aisle a seat? | No — no seat is created, numbering doesn't stop. Purely for visuals, that's why it's in layout JSON, not the seats table |
+| `section` is in layout JSON, why on the seat? | Ticket PDF and gate check-in need the section — parsing the layout for them would be wrong |
+| Can the layout be edited? | No. Changing seats means breaking references to bookings — same rule as base price |
+| Is client-side validation redundant? | It is, and intentional. Server makes the real decision; client only saves a round-trip |
+| What if layout and seats differ? | Seats are the truth — bookings are tied to them. Layout is just a map |
 
 ---
 
-## 16. ⭐ AI feature — "LLM ko kitna kaam dena chahiye"
+## 16. ⭐ AI feature — "how much work should you give an LLM?"
 
-Aajkal har jagah AI hai, aur interviewer aksar shak se poochta hai. Iska
-jawab achha ho to bahut acha lagta hai.
+AI is everywhere today, and interviewers often ask with skepticism. A good answer sounds very good.
 
-### "AI kahan use kiya?"
+### "Where did you use AI?"
 
-> "Sirf ek chhoti jagah: natural language ko filters me badalne me.
+> "Only in one small place: converting natural language into filters.
 >
 >     '3 seats together under 1500 near the stage'
 >              |
->              v   <- sirf itna LLM karta hai
+>              v   <- LLM only does this
 >     SeatFilters(quantity=3, together=True, max_price=1500,
 >                 row_preference='front')
 >
-> Uske baad ka poora search normal code hai — matching, ranking,
-> availability. Koi model nahi."
+> Everything after that is normal code — matching, ranking, availability. No model."
 
-### ⭐⭐ "LLM se seedha SQL kyu nahi likhwaya?"
+### ⭐⭐ "Why didn't you have the LLM write SQL directly?"
 
-**Ye sawaal aayega, aur jawab teen hisso me hai:**
+**This question will come, and the answer is in three parts:**
 
-> "**Security.** Model ka output kabhi SQL nahi banta. Wo ek validated
-> Pydantic object banta hai, aur query parameterised rehti hai. Isliye
-> prompt injection zyada se zyada ajeeb FILTERS bana sakti hai — jo user
-> ko waise bhi dikh jaate hain — data leak ya SQL injection nahi. Maine
-> do injection queries test ki, dono 'samajh nahi aaya' me gir gayi.
+> "**Security.** The model's output never becomes SQL. It becomes a validated Pydantic object, and the query remains parameterized. So prompt injection can at most create weird FILTERS — which the user sees anyway — not data leaks or SQL injection. I tested two injection queries, both fell into 'didn't understand'."
 >
-> **Testability.** Is feature ke 15 me se ek bhi test ko API key ki
-> zaroorat nahi. Ye zaroori hai kyunki key na hone par wo tests SKIP ho
-> jaate — aur skipped tests CI me green dikhte hain.
+> **Testability.** Not one of the 15 tests for this feature needs an API key. This is necessary because if the key is missing, those tests are SKIPPED — and skipped tests look green in CI.
 >
-> **Reliability.** Key na ho, model down ho, timeout ho — normal filters
-> phir bhi chalte hain. Search box bas dikhta nahi."
+> **Reliability.** Key missing, model down, timeout — normal filters still work. The search box just doesn't appear."
 
-### "Structured output kaise handle kiya?"
+### "How did you handle structured output?"
 
-> "Gemini ka `responseSchema` use kiya — schema do, model ko usi shape me
-> jawab dena padta hai.
+> "Used Gemini's `responseSchema`. Give the schema, the model must answer in that shape.
 >
-> 'Please return JSON' wali prompt-engineering kabhi na kabhi tootti hai:
-> model markdown fence laga deta hai ya explanation jod deta hai, aur phir
-> parsing failures handle karne padte hain. Wo bekaar ka code hai jab API
-> khud guarantee de sakti hai.
+> 'Please return JSON' prompt-engineering breaks eventually: the model adds markdown fences or adds an explanation, and then you have to handle parsing failures. That's useless code when the API itself can guarantee it.
 >
-> Aur `temperature: 0` — ye creative kaam nahi hai. Ek input ka hamesha
-> ek hi jawab aana chahiye."
+> And `temperature: 0` — this isn't creative work. One input should always have one answer."
 
-### ⭐ "Kaunsa model, aur kyu?"
+### ⭐ "Which model, and why?"
 
-Yahan measurement wala jawab dena:
+Give the measurement-based answer:
 
-> "Maine dono naape:
+> "I measured both:
 >
 >     gemini-3.5-flash        8.5s
->     gemini-3.1-flash-lite   1.7s     <- yahi choose kiya
+>     gemini-3.1-flash-lite   1.7s     <- chose this
 >
-> Output bilkul same tha. Kaam hai 'ek line ko JSON me badalna' — uske
-> liye bada thinking model 5x latency aur zyada paisa hai, faayda zero.
+> The output was exactly the same. The job is 'convert a line to JSON' — for that, a large thinking model is 5x latency and more money, zero benefit.
 >
-> Aur version pin kiya hai, `-latest` nahi — wo apne aap naye model pe
-> chala jata hai aur tab prompt ka behaviour bina deploy ke badal sakta
-> hai."
+> And I pinned the version, not `-latest` — that would automatically move to a new model and then prompt behavior could change without a deploy."
 
-### ⚠️ "Koi security bug mila?"
+### ⚠️ "Did you find any security bugs?"
 
-**Ye khud bata do — ye is section ka sabse strong jawab hai:**
+**Admit it yourself — this is the strongest answer in this section:**
 
-> "Haan, aur wo maine hi banaya tha. Pehla version API key query param me
-> bhejta tha. Phir ek galat model name se 404 aaya aur log me ye chhapa:
+> "Yes, and I created it myself. The first version sent the API key in the query param. Then a 404 from a wrong model name appeared and this was printed in the logs:
 >
 >     Client error '404 Not Found' for url
 >     'https://...:generateContent?key=AQ.Ab8RN6...'
 >
-> **API key seedha log me.** httpx ke exception message me poora URL hota
-> hai — yaani koi bhi error key ko log file me likh deta, aur logs
-> aggregators me jaate hain, backup hote hain, aur unhe alag se secure
-> nahi kiya jata.
+> **API key straight in the logs.** httpx's exception message contains the full URL — meaning any error writes the key to the log file, and log aggregators go to backups, and they aren't secured separately.
 >
-> Do jagah fix kiya: key ab header me jaati hai, aur exception object log
-> hi nahi karta — sirf status code. Dusra fix pehle ke bina bhi zaroori
-> hai, kyunki kal koi param wapas jod sakta hai.
+> Fixed in two places: the key now goes in the header, and the exception object isn't logged at all — only the status code. The second fix is necessary even without the first, because someone could add the param back tomorrow.
 >
-> Sabak: secret URL me daalna hamesha galat hai, chahe HTTPS ho. Wo
-> browser history, proxy logs, access logs — sab me dikhta hai."
+> Lesson: putting secrets in the URL is always wrong, even with HTTPS. It appears in browser history, proxy logs, access logs — everywhere."
 
-### "Model ne kabhi galat samjha?"
+### "Did the model ever misunderstand?"
 
-Imaandari se haan bolo:
+Say yes honestly:
 
-> "Haan. 'do seat chahiye sabse sasti' ko usne `min_price=800` bana diya.
+> "Yes. It turned 'two cheapest seats' into `min_price=800`.
 >
-> 'Sabse sasti' ek **sort preference** hai, filter nahi — aur results
-> waise bhi sasti pehle aate hain. min_price lagana bilkul ulta asar
-> karta hai.
+> 'Cheapest' is a **sort preference**, not a filter — and results show cheapest first anyway. Applying `min_price` has the exact opposite effect.
 >
-> Fix prompt me hua, code me nahi — ek explicit rule jodna pada. Ye LLM
-> features ki asli haqeeqat hai: 'kaam kar raha hai' aur 'sahi kaam kar
-> raha hai' alag baatein hain, aur iska pata sirf asli queries chala ke
-> chalta hai."
+> Fixed in the prompt, not the code — had to add an explicit rule. This is the reality of LLM features: 'it works' and 'it works correctly' are different things, and you only know by running real queries."
 
-### "Kharcha control kaise kiya?"
+### "How did you control costs?"
 
-| Cheez | Kyu |
+| Thing | Why |
 |---|---|
-| Rate limit per-user | Har query ek paid call hai. Bina limit ke koi loop chala ke quota khatam kar de — aur feature **sabke liye** band |
-| Redis cache 1 ghanta | "2 seats under 1000" bahut log likhte hain, matlab kabhi badalta nahi. Repeat query 0.0s |
-| Query max 200 chars | Iske aage koi asli search nahi hoti — sirf prompt me kachra bharne ki koshish |
-| Login zaroori | Seats public hain, par rate limit per-user lagti hai aur kharcha kisi ke naam hona chahiye |
+| Rate limit per-user | Every query is a paid call. Without a limit, someone could run a loop and exhaust the quota — and the feature stops **for everyone** |
+| Redis cache 1 hour | "2 seats under 1000" is written by many, meaning it never changes. Repeat query 0.0s |
+| Query max 200 chars | No real search happens beyond this — just an attempt to fill the prompt with garbage |
+| Login required | Seats are public, but rate limits are per-user and the cost must be attributed to someone |
 
 
-### ⭐ "AI se event ki copy bhi likhwate ho — wo galat likh de to?"
+### ⭐ "Do you also have the AI write event copy — what if it writes something wrong?"
 
-Ye Phase 20 ka sawaal hai, aur jawab me do cheezein hain:
+This is the Phase 20 question, and the answer has two parts:
 
-> "**Pehli:** AI publish button tak pahunchta hi nahi. Endpoint kuch save
-> nahi karta — wo sirf draft lautata hai jo organizer ke form me bhar
-> jata hai, aur wo edit karke khud publish karta hai.
+> "**First:** AI never reaches the publish button. The endpoint saves nothing — it only returns a draft that fills the organizer's form, and they edit and publish it themselves.
 >
-> Wajah: event ka description ticket kharidne wale ke liye ek **waada**
-> hai. Us par ek insaan ka haath hona zaroori hai. Iska ek test bhi hai —
-> draft maangne se events ki ginti nahi badhni chahiye.
+> Reason: event description is a **promise** to the ticket buyer. A human hand must be on it. There's a test for this — requesting a draft shouldn't increase the event count.
 >
-> **Doosri:** prompt me model ko facts gadhne se saaf mana kiya hai —
-> lineup, duration, price, ratings, awards, 'sold out'. Ye list yun hi
-> nahi banayi: **yahi wo cheezein hain jo ek marketing LLM sabse pehle
-> gadhta hai**, kyunki wo 'achhi listing' jaisi lagti hain.
+> **Second:** I explicitly forbade the model from making up facts in the prompt — lineup, duration, price, ratings, awards, 'sold out'. This list isn't random: **these are the things a marketing LLM makes up first**, because they sound like a 'good listing'.
 >
-> Aur UI me saaf likha hai ki ye ek mashin ne likha hai aur publish se
-> pehle padhna hai."
+> And the UI clearly states that a machine wrote this and it must be read before publishing."
 
-### "temperature kya rakha?"
+### "What temperature did you keep?"
 
-Ye achha follow-up hai kyunki jawab do jagah alag hai:
+This is a good follow-up because the answer is different in two places:
 
-> "Search parser me **0**, copy draft me **0.8**.
+> "0 for the search parser, 0.8 for the copy draft.
 >
-> Parser me ek input ka hamesha ek hi jawab aana chahiye — randomness
-> wahan bug hai. Copy me ulta hai: do baar dabane par alag options milna
-> faayda hai.
+> In the parser, one input should always have one answer — randomness is a bug there. In copy, it's the opposite: getting different options on two clicks is a benefit.
 >
-> Dono ek hi file me hain aur dono ke reasons likhe hain, warna kal koi
-> 'consistency' ke naam par dono ko ek jaisa kar dega."
+> Both are in the same file and both have reasons written, otherwise someone might make them the same in the name of 'consistency'."
 
-### ⚠️ "Poster generator bhi banaya tha na?"
+### ⚠️ "You also built a poster generator, right?"
 
-**Yahan sach bolna hi sabse achha jawab hai:**
+**Admitting the truth is the best answer here:**
 
-> "Nahi. Plan me tha, par Gemini ke free tier me image generation ka quota
-> hai hi nahi — maine paanchon image models try kiye, sab 429 dete hain,
-> jabki text models usi key se theek chalte hain.
+> "No. It was in the plan, but Gemini's free tier has no quota for image generation — I tried all five image models, all return 429, while text models work fine with the same key.
 >
-> To do raaste the: feature likh ke 'ban gaya' bol dena, ya na banana aur
-> wajah likhna. Maine doosra chuna, aur README me wo explicitly 'not
-> built' likha hai us wajah ke saath.
+> So there were two paths: write the feature and say 'it's built', or don't build it and write the reason. I chose the second, and explicitly wrote 'not built' in the README with that reason.
 >
-> Ek aisa feature jo maine kabhi chalte hue dekha hi nahi, wo demo me
-> pehli hi baar fail hoga — aur tab sirf feature nahi, baaki README pe
-> bhi shak jata hai."
+> A feature you've never seen running will fail the first time in a demo — and then not just the feature, but the rest of the README will be doubted."
 
 
 ### Rapid fire
 
-| Sawaal | Ek-line jawab |
+| Question | One-line answer |
 |---|---|
-| AI down ho to? | Search chalta rehta hai — filters AI ke bina bhi lagte hain. Sirf NL input band hota hai |
-| Confidence score? | Nahi. Gemini deta hi nahi, aur khud ka score gadhna jhooth hota |
-| Follow-up query ("aur sasti dikhao")? | Nahi banaya — uske liye session state chahiye aur cache ka matlab khatam ho jata |
-| AI seedha book kar sakta hai? | Nahi. Result pe click se seat SELECT hoti hai; book user karta hai. AI ko paisa kaatne wale raaste me nahi daala |
-| Model galat filters de to? | Pydantic clamp karta hai (quantity 1-10, price bounds). Aur filters user ko dikhte hain, to galti turant pakdi jaati hai |
-| AI copy publish kar sakti hai? | Nahi — draft form me bharta hai, publish organizer karta hai. Description attendee se kiya waada hai |
-| Poster generator? | Nahi bana — free tier me image quota hai hi nahi (429). README me wajah ke saath "not built" likha hai |
+| What if AI is down? | Search keeps working — filters work without AI too. Only NL input stops |
+| Confidence score? | No. Gemini doesn't give it, and making up a score is a lie |
+| Follow-up query ("show me cheaper")? | No — that needs session state and the cache benefit is gone |
+| Can AI book directly? | No. Clicking the result SELECTs the seat; the user books it. I didn't put AI in the money-deducting path |
+| What if AI gives wrong filters? | Pydantic clamps it (quantity 1-10, price bounds). And filters are visible to the user, so errors are caught immediately |
+| Can AI copy publish? | No — fills the draft form, organizer publishes. Description is a promise to the attendee |
+| Poster generator? | Not built — no image quota in free tier (429). Wrote "not built" in README with reason |
 
 ---
 
-## 17. Traps — jahan "haan" bolna galat hai
+## 17. Traps — where saying "yes" is wrong
 
-### "Kafka use kar sakte the na?"
+### "Couldn't you use Kafka?"
 
-> "Kar sakta tha, par yahan galat fit hota. Kafka tab chahiye jab events **durable aur replayable** hone chahiye — payment ledger jaisa.
+> "I could, but it's a bad fit here. Kafka is needed when events **must be durable and replayable** — like a payment ledger.
 >
-> Yahan seat locks 5 minute jeete hain aur mar jaate hain. Unhe replay karne ka koi matlab hi nahi. Redis pub/sub is kaam ke liye sahi size ka tool hai, aur wo pehle se stack me tha.
+> Here, seat locks live for 5 minutes and die. Replaying them makes no sense. Redis pub/sub is the right size tool for this job, and it was already in the stack.
 >
-> Haan, jab payments add karunga — tab durable event log ki asli zaroorat padegi."
+> Yes, when I add payments — then the real need for a durable event log will arise."
 
-### "Microservices me kyu nahi toda?"
+### "Why didn't you break it into microservices?"
 
-> "Kyunki ye ek team, ek deployment, aur ek database wala system hai. Microservices banata to distributed transactions ka dard mol le leta — aur mera poora core problem hi transactional consistency hai. Wo isse aasan nahi, mushkil ho jata.
+> "Because this is one team, one deployment, and one database system. Building microservices would have invited the pain of distributed transactions — and my entire core problem is transactional consistency. It wouldn't have made it easier, but harder.
 >
-> Modular monolith rakha hai — routers alag hain, layers साफ hain. Zaroorat padne par nikalna aasan rahega."
+> I kept a modular monolith — routers are separate, layers are clean. It will be easy to extract if needed."
 
-### "Isse simple nahi kar sakte the?"
+### "Couldn't you have made it simpler?"
 
-> "Ek layer chhod sakta tha — Redis. Aur wo version + unique index ke saath bhi correct rehta. Par tab har request DB tak jaati.
+> "I could have dropped one layer — Redis. And it would still be correct with version + unique index. But then every request would hit the DB.
 >
-> Baaki do layers me se ek bhi hataunga to ya to correctness jayegi ya insurance. Ye teen jaan-boojh ke hain, ek dusre ka duplicate nahi."
+> If I remove either of the other two layers, I lose either correctness or insurance. All three are intentional, not duplicates of each other."
 
 ---
 
 ## 18. Rapid fire
 
-| Sawaal | Ek-line jawab |
+| Question | One-line answer |
 |---|---|
-| Seat kis state me ho sakti hai? | available, locked, booked — check constraint DB me hai |
-| Lock kitni der? | 5 min, config me, Redis TTL se |
-| Do tab me same user? | Dusra tab `already_owned` wala 200 pata hai, naya lock nahi |
-| Booking cancel pe seat? | Booking row `cancelled` hoti hai, delete nahi — partial index sirf `confirmed` pe hai, to seat dubara bik sakti hai |
-| Migration tool? | Alembic, aur autogenerate ki file mai padhta hoon before apply |
-| Test kitne? | 29 — auth, RBAC, rate limit, concurrency. Asli HTTP se, mock nahi |
-| Mock kyu nahi? | Race conditions mock me dikhti hi nahi. Jo bug load test ne pakda, wo mocked test kabhi na pakadta |
-| Bots kaise roke? | Redis token bucket, per-user aur per-email — per-IP nahi, wo edge (nginx/CDN) ka kaam hai |
-| Roles kaise? | Teen flat roles + `require_role`. Par role check aur **ownership** check alag hain — organizer hone se koi bhi event tumhara nahi ho jata |
-| Double-click se do booking? | `Idempotency-Key` — wahi key dubara aaye to naya kaam nahi, pehla jawab wapas |
-| Frontend counts kahan se? | Seats array se derive hote hain, server se nahi — WebSocket update pe apne aap sahi |
-| Docker me Redis persist? | Nahi, jaan-boojh ke. Sirf temporary locks hain |
-| CI hai? | Abhi nahi, roadmap me hai |
+| What states can a seat be in? | available, locked, booked — check constraint is in the DB |
+| How long is the lock? | 5 min, in config, via Redis TTL |
+| Same user in two tabs? | Second tab gets 200 with `already_owned`, no new lock |
+| Seat on booking cancel? | Booking row becomes `cancelled`, not deleted — partial index is only on `confirmed`, so seat can be sold again |
+| Migration tool? | Alembic, and I read the autogenerated file before applying |
+| How many tests? | 29 — auth, RBAC, rate limit, concurrency. With real HTTP, no mocks |
+| Why no mocks? | Race conditions don't appear in mocks. The bug the load test caught would never be caught by a mocked test |
+| How to stop bots? | Redis token bucket, per-user and per-email — not per-IP, that's the edge's (nginx/CDN) job |
+| How are roles handled? | Three flat roles + `require_role`. But role check and **ownership** check are separate — being an organizer doesn't make every event yours |
+| Double-click booking? | `Idempotency-Key` — if the same key arrives again, no new work, return the first answer |
+| Where do frontend counts come from? | Derived from the seats array, not the server — updates automatically on WebSocket update |
+| Redis persist in Docker? | No, intentional. Only temporary locks |
+| Is there CI? | Not yet, on the roadmap |
 
 ---
 
-## 19. Whiteboard — architecture aise banao
+## 19. Whiteboard — build the architecture like this
 
-Isi order me banao, bolte hue:
+Build it in this order, while speaking:
 
 ```
 1.  Browser ─── HTTP ──▶ FastAPI
@@ -1212,49 +1043,49 @@ Isi order me banao, bolte hue:
 7.  Browser ◀── WebSocket ── FastAPI ◀── Redis pub/sub
 ```
 
-Bolte waqt teen baatein zaroor:
-1. **Redis pehle** — "5000 me se 4999 yahin ruk jaati hain"
-2. **Postgres aakhri faisla** — "atomic UPDATE aur unique index"
-3. **Pub/sub arrow** — "isi se multi-worker pe kaam karta hai"
+Three things to mention while speaking:
+1. **Redis first** — "4999 out of 5000 stop here"
+2. **Postgres final decision** — "atomic UPDATE and unique index"
+3. **Pub/sub arrow** — "this is how it works on multi-worker"
 
 ---
 
-## 20. Tum kya poochho
+## 20. What you should ask
 
-Interview do-tarfa hai. Ye poochne se pata chalta hai ki tum production ke bare me sochte ho:
+The interview is two-way. Asking these shows you think about production:
 
-- "Aap log concurrency issues production me kaise pakadte ho — load testing pipeline me hai ya incident ke baad pata chalta hai?"
-- "Aapke system me abhi sabse bada scaling bottleneck kya hai?"
-- "Optimistic locking use karte ho kahin? Kaise decide karte ho kab pessimistic chahiye?"
-- "Naye engineer ko production tak pahunchne me kitna time lagta hai?"
+- "How do you catch concurrency issues in production — is load testing in the pipeline or do you find out after an incident?"
+- "What is the biggest scaling bottleneck in your system right now?"
+- "Do you use optimistic locking anywhere? How do you decide when pessimistic is needed?"
+- "How long does it take for a new engineer to reach production?"
 
 ---
 
-## Aakhri baat
+## Final word
 
-Teen cheezein hain jo is project ko normal projects se alag karti hain. Har interview me ye teeno aani chahiye:
+There are three things that set this project apart from normal projects. Every interview must include these three:
 
-1. **Layered defence, aur har layer ka reason** — "Redis speed ke liye, DB correctness ke liye" wali line
+1. **Layered defense, and the reason for each layer** — the "Redis for speed, DB for correctness" line
 2. **Numbers** — 200 users, 8154 requests, 0 failures, exactly 1 booking
-3. **Load test se mile teen bug** — khaaskar `pg_stat_activity` wala debugging
+3. **Three bugs found via load test** — especially the `pg_stat_activity` debugging one
 
-Aur ek line jo kabhi mat bhoolna:
+And one line you should never forget:
 
-> "Correctness maanni nahi hoti, maapni hoti hai."
+> "Correctness shouldn't be assumed, it must be measured."
 
 ---
 
 ## Related
 
-- [roadmap.md](roadmap.md) — kya ban chuka, kya baaki
-- [Phase 4 — Redis Locking](phases/04-redis-locking.md) — locking ka design
-- [Phase 6 — Load Testing](phases/06-load-testing.md) — load test aur pehla bug
-- [Phase 7 — Auth + Google OAuth](phases/07-auth-google-oauth.md) — auth + baaki do bug
-- [Phase 14 — Dynamic Pricing](phases/14-dynamic-pricing.md) — price lock ka poora design
-- [Phase 15 — Locking Benchmark](phases/15-locking-benchmark.md) — poore numbers aur method
-- [Phase 16 — Multi-Worker + CI](phases/16-multiworker-ci.md) — deploy config aur teen bugs
-- [Phase 17 — Group Booking](phases/17-group-booking.md) — "sab ya koi nahi" ka poora design
-- [Phase 18 — Seat Layout](phases/18-seat-layout.md) — nullable columns aur backwards compatibility
-- [Phase 19 — NL Seat Search](phases/19-nl-seat-search.md) — AI ki boundary aur key leak wala bug
-- [Phase 20 — AI Event Copy](phases/20-ai-event-copy.md) — "facts mat gadho", aur poster kyu nahi bana
-- [testing.md](reference/testing.md) — sab kuch demo karne ke commands
+- [roadmap.md](roadmap.md) — what's built, what's left
+- [Phase 4 — Redis Locking](phases/04-redis-locking.md) — locking design
+- [Phase 6 — Load Testing](phases/06-load-testing.md) — load test and first bug
+- [Phase 7 — Auth + Google OAuth](phases/07-auth-google-oauth.md) — auth + remaining two bugs
+- [Phase 14 — Dynamic Pricing](phases/14-dynamic-pricing.md) — full price lock design
+- [Phase 15 — Locking Benchmark](phases/15-locking-benchmark.md) — full numbers and method
+- [Phase 16 — Multi-Worker + CI](phases/16-multiworker-ci.md) — deploy config and three bugs
+- [Phase 17 — Group Booking](phases/17-group-booking.md) — full "all or nothing" design
+- [Phase 18 — Seat Layout](phases/18-seat-layout.md) — nullable columns and backwards compatibility
+- [Phase 19 — NL Seat Search](phases/19-nl-seat-search.md) — AI boundary and key leak bug
+- [Phase 20 — AI Event Copy](phases/20-ai-event-copy.md) — "don't make up facts", and why no poster generator
+- [testing.md](reference/testing.md) — commands to demo everything

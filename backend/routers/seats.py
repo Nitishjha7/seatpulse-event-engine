@@ -1,8 +1,8 @@
 """
-Seats ke routes + Redis distributed locking.
+Seat routes and Redis distributed locking.
 
-Flow: seat select karo -> lock milta hai (5 min) -> pay karo -> book.
-Lock na chhoda? Redis TTL khud release kar dega.
+Flow: Select seat -> acquire lock (5 min) -> pay -> book.
+If the lock is not released, the Redis TTL will handle it automatically.
 """
 
 from datetime import timedelta
@@ -40,18 +40,18 @@ router = APIRouter(prefix="/api", tags=["seats"])
 
 def release_expired_locks(db: Session, event_id: int) -> None:
     """
-    DB me pade purane 'locked' seats ko wapas 'available' karo.
+    Revert expired 'locked' seats in the DB to 'available'.
 
-    Zaroorat kyu:
-      Lock ka asli maalik Redis hai, aur Redis key TTL par CHUPCHAP delete ho
-      jaati hai — wo Postgres ko batane nahi aata. To DB me seat 'locked' hi
-      padi reh jati hai jabki asal me free ho chuki hai.
+    Reason:
+      Redis is the source of truth for locks. When a Redis key TTL expires,
+      it is deleted silently without notifying Postgres. Consequently,
+      seats remain 'locked' in the DB even after they are free.
 
-    Isliye seats padhne se pehle ek sasta UPDATE chala dete hain.
-    Ye "lazy cleanup" hai — background job/cron ki zaroorat nahi.
+    We perform a lightweight UPDATE before reading seats. This is a
+    "lazy cleanup" strategy, avoiding the need for background jobs or cron.
     """
-    # payment_pending bhi shaamil hai — abandoned checkout ki seat bhi
-    # wapas aani chahiye, warna ek chhoda hua payment seat hamesha block kar deta.
+    # Include payment_pending; abandoned checkouts must release the seat,
+    # otherwise, an abandoned payment would block the seat indefinitely.
     expired = db.scalars(
         select(Seat.id).where(
             Seat.event_id == event_id,
@@ -70,9 +70,9 @@ def release_expired_locks(db: Session, event_id: int) -> None:
             status=SEAT_AVAILABLE,
             locked_by=None,
             locked_until=None,
-            # Hold gaya to price lock bhi gaya -- agli baar naya (shayad
-            # zyada) price lagega. Ye saaf karna zaroori hai, warna user
-            # ek baar hold karke hamesha ke liye purana price pa leta.
+            # If the hold expires, the price lock is also released. The next
+            # attempt will use the current (potentially higher) price. This
+            # prevents users from holding a seat to lock in an old price.
             held_price=None,
             version=Seat.version + 1,
         )
@@ -80,7 +80,7 @@ def release_expired_locks(db: Session, event_id: int) -> None:
     )
     db.commit()
 
-    # Expire hui seats ka bhi broadcast — dusre tabs me wo turant hari ho jayengi
+    # Broadcast expiration so other tabs update immediately.
     for seat_id in expired:
         broadcast_seat_update(db, seat_id, "expired")
 
@@ -88,12 +88,12 @@ def release_expired_locks(db: Session, event_id: int) -> None:
 @router.get("/events/{event_id}/seats", response_model=list[SeatOut])
 def list_event_seats(event_id: int, db: Session = Depends(get_db)):
     """
-    Ek event ki saari seats — seat grid isi se banta hai.
+    Retrieve all seats for an event to build the seat grid.
 
-    Row aur number se sorted, taki frontend ko sort na karna pade.
+    Sorted by row and number to minimize frontend processing.
     """
     if db.get(Event, event_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Event nahi mila")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
 
     release_expired_locks(db, event_id)
 
@@ -103,15 +103,14 @@ def list_event_seats(event_id: int, db: Session = Depends(get_db)):
         .order_by(Seat.row_label, Seat.seat_number)
     ).all()
 
-    # Pricing EK BAAR nikalte hain, har seat ke liye nahi. Multiplier poore
-    # event ka ek hi hota hai -- 500 seats ke liye 500 count queries maarna
-    # bewakoofi hoti.
+    # Calculate pricing once per event rather than per seat to avoid
+    # excessive queries for large venues.
     info = pricing_state(db, db.get(Event, event_id))
     return [_seat_out(seat, info) for seat in seats]
 
 
 def _seat_out(seat: Seat, info) -> SeatOut:
-    """ORM Seat -> API SeatOut, current price ke saath."""
+    """Map ORM Seat to API SeatOut with current price."""
     return SeatOut(
         id=seat.id,
         event_id=seat.event_id,
@@ -132,15 +131,15 @@ def _seat_out(seat: Seat, info) -> SeatOut:
 def get_seat(seat_id: int, db: Session = Depends(get_db)):
     seat = db.get(Seat, seat_id)
     if seat is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Seat nahi mili")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Seat not found")
     return _seat_out(seat, pricing_state(db, db.get(Event, seat.event_id)))
 
 
 @router.post(
     "/seats/{seat_id}/lock",
     response_model=SeatLockOut,
-    # ⭐ Flash sale ka sabse garam endpoint — bots yahi hammer karte hain.
-    # 15 burst allowed (user 4-5 seats jaldi try kar sakta hai), phir 5/s.
+    # ⭐ High-traffic endpoint; target for bots.
+    # 15 burst allowed (for users selecting multiple seats), then 5/s.
     dependencies=[Depends(limit_user(SEAT_LOCK))],
 )
 def lock_seat(
@@ -149,31 +148,30 @@ def lock_seat(
     user: User = Depends(get_current_user),
 ):
     """
-    ⭐ Seat ko apne naam hold karo.
+    ⭐ Hold a seat.
 
-    Ye flash sale ka sabse garam endpoint hai — 5000 log ek saath yahi hit
-    karte hain. Isliye poora faisla Redis ke ek atomic command me hota hai,
-    database tak baat pahunchne se pehle.
+    This is a high-concurrency endpoint. Decisions are made via atomic
+    Redis commands before hitting the database.
 
-    User token se aata hai — request body me user_id nahi bheja ja sakta.
+    User identity is derived from the token.
     """
     seat = db.get(Seat, seat_id)
     if seat is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Seat nahi mili")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Seat not found")
 
-    # Pehle se booked seat pe lock ka koi matlab nahi
+    # Cannot lock already booked seats.
     if seat.status not in (SEAT_AVAILABLE, SEAT_LOCKED):
         raise HTTPException(
-            status.HTTP_409_CONFLICT, f"Seat available nahi hai (status: {seat.status})"
+            status.HTTP_409_CONFLICT, f"Seat not available (status: {seat.status})"
         )
 
     # ---- LAYER 1: REDIS ATOMIC LOCK ----
     # SET seat:42:lock <user_id> NX EX 300
-    # 5000 requests me se theek EK ko True milega.
+    # Only one request will succeed among thousands.
     if not acquire_seat_lock(seat_id, user.id):
         owner = get_lock_owner(seat_id)
 
-        # Apna hi lock dubara maanga? Theek hai, TTL bata do.
+        # If the user already owns the lock, return the remaining TTL.
         if owner == user.id:
             return SeatLockOut(
                 seat_id=seat_id,
@@ -183,36 +181,29 @@ def lock_seat(
             )
 
         raise HTTPException(
-            status.HTTP_409_CONFLICT, "Ye seat abhi kisi aur ne hold ki hui hai"
+            status.HTTP_409_CONFLICT, "Seat is already held by another user"
         )
 
-    # Lock mil gaya. Ab DB me bhi likh do — sirf isliye taki DUSRE users ko
-    # grid me ye seat peeli dikhe. Asli lock Redis me hi hai.
+    # Lock acquired. Update DB so other users see the seat as 'locked' in the grid.
     #
-    # ⚠️ WHERE me status ka check ZAROORI hai. Ye race load test me pakdi gayi thi:
+    # ⚠️ The WHERE clause status check is CRITICAL to prevent race conditions:
     #
-    #   B: seat padhi (locked by A)      -> upar wala check pass ho gaya
-    #   A: book kar li                    -> status=booked, Redis lock release
-    #   B: Redis lock mil gaya (free tha) -> aur DB me status=locked likh diya
-    #      ...matlab 'booked' seat wapas 'locked' ho gayi. Ek confirmed booking
-    #      thi, par seat booked nahi dikhti thi.
+    #   B: read seat (locked by A)      -> check passes
+    #   A: book seat                    -> status=booked, Redis lock released
+    #   B: acquire Redis lock (free)    -> updates DB status=locked
+    #      ...result: 'booked' seat is overwritten to 'locked'.
     #
-    # Guard ke saath: seat beech me book ho gayi to rowcount 0 aata hai,
-    # hum lock wapas chhod dete hain aur 409 dete hain.
+    # With the guard, if the seat was booked in the interim, rowcount is 0,
+    # we release the Redis lock and return 409.
     ttl = settings.SEAT_LOCK_TTL
 
-    # PRICE LOCK -- hold ke saath price bhi freeze ho jata hai.
+    # PRICE LOCK -- freeze the price at the time of the hold.
     #
-    # User ko grid me jo price dikha tha, checkout pe wahi lagega. Beech me
-    # 50 seats bik jayein to bhi is user ka price nahi badlega.
+    # This ensures the user pays the price they saw in the grid, regardless
+    # of dynamic pricing changes during the hold.
     #
-    # Ye jaan-boojh ke ek COLUMN hai, calculation nahi -- kyunki "us waqt
-    # kya price tha" ko baad me dobara compute nahi kiya ja sakta. Demand
-    # tab tak badal chuki hoti hai.
-    #
-    # Note: seat pehle se `locked` thi aur wahi user dubara lock kar raha
-    # hai, to bhi naya price likh dete hain -- TTL bhi to reset ho raha hai,
-    # matlab ye ek naya hold hai.
+    # This is stored as a column because historical demand cannot be
+    # recomputed accurately later.
     quoted = current_price(
         float(seat.price), pricing_state(db, db.get(Event, seat.event_id))
     )
@@ -237,12 +228,12 @@ def lock_seat(
         db.rollback()
         release_seat_lock(seat_id, user.id)
         raise HTTPException(
-            status.HTTP_409_CONFLICT, "Seat abhi abhi book ho gayi"
+            status.HTTP_409_CONFLICT, "Seat was booked just now"
         )
 
     db.commit()
 
-    # Sab connected clients ko batao — unke grid me ye seat turant peeli ho jayegi
+    # Notify connected clients to update the grid.
     broadcast_seat_update(db, seat_id, "locked")
 
     return SeatLockOut(
@@ -261,13 +252,12 @@ def unlock_seat(
     user: User = Depends(get_current_user),
 ):
     """
-    Apna lock chhodo (user ne dusri seat chun li, ya cancel kar diya).
+    Release a lock (e.g., user selected a different seat or cancelled).
 
-    Lua script check karta hai ki lock hamara hi hai. Kisi aur ka lock
-    galti se delete nahi hoga.
+    Lua script ensures only the owner can release the lock.
     """
     if db.get(Seat, seat_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Seat nahi mili")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Seat not found")
 
     released = release_seat_lock(seat_id, user.id)
 
@@ -279,7 +269,7 @@ def unlock_seat(
                 status=SEAT_AVAILABLE,
                 locked_by=None,
                 locked_until=None,
-                held_price=None,   # price lock bhi chhoda
+                held_price=None,   # Release price lock
                 version=Seat.version + 1,
             )
             .execution_options(synchronize_session=False)
@@ -287,8 +277,7 @@ def unlock_seat(
         db.commit()
         broadcast_seat_update(db, seat_id, "released")
 
-    # released=False bhi normal hai — lock TTL pe khud expire ho chuka hoga.
-    # Isliye error nahi de rahe.
+    # released=False is normal if the lock expired via TTL.
     return SeatLockOut(
         seat_id=seat_id,
         locked_by=None,
@@ -300,7 +289,7 @@ def unlock_seat(
 
 @router.get("/seats/{seat_id}/lock", response_model=SeatLockOut)
 def get_seat_lock(seat_id: int):
-    """Lock kiske paas hai aur kitna time bacha hai. Debugging me kaam aata hai."""
+    """Check lock ownership and remaining TTL. Useful for debugging."""
     owner = get_lock_owner(seat_id)
     return SeatLockOut(
         seat_id=seat_id,

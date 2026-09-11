@@ -1,63 +1,63 @@
 # Phase 11 — Payments
 
-[10-rbac-organizer.md](10-rbac-organizer.md) ke baad ka kaam.
+Follow-up to [10-rbac-organizer.md](10-rbac-organizer.md).
 
-**Kya bana:** checkout flow, webhook-based confirmation, aur seat ka naya state `payment_pending`.
+**Implemented:** Checkout flow, webhook-based confirmation, and a new seat state: `payment_pending`.
 
 ---
 
 ## The problem this solves
 
-Booking payment ke bina aadhi thi. Par payments sirf ek missing **feature** nahi the — ek missing **problem** the.
+Booking was incomplete without payments. However, payments were not just a missing **feature** — they were a missing **problem**.
 
-Jaise hi paisa aata hai, ye sawaal khulta hai:
+As soon as money is involved, a critical question arises:
 
-> **Paisa kat gaya, par booking fail ho gayi. Ab kya?**
+> **The payment was deducted, but the booking failed. Now what?**
 
-Ye classic **dual-write problem** hai — do systems (payment gateway aur hamara database) ko consistent rakhna, jab dono me se koi bhi kabhi bhi fail ho sakta hai.
+This is the classic **dual-write problem** — keeping two systems (the payment gateway and our database) consistent when either can fail at any time.
 
-Aur ye ek naya sawaal nahi hai — ye Phase 9 wale idempotency ka bada bhai hai. Wahan double-click se do booking rokni thi; yahan double-charge rokna hai.
-
----
-
-## Concept — webhook source of truth kyu hai
-
-Payment ke baad gateway user ko hamare site pe **redirect** karta hai. Ek naya developer sochta hai: "redirect aa gaya matlab payment ho gaya, booking bana do."
-
-**Ye galat hai. Do tarah se.**
-
-```
-GALAT — redirect par bharosa:
-
-  User pay karta hai ─► Gateway ─► redirect ─► hum booking banate hain
-
-  Problem 1: user pay karke tab BAND kar de
-             → redirect kabhi aata hi nahi
-             → par paisa kat chuka hai
-             → booking nahi bani. User ka paisa gaya.
-
-  Problem 2: koi seedha success URL kholde
-             → bina paise ke booking ban gayi
-```
-
-```
-SAHI — webhook par bharosa:
-
-  User pay karta hai ─► Gateway ──┬─► redirect ─► "thank you" page (sirf UI)
-                                  │
-                                  └─► webhook ─► server-to-server
-                                                 signature verified
-                                                 → BOOKING YAHAN BANTI HAI
-
-  User tab band kar de? Webhook phir bhi aata hai. Booking ban jaati hai.
-  Koi nakli redirect khole? Kuch nahi hota — wo page sirf poochta hai.
-```
-
-**Redirect UI ke liye hai, faisla lene ke liye nahi.**
+This is not a new challenge; it is the "big brother" of the idempotency issue from Phase 9. There, we had to prevent double bookings from double-clicks; here, we must prevent double-charging.
 
 ---
 
-## Step 1 — Seat ka naya state
+## Concept — Why the webhook is the source of truth
+
+After payment, the gateway **redirects** the user back to our site. A novice developer might think: "The redirect arrived, so the payment was successful; create the booking."
+
+**This is wrong for two reasons.**
+
+```
+WRONG — relying on the redirect:
+
+  User pays ─► Gateway ─► redirect ─► we create the booking
+
+  Problem 1: User pays and closes the tab immediately
+             → Redirect never arrives
+             → Money is deducted
+             → Booking is not created. User loses money.
+
+  Problem 2: Someone opens the success URL directly
+             → Booking created without payment
+```
+
+```
+RIGHT — relying on the webhook:
+
+  User pays ─► Gateway ──┬─► redirect ─► "thank you" page (UI only)
+                         │
+                         └─► webhook ─► server-to-server
+                                        signature verified
+                                        → BOOKING IS CREATED HERE
+
+  User closes the tab? The webhook still arrives. The booking is created.
+  Someone opens a fake redirect? Nothing happens — that page only queries status.
+```
+
+**The redirect is for the UI, not for making decisions.**
+
+---
+
+## Step 1 — New seat state
 
 ```
 available → locked → payment_pending → booked
@@ -65,53 +65,53 @@ available → locked → payment_pending → booked
                   (fail/timeout) → available
 ```
 
-`payment_pending` alag status kyu, `locked` hi kyu na rakhein:
+Why a separate `payment_pending` state instead of just `locked`:
 
 | | |
 |---|---|
-| Dusre users ko | "hold me hai" aur "bik rahi hai" alag dikhta hai (UI me orange, pulse karta hua) |
-| Cleanup ko | Expired hold aur abandoned checkout alag treat kar sakte hain |
-| Debugging ko | Seat kis stage me atki hai, ek nazar me pata chalta hai |
+| For other users | "On hold" and "being purchased" look different (UI: orange, pulsing) |
+| For cleanup | Expired holds and abandoned checkouts can be treated differently |
+| For debugging | The seat's current stage is visible at a glance |
 
-Migration me **check constraint dobara banani padi** — `ALTER` se constraint badalti nahi, drop karke recreate karni padti hai.
+During migration, the **check constraint had to be recreated** — `ALTER` does not modify constraints; they must be dropped and recreated.
 
-> ⚠️ Autogenerate ne ye **miss kiya**. Alembic existing check constraints ka *content* compare nahi karta. Bina isko haath se add kiye, `payment_pending` insert karte hi `CheckViolation` aata.
+> ⚠️ Autogenerate **missed this**. Alembic does not compare the *content* of existing check constraints. Without adding this manually, inserting `payment_pending` would trigger a `CheckViolation`.
 >
-> Yahi wajah hai ki har autogenerate migration khol ke padhni chahiye.
+> This is why every autogenerated migration must be reviewed.
 
 ---
 
-## Step 2 — Payment table alag kyu, Booking me merge kyu nahi
+## Step 2 — Why a separate Payment table, not merged into Booking
 
 ```python
 class Payment(Base):
-    booking_id: Mapped[int | None]   # succeed hone par hi bharta hai
+    booking_id: Mapped[int | None]   # Populated only on success
     status: str                       # pending | succeeded | failed | expired | refunded
     provider: str                     # "stripe" | "mock"
-    provider_ref: str | None          # gateway ka session id — UNIQUE
+    provider_ref: str | None          # Gateway session ID — UNIQUE
     expires_at: datetime
 ```
 
-Merge kar dete to teen dikkatein hoti:
+Merging them would cause three issues:
 
-1. **"Failed booking"** jaisi ajeeb cheez banti — booking ya to hai ya nahi hai
-2. User do baar try kare (pehli fail, dusri succeed) — do payments, ek booking. Merge me ye represent hi nahi hota
-3. Refund history kahin nahi bachti
+1. **"Failed booking"** becomes an ambiguous concept — a booking either exists or it doesn't.
+2. If a user tries twice (first fails, second succeeds) — two payments, one booking. Merging cannot represent this.
+3. Refund history would be lost.
 
-### ⭐ `provider_ref` UNIQUE hai — yahi webhook ko idempotent banata hai
+### ⭐ `provider_ref` is UNIQUE — this makes the webhook idempotent
 
-Gateway same event **do baar** bhej sakta hai (webhooks at-least-once hote hain). Unique constraint ki wajah se dusri baar naya row insert nahi hota — lookup hota hai.
+The gateway may send the same event **twice** (webhooks are at-least-once). The unique constraint prevents a second row from being inserted — it performs a lookup instead.
 
-### Ek aur partial unique index
+### Another partial unique index
 
 ```python
 Index("uq_one_pending_payment_per_seat", "seat_id", unique=True,
       postgresql_where=text("status = 'pending'"))
 ```
 
-Ek seat ka ek hi pending payment. Do log ek saath checkout shuru nahi kar sakte, aur ek user do tab me do session nahi bana sakta.
+Only one pending payment per seat. Two people cannot start checkout simultaneously, and one user cannot create two sessions in two tabs.
 
-**Wahi pattern** jo bookings pe hai (`uq_one_confirmed_booking_per_seat`) — sirf `pending` par lagta hai, isliye fail hone ke baad retry chalta hai.
+**The same pattern** used for bookings (`uq_one_confirmed_booking_per_seat`) — but applied only to `pending`, allowing retries after failure.
 
 ---
 
@@ -125,66 +125,66 @@ def get_provider():
     return StripeProvider() if settings.payment_provider == "stripe" else MockProvider()
 ```
 
-Provider `STRIPE_SECRET_KEY` se khud chunta hai — config me alag flag nahi rakha, kyunki phir do jagah sach hota aur wo galat ho sakta.
+The provider selects itself based on `STRIPE_SECRET_KEY` — no separate config flag, as that would create two sources of truth, risking errors.
 
-### ⭐ Mock kyu banaya
+### ⭐ Why build a Mock
 
-Interviewer mera repo clone karega — uske paas meri Stripe keys nahi hongi. Bina mock ke wo poora checkout flow chala hi nahi sakta, aur "payments hain" ka claim uske liye jhoot jaisa lagta.
+An interviewer will clone my repo — they won't have my Stripe keys. Without a mock, they couldn't run the checkout flow, and the claim "payments are implemented" would seem false.
 
-Mock ka checkout page frontend pe khulta hai (`/pay/:id`), aur wo **wahi `_fulfil`/`_fail` call karta hai** jo asli webhook karta hai. Matlab mock ke liye alag code path test nahi ho raha — sirf trigger alag hai, logic bilkul same.
+The mock checkout page opens on the frontend (`/pay/:id`) and calls the **same `_fulfil`/`_fail` functions** as the real webhook. This means we aren't testing a separate code path for the mock — only the trigger is different; the logic is identical.
 
-Yahi pattern Google OAuth me use kiya tha: credentials na ho to feature gracefully band, poora app nahi tootta.
+I used this same pattern for Google OAuth: if credentials are missing, the feature degrades gracefully rather than breaking the entire app.
 
-### Stripe SDK kyu nahi use kiya
+### Why not use the Stripe SDK
 
-`httpx` pehle se dependency hai aur Stripe ka REST API seedha hai. SDK add karne se ek aur dependency aati — aur zyada important, **webhook signature verification ek black box ban jaata**. Wo khud likhne se pata chalta hai ki wo actually kaam kaise karta hai.
+`httpx` is already a dependency, and Stripe's REST API is straightforward. Adding the SDK would introduce another dependency — and more importantly, **webhook signature verification would become a black box**. Writing it manually reveals how it actually works.
 
 ---
 
 ## Step 4 — ⭐ Webhook signature verification
 
-Ye endpoint **authenticated nahi ho sakta** — Stripe ke paas hamara JWT nahi hai. To signature hi uska authentication hai. Bina verify kiye koi bhi POST maar ke free ticket le leta.
+This endpoint **cannot be authenticated** — Stripe does not have our JWT. The signature is its authentication. Without verification, anyone could send a POST request and claim a free ticket.
 
-Stripe header aisa bhejta hai:
+Stripe sends a header like:
 ```
 Stripe-Signature: t=1712345678,v1=abc123...
 ```
 
-Verify karne ka tarika:
+Verification method:
 ```python
 signed = f"{timestamp}.".encode() + raw_body
 expected = hmac.new(webhook_secret.encode(), signed, hashlib.sha256).hexdigest()
 hmac.compare_digest(expected, provided)
 ```
 
-Teen cheezein jo galat karna aasan hai:
+Three common pitfalls:
 
-| Cheez | Galat karo to |
+| Pitfall | Consequence |
 |---|---|
-| **Raw body chahiye**, parsed JSON nahi | Signature exact bytes par bani hai. JSON parse karke dobara serialize karoge to spacing badal jayegi aur signature kabhi match nahi karegi |
-| **Timestamp check** | Bina iske koi ek valid webhook capture karke **baar-baar replay** kar sakta hai — signature to hamesha valid hi rahegi |
-| **`compare_digest`**, `==` nahi | Normal `==` pehle mismatch pe return kar deta hai. Jawab ke **time** se attacker ek-ek character guess kar sakta hai (timing attack) |
+| **Need raw body**, not parsed JSON | The signature is based on exact bytes. Parsing and re-serializing JSON changes spacing, causing signature mismatch |
+| **Timestamp check** | Without this, an attacker could capture a valid webhook and **replay it repeatedly** — the signature would remain valid |
+| **`compare_digest`**, not `==` | Standard `==` returns on the first mismatch. An attacker can guess characters based on the **time** taken (timing attack) |
 
 ---
 
-## Step 5 — ⭐ Fulfilment idempotent hona chahiye
+## Step 5 — ⭐ Fulfilment must be idempotent
 
 ```python
 def _fulfil(db, payment):
-    # Pehle se ho chuka? Wahi booking lauta do.
+    # Already done? Return the existing booking.
     if payment.status == PAYMENT_SUCCEEDED and payment.booking_id:
         return db.get(Booking, payment.booking_id)
     ...
 ```
 
-**Kyu zaroori hai:**
-- Webhooks at-least-once hote hain — gateway retry karta hai agar hamara response miss ho jaye
-- Reconciliation job bhi isi function ko call karta hai
-- Mock ka simulate bhi
+**Why it is necessary:**
+- Webhooks are at-least-once — the gateway retries if our response is missed.
+- The reconciliation job also calls this function.
+- The mock simulator also calls this function.
 
-Teeno raaste ek hi function pe aate hain, aur wo dobara chale to naya kaam nahi karta.
+All three paths converge on one function, which performs no redundant work if called again.
 
-### Aur teeno purani layers yahan bhi lagti hain
+### The three legacy layers apply here too
 
 ```python
 result = db.execute(
@@ -193,56 +193,56 @@ result = db.execute(
     .values(status=SEAT_BOOKED, version=Seat.version + 1)
 )
 if result.rowcount == 0:
-    # Seat kisi aur ne le li — par paisa kat chuka hai!
+    # Seat taken by someone else — but money was deducted!
     payment.status = PAYMENT_FAILED
     payment.failure_reason = "seat_taken_after_payment"
-    logger.error("Payment %s succeeded par seat %s le li gayi — REFUND CHAHIYE", ...)
+    logger.error("Payment %s succeeded but seat %s was taken — REFUND REQUIRED", ...)
 ```
 
-⚠️ Ye theoretically nahi hona chahiye (lock hamare paas tha). Par **"nahi hona chahiye" aur "nahi hoga" alag baatein hain.** Isliye ise chupchap ignore nahi kiya — payment ko failed mark karke reason likh dete hain, taki refund flow ise utha sake, aur log me ERROR jata hai.
+⚠️ This theoretically shouldn't happen (we held the lock). But **"shouldn't happen" and "won't happen" are different things.** I didn't ignore this — I mark the payment as failed with a reason so the refund flow can pick it up, and log an ERROR.
 
 ---
 
-## Step 6 — Reconciliation — sirf webhook kaafi nahi
+## Step 6 — Reconciliation — Webhooks are not enough
 
-Webhook miss ho sakta hai: hamara server neeche tha, network gira, ya gateway ne saare retries khatam kar diye. Us case me paisa kat chuka hoga par booking nahi bani hogi.
+Webhooks can be missed: our server was down, the network failed, or the gateway exhausted its retries. In that case, money would be deducted but the booking not created.
 
-`reconcile_payments.py` un pending payments ko uthata hai jinka TTL nikal gaya:
+`reconcile_payments.py` picks up pending payments that have exceeded their TTL:
 
 ```
-Stripe se poochho → "paid" hai? → _fulfil karo (webhook miss hua tha)
-                  → "unpaid"?  → _fail karo, seat wapas
-                  → pata nahi? → chhod do, agli baar dekhenge
+Ask Stripe → "paid"? → _fulfil (missed webhook)
+           → "unpaid"? → _fail, release seat
+           → unknown? → ignore, check next time
 ```
 
-> ⚠️ **Stripe se poochhe bina expire karna galat hoga** — matlab user ka paisa le lena aur ticket na dena. Isliye status pata na chale to kuch nahi karte.
+> ⚠️ **Expiring without asking Stripe is wrong** — it would mean taking the user's money and not giving them a ticket. If the status is unknown, we do nothing.
 
-Webhook **fast path** hai, reconciliation **safety net**. Har paise wale system me dono hote hain.
+The webhook is the **fast path**; reconciliation is the **safety net**. Every payment system needs both.
 
 ---
 
 ## Step 7 — Frontend
 
-| Page | Kya |
+| Page | What |
 |---|---|
-| `HoldCard` | "Confirm Booking" ab **"Pay ₹800"** hai |
-| `/pay/:id` | Mock checkout — sirf jab Stripe keys na hon. Upar saaf banner: "🧪 Simulated Checkout, koi asli paisa nahi katega" |
-| `/payment/return` | Gateway se wapas aane par. **Kuch decide nahi karta** — sirf backend se status poochta hai |
+| `HoldCard` | "Confirm Booking" is now **"Pay ₹800"** |
+| `/pay/:id` | Mock checkout — only when Stripe keys are missing. Clear banner: "🧪 Simulated Checkout, no real money will be deducted" |
+| `/payment/return` | After returning from the gateway. **Decides nothing** — only queries the backend for status |
 
-### Return page poll kyu karta hai
+### Why the return page polls
 
 ```js
-if (p.status !== 'pending') return       // terminal — ruk jao
+if (p.status !== 'pending') return       // terminal — stop
 if (n < 20) setTimeout(() => poll(n + 1), 1500)
 ```
 
-Redirect aksar webhook se **pehle** aa jata hai. Ek baar poochh ke "failed" bol dena galat hoga. ~30 second poll karte hain, phir user se kehte hain ki bookings me check kar le — kyunki webhook baad me bhi aayega aur booking khud ban jayegi.
+The redirect often arrives **before** the webhook. Reporting "failed" after one query would be wrong. We poll for ~30 seconds, then advise the user to check their bookings — the webhook will arrive eventually and create the booking.
 
 ---
 
 ## ✅ Proof
 
-### 1. Checkout — seat payment_pending hoti hai, booked nahi
+### 1. Checkout — seat becomes payment_pending, not booked
 
 ```bash
 curl -X POST -H "Authorization: Bearer $T" localhost:8000/api/seats/3/lock
@@ -257,29 +257,29 @@ curl -s localhost:8000/api/seats/3 | grep -o '"status":"[^"]*"'
 # "status":"payment_pending"
 ```
 
-### 2. Dusra user block hota hai
+### 2. Other users are blocked
 
 ```bash
 curl -X POST -H "Authorization: Bearer $T2" -d '{"seat_id":3}' .../payments/checkout
-# {"detail":"Ye seat kisi aur ke paas hold hai"}
+# {"detail":"This seat is held by someone else"}
 ```
 
-### 3. ⭐ Fulfilment idempotent hai
+### 3. ⭐ Fulfilment is idempotent
 
 ```bash
-# Pehli baar
+# First time
 curl -X POST ... /api/payments/1/simulate -d '{"outcome":"success"}'
 # {"status":"succeeded","booking_id":196}
 
-# DOBARA
+# AGAIN
 curl -X POST ... /api/payments/1/simulate -d '{"outcome":"success"}'
-# {"status":"succeeded","booking_id":196}     <- WAHI booking
+# {"status":"succeeded","booking_id":196}     <- SAME booking
 
 psql -c "SELECT count(*) FROM bookings WHERE seat_id=3 AND status='confirmed';"
 #  1
 ```
 
-### 4. Fail path — seat wapas
+### 4. Fail path — seat released
 
 ```bash
 curl -X POST ... /simulate -d '{"outcome":"fail"}'
@@ -296,8 +296,8 @@ psql -c "UPDATE payments SET expires_at = now() - interval '1 hour' WHERE id=9;"
 docker compose exec backend python reconcile_payments.py
 ```
 ```
-INFO 1 stale pending payments mile
-INFO ✅ 0 fulfil kiye (missed webhooks), 1 expire kiye
+INFO Found 1 stale pending payments
+INFO ✅ 0 fulfilled (missed webhooks), 1 expired
 ```
 ```
 seat 9 → "available"
@@ -310,22 +310,22 @@ payment 9 → failed / expired_unpaid
 37 passed in 28.93s
 ```
 
-8 naye tests — checkout state, dusre user ka block, success path, **idempotency**, fail path, IDOR, aur **do webhook signature tests** (bad signature aur missing signature dono 400).
+8 new tests — checkout state, blocking other users, success path, **idempotency**, fail path, IDOR, and **two webhook signature tests** (bad signature and missing signature both return 400).
 
 ---
 
-## Interview me kya poocha jayega
+## Interview questions
 
-| Sawaal | Jawab |
+| Question | Answer |
 |---|---|
-| "Payment integrate kaise kiya?" | Gateway integrate karna asli kaam nahi tha. Asli problem **dual-write** thi — paisa kat gaya par booking fail. Isliye webhook source of truth hai, redirect nahi |
-| "Redirect par bharosa kyu nahi?" | Do wajah: user tab band kar de to redirect aata hi nahi par paisa kat chuka hota hai; aur koi seedha success URL khol ke bina paise ke booking bana leta |
-| "Webhook do baar aaya to?" | `provider_ref` unique hai aur `_fulfil` idempotent — dusri baar wahi booking wapas milti hai, nayi nahi |
-| "Webhook aaya hi nahi to?" | Reconciliation job. TTL nikal jaane par gateway se poochte hain aur settle karte hain. Sirf webhook pe bharosa nahi |
-| "Webhook authenticate kaise kiya?" | Signature — HMAC-SHA256 raw body par, timestamp tolerance ke saath (replay rokta hai) aur `compare_digest` se (timing attack rokta hai) |
-| "Card details kahan store karte ho?" | Kahin nahi. Hosted checkout hai — card mere server ko chhuta hi nahi, isliye PCI scope me nahi aata |
-| "Paisa kat gaya par seat kisi aur ne le li?" | Lock ki wajah se hona nahi chahiye, par handle kiya hai — payment failed mark hota hai `seat_taken_after_payment` reason ke saath aur ERROR log jata hai, taki refund flow uthaye |
-| "Ek transaction me dono kyu nahi?" | Gateway meri DB transaction me hai hi nahi. External call ko transaction ke andar rakhna sabse aam galti hai — transaction network call jitni der khuli rehti hai |
+| "How did you integrate payments?" | Integrating the gateway wasn't the real work. The real problem was the **dual-write** — money deducted but booking failed. That's why the webhook is the source of truth, not the redirect. |
+| "Why not rely on the redirect?" | Two reasons: if the user closes the tab, the redirect never arrives but money is deducted; and someone could open the success URL directly to create a booking without paying. |
+| "What if the webhook arrives twice?" | `provider_ref` is unique and `_fulfil` is idempotent — the second time, it returns the same booking, not a new one. |
+| "What if the webhook never arrives?" | The reconciliation job. Once the TTL expires, we query the gateway and settle. We don't rely solely on the webhook. |
+| "How did you authenticate the webhook?" | Signature — HMAC-SHA256 on the raw body, with timestamp tolerance (prevents replay) and `compare_digest` (prevents timing attacks). |
+| "Where do you store card details?" | Nowhere. It's a hosted checkout — the card never touches my server, so it's out of PCI scope. |
+| "Money deducted but seat taken by someone else?" | Shouldn't happen due to locking, but it is handled — payment is marked failed with `seat_taken_after_payment` and an ERROR is logged for the refund flow. |
+| "Why not both in one transaction?" | The gateway is not in my DB transaction. Keeping an external network call open inside a transaction is the most common mistake. |
 
 ---
 
@@ -333,12 +333,12 @@ payment 9 → failed / expired_unpaid
 
 | Problem | Fix |
 |---|---|
-| `CheckViolation` on payment_pending | Migration me check constraint drop+recreate karna bhool gaye |
-| Checkout 409 de raha | Seat ka pending payment already hai — `reset_state.py` ya TTL ka wait |
-| Webhook 400 | Signature galat, ya raw body ki jagah parsed JSON verify kar rahe ho |
-| Stripe se `amount` galat kata | Stripe **paise** me leta hai — ₹800 = `80000`, `800` nahi |
-| Seat payment_pending me atki | `reconcile_payments.py` chalao, ya grid refresh karo (lazy cleanup) |
-| Mock page pe "already settled" | Payment pehle hi succeed/fail ho chuka — return page pe jao |
+| `CheckViolation` on payment_pending | Forgot to drop+recreate check constraint in migration |
+| Checkout returns 409 | Pending payment already exists — use `reset_state.py` or wait for TTL |
+| Webhook 400 | Wrong signature, or verifying parsed JSON instead of raw body |
+| Stripe `amount` incorrect | Stripe uses **cents** — ₹800 = `80000`, not `800` |
+| Seat stuck in payment_pending | Run `reconcile_payments.py` or refresh grid (lazy cleanup) |
+| Mock page says "already settled" | Payment already succeeded/failed — go to the return page |
 
 ---
 
@@ -346,40 +346,40 @@ payment 9 → failed / expired_unpaid
 
 ```
 backend/
-├── payments.py                 ← naya ⭐ providers + signature verification
-├── routers/payments.py         ← naya ⭐ checkout, webhook, fulfilment
-├── reconcile_payments.py       ← naya (missed webhooks ka safety net)
+├── payments.py                 ← new ⭐ providers + signature verification
+├── routers/payments.py         ← new ⭐ checkout, webhook, fulfilment
+├── reconcile_payments.py       ← new (safety net for missed webhooks)
 ├── models.py                   ← Payment model, SEAT_PAYMENT_PENDING
 ├── schemas.py                  ← checkout/payment schemas
 ├── config.py                   ← Stripe keys, PAYMENT_TTL, provider picker
-├── reset_state.py              ← payments bhi saaf karta hai
-├── routers/seats.py            ← payment_pending ka expiry cleanup
-├── tests/test_concurrency.py   ← 8 naye tests (29 → 37)
+├── reset_state.py              ← cleans up payments too
+├── routers/seats.py            ← payment_pending expiry cleanup
+├── tests/test_concurrency.py   ← 8 new tests (29 → 37)
 └── alembic/versions/...        ← payments table + seat constraint
 
 frontend/src/
-├── pages/MockCheckout.jsx      ← naya (simulated gateway)
-├── pages/PaymentReturn.jsx     ← naya (polls, decide nahi karta)
+├── pages/MockCheckout.jsx      ← new (simulated gateway)
+├── pages/PaymentReturn.jsx     ← new (polls, makes no decisions)
 ├── booking/BookingContext.jsx  ← payForSeat()
 ├── components/HoldCard.jsx     ← "Pay ₹X" button
 ├── components/SeatGrid.jsx     ← payment_pending color + legend
 ├── api.js                      ← checkout/payment calls
-└── App.jsx                     ← /pay/:id aur /payment/return routes
+└── App.jsx                     ← /pay/:id and /payment/return routes
 ```
 
 ---
 
-## Note: `POST /api/bookings` abhi bhi hai
+## Note: `POST /api/bookings` still exists
 
-Direct booking endpoint hataya nahi hai — load tests aur concurrency tests usse use karte hain, aur wo teeno defence layers ka sabse saaf demo hai.
+The direct booking endpoint was not removed — load tests and concurrency tests use it, and it is the cleanest demo of the three defense layers.
 
-Production me ye **internal** ho jata (sirf fulfilment se call hota) ya hata diya jata. UI ab payment flow se hi jaati hai.
+In production, this would become **internal** (called only by fulfilment) or removed. The UI now goes through the payment flow only.
 
 ---
 
 ## Related
 
-- [09-rate-limit-idempotency.md](09-rate-limit-idempotency.md) — idempotency ka pehla roop
-- [04-redis-locking.md](04-redis-locking.md) — seat lock, jo checkout ke dauraan extend hota hai
+- [09-rate-limit-idempotency.md](09-rate-limit-idempotency.md) — first form of idempotency
+- [04-redis-locking.md](04-redis-locking.md) — seat lock, extended during checkout
 - [../reference/testing.md](../reference/testing.md) — test commands
-- [../roadmap.md](../roadmap.md) — aage kya
+- [../roadmap.md](../roadmap.md) — what's next

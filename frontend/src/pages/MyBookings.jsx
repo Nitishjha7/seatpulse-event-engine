@@ -12,7 +12,7 @@ export default function MyBookings() {
       <header>
         <h1 className="text-xl font-semibold text-slate-100">My Bookings</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Saari bookings — confirmed aur cancelled dono
+          All bookings, including confirmed and cancelled.
         </p>
       </header>
 
@@ -30,9 +30,9 @@ export default function MyBookings() {
 
       {bookings.some((b) => b.status === 'cancelled') && (
         <p className="text-xs text-slate-600">
-          Cancelled bookings delete nahi hoti — record bacha rehta hai. Partial
-          unique index sirf <code className="text-slate-500">confirmed</code> par
-          lagta hai, isliye wo seat dubara bik sakti hai.
+          Cancelled bookings are retained for record-keeping. The partial unique index
+          applies only to <code className="text-slate-500">confirmed</code> status,
+          allowing the seat to be rebooked.
         </p>
       )}
     </div>

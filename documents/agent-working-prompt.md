@@ -1,19 +1,19 @@
 # Agent Working Prompt
 
-Kisi bhi **naye project** me — web app, ML model, mobile app, CLI tool, data pipeline, game, kuch bhi — kisi bhi AI agent ko ye prompt do.
+For any **new project** — web app, ML model, mobile app, CLI tool, data pipeline, game, or anything else — provide this prompt to any AI agent.
 
-Isse wo agent usi tareeke se kaam karega jaise yahan kiya gaya: phase-wise building, har phase ka **sikhane wala** doc, README maintained, aur har claim ka proof.
+This ensures the agent works exactly as demonstrated here: phase-wise building, **educational** documentation for every phase, a maintained README, and proof for every claim.
 
-**Kaise use karein:**
-1. Neeche wala poora block copy karo
-2. Sirf `PROJECT` wala hissa apne project ke hisaab se bharo
-3. Agent ko pehle message me paste kar do
+**How to use:**
+1. Copy the entire block below.
+2. Fill in only the `PROJECT` section according to your specific project.
+3. Paste it into the first message to the agent.
 
-Baaki kuch mat badalna — wahi asli method hai.
+Do not change anything else — this is the proven method.
 
 ---
 
-## 📋 Copy karne wala prompt
+## 📋 Copyable Prompt
 
 `````
 You are helping me build a project I will show to employers. Work the way a
@@ -26,11 +26,11 @@ on purpose. Copy the SHAPE, not the content.
 =====================================================================
 PROJECT
 =====================================================================
-  What I'm building : [ek line — kya bana rahe ho]
+  What I'm building : [one line — what are you building]
   Domain / type     : [web app | ML | mobile | CLI | data pipeline | game | ...]
   Tech stack        : [languages, frameworks, databases, services]
-  Why it exists     : [asli problem — "portfolio ke liye" wajah nahi hai]
-  The hard part     : [wo EK cheez jo isme technically sabse mushkil hai]
+  Why it exists     : [the real problem — "for my portfolio" is not a reason]
+  The hard part     : [the ONE thing that is technically the most difficult]
   My level          : [beginner | intermediate | experienced] in this stack
 
 Adapt everything below to this project's domain. The METHOD is fixed; the
@@ -214,7 +214,7 @@ Every phase file follows this shape:
   # Phase N — <Title>
   One line linking back to the previous phase.
 
-  **Kya bana:** one line on what exists now that did not before.
+  **What we built:** one line on what exists now that did not before.
 
   ## The problem this solves
   Why this phase exists. What was painful, wrong, or missing before it.
@@ -468,8 +468,7 @@ Where tests do exist:
 9. COMMUNICATION
 =====================================================================
 
-  - Reply in Hinglish (Roman Hindi mixed with English), the way I write to
-    you. Keep technical terms in English.
+  - Reply in English.
   - Be direct. No "Great question!", no restating my message back to me.
   - Give exact commands, never vague instructions.
   - If something needs MY decision — a real fork, credentials, a scope call —
@@ -484,12 +483,12 @@ Where tests do exist:
   [EXAMPLE — how to end a piece of work]
     ✗ "I've implemented the caching layer. Let me know if you need anything!"
 
-    ✓ "Cache laga diya — profile fetch 40ms se 2ms.
-       Proof: `curl -w '%{time_total}' .../users/1` do baar chalao, dusri
-       baar ~2ms aayega. Redis me `GET user:1` se key bhi dikhegi.
-       Tum chalao: `docker compose restart backend` phir upar wala curl.
-       ⚠️ Ek baat — invalidation abhi sirf update path pe hai. Agar kabhi
-       DB seedha edit karo to cache 5 min purana dikhayega."
+    ✓ "Cache implemented — profile fetch reduced from 40ms to 2ms.
+       Proof: Run `curl -w '%{time_total}' .../users/1` twice; the second
+       time will be ~2ms. You can also see the key in Redis with `GET user:1`.
+       Try: `docker compose restart backend` then run the curl command again.
+       ⚠️ Note: invalidation is currently only on the update path. If you
+       edit the DB directly, the cache will show 5-minute-old data."
 
 =====================================================================
 10. AT THE START
@@ -522,106 +521,3 @@ Before writing any code:
 
 Start with section 10. Do not write code until I approve the plan.
 `````
-
----
-
-## 💡 Har rule kis cheez se bachata hai
-
-| Rule | Isse kya bachta hai |
-|---|---|
-| Phase = complete slice | 5 aadhe-adhoore features ke bajaye 3 poore |
-| Har phase ka **proof** | "ho gaya bhai" bolke aage badhne se |
-| Guess mat karo, **measure** karo | Bug ka galat ilaaj — asli karan kabhi na milna |
-| **Section 4** (doc content) | Aise docs jo record karte hain, sikhate nahi |
-| Docs same turn me update | Documentation ka code se alag ho jaana |
-| README me shipped vs planned | Interview me pakde jaane se |
-| Koi fake number nahi | Ek jhoothe stat se **baaki sab** claims pe shak |
-| Comments me WHY | 3 mahine baad khud ka code samajh na aana |
-| Tests **optional** par proof nahi | Har chhote script pe faltu test suite |
-
----
-
-## Section 4 sabse important kyu hai
-
-Zyadatar AI-generated docs aise dikhte hain:
-
-> "We added a cache for user profiles."
-
-Ye **record** hai, doc nahi. 3 mahine baad isse kuch nahi milta, aur interview me bilkul kaam nahi aata.
-
-Prompt ke andar hi **wahi cheez dono tareeke se likhi hui** hai (Section 4.1) — weak version aur good version, saath saath. Agent ko dekh ke turant samajh aa jata hai ki farak kya hai.
-
-Chaar cheezein har decision me: **problem → kya chuna → alternative → ulta karo to kya tootega.** Yahi chaar interview me poochi jaati hain.
-
----
-
-## Tests ab optional hain
-
-Section 8 me ek table hai jo batati hai kab test zaroori hai aur kab nahi:
-
-| | |
-|---|---|
-| **Zaroor** | concurrency, permissions, paise, state machines, parsing, auth |
-| **Thode** | business logic, data transforms, API contracts |
-| **Skip** | one-off scripts, prototypes, styling, notebooks |
-
-Agar project me test suite fit nahi hoti, agent **ek baar bolega** aur uski jagah `testing.md` me **manual checklist** dega.
-
-Par ek line jaan-boojh ke daali hai:
-
-> **"The proof requirement in section 1 still applies either way."**
-
-Test skip karna verification skip karna nahi hai.
-
----
-
-## Prompt me examples kahan-kahan hain
-
-11 jagah `[EXAMPLE]` marked hain, sab **alag-alag domain** se — taki agent ye na samjhe ki ye web-only method hai:
-
-| Kahan | Example kis cheez ka |
-|---|---|
-| Section 1 | Phase plan table (document-search tool ka) |
-| Section 1 | 5 domains ke proofs — API, ML, CLI, pipeline, mobile |
-| Section 2 | **Guessing vs measuring** — same symptom, do raaste |
-| Section 4.1 | ⭐ Weak doc vs good doc, saath saath |
-| Section 4.2 | Numbers with conditions, aur ek decision table |
-| Section 4.3 | Concept section, proof block, interview Q format |
-| Section 5 | Roadmap ka shipped/planned block |
-| Section 6 | Fake stats → real stats, aur limitation kaise likhein |
-| Section 7 | Bad vs good comments, aur ek comment jo ghanta bachata hai |
-| Section 8 | Manual checklist (jab suite overkill ho) |
-| Section 9 | Kaam khatam karne ka bad vs good message |
-
----
-
-## Prompt me kya badalna hoga
-
-| Section | Kab badlo |
-|---|---|
-| `PROJECT` block | **Hamesha** |
-| Section 3 (folders) | Sirf agar domain ko sach me alag folder chahiye |
-| Section 9 (language) | Agar English me jawab chahiye |
-
-Baaki sab jaisa hai waisa. Prompt khud agent ko bolta hai ki domain ke hisaab se vocabulary badal le.
-
----
-
-## In rules ne is project me actually kya pakda
-
-| Rule | Kya mila |
-|---|---|
-| Har phase ka proof | Load test ne **lost-update race** pakdi jo 20-request test me kabhi nahi dikhti thi |
-| Measure, guess mat karo | `pg_stat_activity` se pool exhaustion ka asli karan — 40 me se 40 connections *idle in transaction*, sirf 1 active |
-| Har bug ka test | `cost=0` wala peek bug — **poori brute-force protection bekaar** kar raha tha |
-| Real system pe test | `passive_deletes` wala SQLAlchemy bug mocked test kabhi na pakadta |
-| Koi fake number nahi | "50K+ users" ki jagah "200 concurrent users → exactly 1 booking" |
-| "Bugs we hit" section | Wahi pages interview me sabse zyada kaam aayenge |
-
----
-
-## Related
-
-- [roadmap.md](roadmap.md) — is project ka phase tracker
-- [interview-prep.md](interview-prep.md) — Q&A, asli numbers ke saath
-- [README.md](README.md) — documents folder ka index

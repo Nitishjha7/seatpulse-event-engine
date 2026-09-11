@@ -1,19 +1,19 @@
 # Phase 6 — Load Testing + Proof
 
-[Phase 5 — WebSockets](05-websockets.md) ke baad ka aakhri phase.
+[Phase 5 — WebSockets](05-websockets.md) is the final phase.
 
-> **Bina iske Phase 2-4 sirf daawa hai.** Ye phase unhe **number** me badalta hai — aur wahi number resume pe jata hai.
+> **Without this, Phases 2-4 are just claims.** This phase converts them into **numbers** — and those are the numbers that go on your resume.
 
 ---
 
-## Do alag cheezein measure karni hain
+## Two distinct things to measure
 
-| Kya | Kis se | Sawaal |
+| What | Using | Question |
 |---|---|---|
-| **Correctness** | `verify_integrity.py` | Overselling hui ya nahi? |
-| **Performance** | Locust | Kitni tez? |
+| **Correctness** | `verify_integrity.py` | Did overselling occur? |
+| **Performance** | Locust | How fast? |
 
-**Correctness zyada important hai.** Locust "0 failures" dikha sakta hai aur phir bhi database me do bookings ho sakti hain — kyunki dono requests ko `201` mila hoga. Isliye load test ke baad **hamesha** DB check karo.
+**Correctness is more important.** Locust might show "0 failures" while the database contains two bookings — because both requests received a `201`. Therefore, **always** check the DB after a load test.
 
 ---
 
@@ -26,11 +26,11 @@ loadtest/
 └── locustfile.py
 ```
 
-**Compose me profile ke saath:**
+**In Compose with profile:**
 ```yaml
   locust:
     build: ./loadtest
-    profiles: ["loadtest"]      # normal `up` pe start NAHI hoga
+    profiles: ["loadtest"]      # Will NOT start on normal `up`
     volumes:
       - ./loadtest:/loadtest
     ports:
@@ -41,37 +41,37 @@ loadtest/
       - backend
 ```
 
-> `profiles: ["loadtest"]` — roz ke `docker compose up` me ye container start nahi hoga. Sirf `--profile loadtest` dene par chalega.
+> `profiles: ["loadtest"]` — This container will not start during a standard `docker compose up`. It only runs when `--profile loadtest` is provided.
 
-### ⚠️ Dockerfile me ENTRYPOINT chahiye, sirf CMD nahi
+### ⚠️ Dockerfile requires ENTRYPOINT, not just CMD
 
 ```dockerfile
 ENTRYPOINT ["locust"]
 CMD ["-f", "locustfile.py"]
 ```
 
-**Kyu:** `docker compose run --rm locust -f locustfile.py --headless ...` ke arguments **CMD ko poora replace** kar dete hain. Sirf CMD hota to Docker `-f` ko hi executable samajhta:
+**Why:** Arguments passed to `docker compose run --rm locust -f locustfile.py --headless ...` **completely replace the CMD**. If only CMD were used, Docker would treat `-f` as the executable:
 
 ```
 exec: "-f": executable file not found in $PATH
 ```
 
-ENTRYPOINT fix rehta hai, arguments uske aage judte hain.
+The ENTRYPOINT remains fixed, and arguments are appended to it.
 
 ---
 
 ## Step 2 — `locustfile.py`
 
-Poora code: [../loadtest/locustfile.py](../../loadtest/locustfile.py)
+Full code: [../loadtest/locustfile.py](../../loadtest/locustfile.py)
 
-### Do scenarios
+### Two scenarios
 
-| Class | Kya karta hai | Kya prove karta hai |
+| Class | Action | What it proves |
 |---|---|---|
-| `FlashSaleUser` | Sab **ek hi seat** ke peeche | Overselling nahi hoti |
-| `BrowsingUser` | Grid dekhna + random booking | Asli response times |
+| `FlashSaleUser` | All target the **same seat** | No overselling |
+| `BrowsingUser` | View grid + random booking | Realistic response times |
 
-### ⚠️ Har user ka alag `user_id` — ye zaroori hai
+### ⚠️ Each user must have a unique `user_id` — this is critical
 
 ```python
 _user_ids = itertools.cycle(range(1, USER_POOL_SIZE + 1))
@@ -80,59 +80,59 @@ def on_start(self):
     self.user_id = next(_user_ids)
 ```
 
-Agar do Locust users same `user_id` bhejein, to dusre ko **`already_owned` wala 200** mil jayega — kyunki lock uske paas pehle se hai. Success count phool jayega aur test jhootha ho jayega.
+If two Locust users send the same `user_id`, the second one will receive a **`200` with `already_owned`** — because it already holds the lock. The success count will inflate, rendering the test invalid.
 
-Isliye `seed.py` ab **500 users** banata hai:
+Therefore, `seed.py` now creates **500 users**:
 ```python
 SEED_USERS = int(os.getenv("SEED_USERS", "500"))
 ```
 
-### 409 ko success maana hai
+### Treat 409 as success
 
 ```python
 elif res.status_code == 409:
-    res.success()      # ye FAILURE nahi hai — yahi sahi jawab hai
+    res.success()      # This is NOT a failure — it is the correct response
 ```
 
-Flash sale me 499 logon ko 409 milna **expected** hai. Failure mark karte to Locust "99% failure rate" dikhata — dekhne wale ko lagta app toota hua hai, jabki wo bilkul sahi kaam kar raha hai.
+In a flash sale, 499 people receiving a 409 is **expected**. Marking it as a failure would make Locust show a "99% failure rate," making the app look broken when it is actually working perfectly.
 
-Asli failure sirf `500` ya timeout hai.
+True failures are only `500` or timeouts.
 
 ---
 
 ## Step 3 — `verify_integrity.py`
 
-Poora code: [../backend/verify_integrity.py](../../backend/verify_integrity.py)
+Full code: [../backend/verify_integrity.py](../../backend/verify_integrity.py)
 
-**Chaar checks:**
+**Four checks:**
 
-| # | Check | Kya pakadta hai |
+| # | Check | What it catches |
 |---|---|---|
-| 1 | Koi seat 2+ confirmed bookings ke saath? | **Overselling** |
+| 1 | Any seat with 2+ confirmed bookings? | **Overselling** |
 | 2 | `booked` seats == confirmed bookings | State mismatch |
-| 3 | Koi `booked` seat bina booking ke? | Orphan seat |
-| 4 | Koi confirmed booking bina `booked` seat ke? | Orphan booking |
+| 3 | Any `booked` seat without a booking? | Orphan seat |
+| 4 | Any confirmed booking without a `booked` seat? | Orphan booking |
 
-Check #1 sabse important hai:
+Check #1 is the most important:
 ```sql
 SELECT seat_id, count(*) FROM bookings
 WHERE status = 'confirmed'
 GROUP BY seat_id HAVING count(*) > 1
 ```
-Ek bhi row aa gayi = overselling hui.
+If even one row is returned = overselling occurred.
 
 ---
 
-## Step 4 — Test chalao
+## Step 4 — Run the test
 
 ```bash
-# 1. Users seed karo (ek baar)
+# 1. Seed users (once)
 docker compose exec backend python seed.py
 
 # 2. Clean state
 docker compose exec backend python reset_state.py
 
-# 3. Flash sale — 500 users, ek seat
+# 3. Flash sale — 500 users, one seat
 docker compose --profile loadtest run --rm locust \
     -f locustfile.py FlashSaleUser --headless -u 500 -r 100 -t 30s \
     --host http://backend:8000
@@ -143,53 +143,53 @@ docker compose exec backend python verify_integrity.py
 
 **Flags:**
 
-| Flag | Matlab |
+| Flag | Meaning |
 |---|---|
 | `-u 500` | 500 concurrent users |
-| `-r 100` | 100 users/second ki speed se badhao |
-| `-t 30s` | 30 second chalao |
-| `--headless` | Web UI ke bina, terminal me |
+| `-r 100` | Ramp up at 100 users/second |
+| `-t 30s` | Run for 30 seconds |
+| `--headless` | No Web UI, run in terminal |
 
-**Web UI chahiye** (graphs ke saath, screenshot ke liye achha):
+**To use Web UI** (with graphs, good for screenshots):
 ```bash
 docker compose --profile loadtest up locust
 ```
-Phir http://localhost:8089
+Then visit http://localhost:8089
 
 ---
 
-## ⭐ Load test ne ek asli bug pakda
+## ⭐ Load test caught a real bug
 
-Ye is phase ki sabse badi seekh hai — **isliye load testing sirf "number nikalne" ke liye nahi hoti.**
+This is the biggest lesson of this phase — **load testing is not just for "getting numbers."**
 
-Pehla run:
+First run:
 
 ```
-✅ Koi seat do baar nahi biki
-❌ Seat status aur bookings match karte hain  — 0 booked seats, 1 confirmed bookings
-❌ Koi booking bina booked seat ke nahi       — 1 mismatched bookings
+✅ No seat sold twice
+❌ Seat status and bookings match  — 0 booked seats, 1 confirmed bookings
+❌ No booking without a booked seat — 1 mismatched bookings
    Seats:    locked=1, available=99
    Bookings: confirmed=1
 ```
 
-Seat `locked` thi, par uski **confirmed booking bhi thi**. Overselling nahi hui, par state galat thi.
+The seat was `locked`, but it also had a **confirmed booking**. No overselling, but the state was inconsistent.
 
-### Race kya thi
+### The race condition
 
 ```
-User B: seat padhi (status = locked by A)  -> upar wala check pass ho gaya
-User A: book kar li -> status = booked, Redis lock release
-User B: Redis lock mil gaya (ab free tha)
-User B: DB me likh diya -> status = locked     ← 'booked' overwrite ho gaya
+User B: read seat (status = locked by A)  -> check passed
+User A: book seat -> status = booked, Redis lock released
+User B: acquired Redis lock (now free)
+User B: wrote to DB -> status = locked     ← 'booked' was overwritten
 ```
 
-`lock_seat` ka DB update bina guard ke tha:
+The `lock_seat` DB update lacked a guard:
 ```python
 update(Seat).where(Seat.id == seat_id).values(status=SEAT_LOCKED, ...)
 ```
-Seat ki current haalat check kiye bina blindly `locked` likh raha tha.
+It was blindly writing `locked` without checking the seat's current state.
 
-### Fix — wahi optimistic locking pattern
+### Fix — the optimistic locking pattern
 
 ```python
 result = db.execute(
@@ -203,19 +203,19 @@ result = db.execute(
 
 if result.rowcount == 0:
     db.rollback()
-    release_seat_lock(seat_id, payload.user_id)    # apna Redis lock wapas do
-    raise HTTPException(409, "Seat abhi abhi book ho gayi")
+    release_seat_lock(seat_id, payload.user_id)    # release your Redis lock
+    raise HTTPException(409, "Seat was just booked")
 ```
 
-> **Seekhne wali baat:** 20-request test (Phase 3) me ye bug **nahi pakda gaya tha**. 500 users pe hi wo timing window khuli. Isiliye load testing zaroori hai — sirf metrics ke liye nahi, **bugs ke liye**.
+> **Takeaway:** This bug was **not caught** in the 20-request test (Phase 3). The timing window only opened at 500 users. This is why load testing is essential — not just for metrics, but for **bugs**.
 >
-> Interview me ye bataने layak cheez hai: "load test ne ek race pakdi jo chhote test me nahi dikhti thi, aur maine wahi guarded-update pattern lagakar theek ki."
+> This is worth mentioning in an interview: "The load test caught a race condition invisible in smaller tests, which I fixed using a guarded-update pattern."
 
 ---
 
-## ✅ Results (actual, is machine pe)
+## ✅ Results (actual, on this machine)
 
-### Test A — Flash sale: 500 users, ek seat
+### Test A — Flash sale: 500 users, one seat
 
 ```
 Total requests   : 4446
@@ -230,19 +230,19 @@ p99              : 11000 ms
 ==============================================================
 INTEGRITY CHECK
 ==============================================================
-  ✅ Koi seat do baar nahi biki
-  ✅ Seat status aur bookings match karte hain  — 1 booked seats, 1 confirmed bookings
-  ✅ Koi booked seat bina booking ke nahi  — 0 orphan seats
-  ✅ Koi booking bina booked seat ke nahi  — 0 mismatched bookings
+  ✅ No seat sold twice
+  ✅ Seat status and bookings match  — 1 booked seats, 1 confirmed bookings
+  ✅ No orphan seats                 — 0 orphan seats
+  ✅ No mismatched bookings          — 0 mismatched bookings
 --------------------------------------------------------------
   Seats:    available=99, booked=1
   Bookings: confirmed=1
 ==============================================================
-  ✅ SAB PASS — koi overselling nahi hui
+  ✅ ALL PASS — no overselling
 ==============================================================
 ```
 
-**4446 requests, 500 concurrent users, ek seat → exactly 1 booking.** Yahi asli proof hai.
+**4446 requests, 500 concurrent users, one seat → exactly 1 booking.** This is the real proof.
 
 ### Test B — Realistic browsing: 50 users
 
@@ -258,36 +258,36 @@ Aggregated                  13ms    21ms    85ms    160ms
 
 ---
 
-## ⚠️ Resume pe ye numbers kaise likhne hain
+## ⚠️ How to write these numbers on a resume
 
-**Ye mat likhna:** "sub-50ms API response times" — bina context ke.
+**Do not write:** "sub-50ms API response times" — without context.
 
-Kyunki 500 users pe p50 **2400ms** hai. Interviewer ne poocha "kis load pe?" aur jawab na diya to poori credibility jati hai.
+Because at 500 users, the p50 is **2400ms**. If an interviewer asks "at what load?" and you cannot answer, you lose all credibility.
 
-**Ye likhna:**
+**Write this:**
 
 > Sustained **p50 13ms / p95 85ms** at 50 concurrent users; verified **zero overselling** across 4,400+ requests from 500 concurrent users contending for a single seat.
 
-Ye sach hai, specific hai, aur exactly wahi hai jo maapa gaya.
+This is true, specific, and exactly what was measured.
 
-### 500 users pe itna slow kyu?
+### Why so slow at 500 users?
 
-Honest wajah — aur ye samajhna zaroori hai:
+The honest reason — and it is important to understand:
 
-| Wajah | Production me kya hota |
+| Reason | What happens in production |
 |---|---|
-| **Ek hi uvicorn worker** | `--workers 4` ya gunicorn ke peeche multiple workers |
-| **`--reload` on** | Dev flag hai, har request pe overhead. Production me off |
-| **Sab ek hi seat pe** | Asli traffic 100 seats pe faila hota hai — ye jaan-boojh ke worst case hai |
-| **Sab ek laptop pe** | DB, Redis, backend, aur load generator — sab same machine, same CPU |
+| **Single uvicorn worker** | `--workers 4` or multiple workers behind gunicorn |
+| **`--reload` on** | Dev flag, overhead on every request. Off in production |
+| **All on one seat** | Real traffic is spread across 100 seats — this is a deliberate worst-case |
+| **All on one laptop** | DB, Redis, backend, and load generator — all on the same machine, same CPU |
 
-Ye numbers **worst case** hain. Aur wahi baat interview me kehni hai — pata hona chahiye ki number kis wajah se aisa hai.
+These numbers are **worst-case**. And that is what you should say in an interview — you must know why the numbers are the way they are.
 
 ---
 
 ## Step 5 — Automated concurrency tests
 
-Poora code: [../backend/tests/test_concurrency.py](../../backend/tests/test_concurrency.py)
+Full code: [../backend/tests/test_concurrency.py](../../backend/tests/test_concurrency.py)
 
 ```bash
 docker compose exec backend pytest tests/ -v
@@ -304,7 +304,7 @@ tests/test_concurrency.py::test_version_increments_on_change    PASSED
 ============================== 6 passed in 2.92s ===============================
 ```
 
-**Ye asli HTTP requests bhejte hain, mock nahi.** Race conditions sirf tab dikhti hain jab poora stack (uvicorn + Redis + Postgres) saath chal raha ho. Mock kar dete to wo bug pakda hi na jata jo load test ne pakda.
+**These send real HTTP requests, not mocks.** Race conditions only appear when the full stack (uvicorn + Redis + Postgres) is running together. Mocking would have missed the bug the load test caught.
 
 ```python
 with ThreadPoolExecutor(max_workers=40) as pool:
@@ -313,25 +313,25 @@ with ThreadPoolExecutor(max_workers=40) as pool:
 assert codes.count(201) == 1
 ```
 
-Locust manual hai, ye har baar chal sakte hain — CI me bhi.
+Locust is manual; these can run every time — even in CI.
 
-Dev dependencies alag file me hain (`requirements-dev.txt`) taki production image me pytest na jaye.
+Dev dependencies are in a separate file (`requirements-dev.txt`) so pytest is not included in the production image.
 
 ---
 
 ## Step 6 — `reset_state.py`
 
-Testing ke beech me bar-bar chahiye:
+Needed repeatedly during testing:
 
 ```bash
 docker compose exec backend python reset_state.py
 ```
 ```
-✅ 3 bookings hataye, 100 seats available ki
-✅ 0 Redis locks saaf kiye
+✅ Removed 3 bookings, set 100 seats to available
+✅ Cleared 0 Redis locks
 ```
 
-> Redis me `flushall` nahi, sirf `scan_iter("seat:*:lock")` — apni keys hi delete karta hai. Aage Redis me aur cheezein aayengi (rate limiting waqerah), tab `flushall` unhe bhi uda deta.
+> Not `flushall` in Redis, only `scan_iter("seat:*:lock")` — it only deletes its own keys. Future Redis usage (rate limiting, etc.) would be wiped by `flushall`.
 
 ---
 
@@ -339,37 +339,37 @@ docker compose exec backend python reset_state.py
 
 | Problem | Fix |
 |---|---|
-| `exec: "-f": executable file not found` | Dockerfile me `ENTRYPOINT ["locust"]` chahiye |
-| Load test me sab `404 User nahi mila` | Users seed nahi hue — `docker compose exec backend python seed.py` |
-| Sab requests ko 200 mil raha (contention hi nahi) | Same `user_id` reuse ho raha. `USER_POOL_SIZE` check karo |
-| `Connection refused` locust se | `--host http://backend:8000` (container network), `localhost` nahi |
-| Response time bahut kharab | Normal hai — dev mode, ek worker, sab ek machine pe |
-| `verify_integrity.py` fail | **Achhi baat hai** — asli bug mila. Race dhoondho |
-| Tests fail "koi available seat nahi" | `docker compose exec backend python reset_state.py` |
-| Locust web UI nahi khul raha | `docker compose --profile loadtest up locust` phir http://localhost:8089 |
+| `exec: "-f": executable file not found` | Need `ENTRYPOINT ["locust"]` in Dockerfile |
+| Load test shows `404 User not found` | Users not seeded — `docker compose exec backend python seed.py` |
+| All requests get 200 (no contention) | Same `user_id` being reused. Check `USER_POOL_SIZE` |
+| `Connection refused` from locust | `--host http://backend:8000` (container network), not `localhost` |
+| Response time very poor | Normal — dev mode, single worker, all on one machine |
+| `verify_integrity.py` fails | **Good** — found a real bug. Look for the race condition |
+| Tests fail "no available seat" | `docker compose exec backend python reset_state.py` |
+| Locust web UI not opening | `docker compose --profile loadtest up locust` then http://localhost:8089 |
 
 ---
 
-## Files jo is phase me bane/badle
+## Files created/modified in this phase
 
 ```
-loadtest/                       ← naya folder
-├── Dockerfile                  (ENTRYPOINT zaroori)
+loadtest/                       ← new folder
+├── Dockerfile                  (ENTRYPOINT required)
 ├── requirements.txt
-└── locustfile.py               ⭐ do scenarios
+└── locustfile.py               ⭐ two scenarios
 
 backend/
-├── verify_integrity.py         ← naya  ⭐ asli proof
-├── reset_state.py              ← naya
-├── requirements-dev.txt        ← naya
+├── verify_integrity.py         ← new  ⭐ real proof
+├── reset_state.py              ← new
+├── requirements-dev.txt        ← new
 ├── Dockerfile                  ← update (dev deps)
 ├── seed.py                     ← update (500 users)
 ├── tests/
-│   └── test_concurrency.py     ← naya  ⭐ 6 tests
+│   └── test_concurrency.py     ← new  ⭐ 6 tests
 └── routers/
     └── seats.py                ← update  ⭐ RACE FIX (guarded update)
 
-docker-compose.yml              ← update (locust service, profile ke saath)
+docker-compose.yml              ← update (locust service, with profile)
 ```
 
 ---
@@ -389,10 +389,10 @@ git push
 
 ## Related
 
-- [Phase 4 — Redis Locking](04-redis-locking.md) — locking ka design
+- [Phase 4 — Redis Locking](04-redis-locking.md) — locking design
 - [postgres-commands.md](../reference/postgres-commands.md) — DB queries
-- [roadmap.md](../roadmap.md) — poora plan
+- [roadmap.md](../roadmap.md) — full plan
 
 ---
 
-**Roadmap complete.** Aage optional: JWT auth, rate limiting, multi-worker deploy (`--workers 4`), CI pipeline.
+**Roadmap complete.** Optional next steps: JWT auth, rate limiting, multi-worker deploy (`--workers 4`), CI pipeline.

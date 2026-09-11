@@ -4,24 +4,23 @@ import { Link } from 'react-router-dom'
 import { IconClose, IconPin } from '../layout/icons'
 import Confetti from './Confetti'
 
-/** Booking id ko reference number jaisa dikhao: 42 -> SP00042 */
+/** Format booking ID as a reference number: 42 -> SP00042 */
 export function bookingRef(id) {
   return `SP${String(id).padStart(5, '0')}`
 }
 
 /**
- * Booking confirm hone par success modal.
+ * Success modal displayed upon booking confirmation.
  *
- * Saara data ASLI hai — booking id database se, seat aur price us seat se
- * jo user ne hold ki thi. Koi placeholder nahi.
+ * Data is sourced directly from the database; no placeholders are used.
  */
 export default function BookingConfirmedModal({ booking, seat, event, onClose }) {
-  // Escape se band ho — har modal me ye hona chahiye
+  // Close on Escape key; standard modal behavior
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose()
     document.addEventListener('keydown', onKey)
 
-    // Modal khula ho to background scroll na ho
+    // Prevent background scrolling while modal is active
     const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
 
@@ -42,7 +41,7 @@ export default function BookingConfirmedModal({ booking, seat, event, onClose })
       aria-labelledby="booking-confirmed-title"
     >
       <div
-        // Andar click karne pe band na ho
+        // Prevent closing when clicking inside the modal
         onClick={(e) => e.stopPropagation()}
         className="animate-pop-in relative w-full max-w-sm overflow-hidden rounded-2xl
                    border border-violet-500/25 bg-[var(--panel)] p-6 text-center
@@ -58,7 +57,7 @@ export default function BookingConfirmedModal({ booking, seat, event, onClose })
           <IconClose />
         </button>
 
-        {/* Success tick */}
+        {/* Success indicator */}
         <div className="relative mx-auto flex h-14 w-14 items-center justify-center">
           <span className="absolute inset-0 rounded-full bg-emerald-500/20 blur-md" />
           <span className="relative flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500">
@@ -75,7 +74,7 @@ export default function BookingConfirmedModal({ booking, seat, event, onClose })
           Your seat has been successfully booked.
         </p>
 
-        {/* Event */}
+        {/* Event details */}
         <div className="relative mt-5 flex items-center gap-3 rounded-xl bg-[var(--panel-2)] p-3 text-left">
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 text-lg">
             🎤
@@ -89,7 +88,7 @@ export default function BookingConfirmedModal({ booking, seat, event, onClose })
           </div>
         </div>
 
-        {/* Details */}
+        {/* Booking summary */}
         <div className="relative mt-3 grid grid-cols-3 gap-2">
           <Detail label="Seat No." value={seat ? `${seat.row_label}-${seat.seat_number}` : '—'} />
           <Detail label="Price" value={`₹${booking.amount}`} />

@@ -1,7 +1,7 @@
-"""initial tables
+"""Initial database schema.
 
 Revision ID: 1eff3f80b4f6
-Revises: 
+Revises:
 Create Date: 2026-08-15 07:06:24.851649
 """
 from typing import Sequence, Union

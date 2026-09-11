@@ -19,18 +19,15 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.add_column('events', sa.Column('organizer_id', sa.Integer(), nullable=True))
     op.create_index(op.f('ix_events_organizer_id'), 'events', ['organizer_id'], unique=False)
-    # Constraint ka naam khud diya hai — autogenerate `None` chhod deta hai,
-    # aur bina naam ke downgrade me use drop nahi kar sakte.
+    # Explicitly name the constraint to ensure it can be dropped during downgrade.
     op.create_foreign_key(
         'fk_events_organizer_id_users', 'events', 'users',
         ['organizer_id'], ['id'], ondelete='SET NULL',
     )
 
-    # ⚠️ server_default zaroori hai — table me pehle se 500 users hain aur
-    # NOT NULL column bina default ke add karne par Postgres poochta hai
-    # "purani rows me kya daalun?" -> error.
-    # Column ban jaane ke baad default hata dete hain: value ab application
-    # (SQLAlchemy model) set karta hai.
+    # ⚠️ server_default is required to populate existing rows in the table.
+    # Postgres requires a default value when adding a NOT NULL column to a non-empty table.
+    # The default is removed immediately after to allow the application to manage values.
     op.add_column(
         'users',
         sa.Column('role', sa.String(length=16), nullable=False, server_default='attendee'),

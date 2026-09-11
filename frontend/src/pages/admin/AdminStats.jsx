@@ -19,9 +19,8 @@ export default function AdminStats() {
     }
 
     load()
-    // Live-ish feel ke liye har 10 second refresh. WebSocket bhi laga sakte
-    // the, par ye admin dashboard hai — 10 second ki taazgi kaafi hai, aur
-    // ek aur socket kholne ka koi faayda nahi.
+    // Refresh every 10s for near-real-time updates. Polling is sufficient
+    // for this admin dashboard; WebSockets are unnecessary overhead.
     const id = setInterval(load, 10_000)
 
     return () => {
@@ -46,7 +45,7 @@ export default function AdminStats() {
     <div className="animate-rise space-y-5">
       <header>
         <h1 className="text-xl font-semibold text-slate-100">Platform Stats</h1>
-        <p className="mt-1 text-sm text-slate-500">Har 10 second refresh hota hai</p>
+        <p className="mt-1 text-sm text-slate-500">Refreshes every 10 seconds</p>
       </header>
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -72,22 +71,21 @@ export default function AdminStats() {
           <Live
             value={stats.active_locks}
             label="Seats on hold"
-            hint="Redis me abhi kitne locks hain"
+            hint="Current Redis lock count"
             className="text-amber-400"
           />
           <Live
             value={stats.live_connections}
             label="WebSocket clients"
-            hint="⚠️ Sirf IS worker ka count"
+            hint="⚠️ Count for this worker only"
             className="text-emerald-400"
           />
         </div>
 
         <p className="mt-4 text-xs leading-relaxed text-slate-600">
-          Data teen jagah se aata hai — Postgres (users, events, bookings),
-          Redis (active locks), aur is worker ki memory (WebSocket clients).
-          Multi-worker deployment me connection count bhi Redis me rakhna
-          padega; abhi wo zaroorat nahi hai.
+          Data aggregated from Postgres (users, events, bookings), Redis (active locks),
+          and local worker memory (WebSocket clients). For multi-worker deployments,
+          connection counts should be moved to Redis.
         </p>
       </section>
     </div>

@@ -1,8 +1,7 @@
 """
-Admin routes — poore platform ka overview.
+Admin routes providing a platform-wide overview.
 
-Sirf `admin` role. Organizer ko bhi ye nahi dikhta — usse sirf apne
-events ka data milta hai.
+Restricted to `admin` role. Organizers are excluded, as they only have access to their own event data.
 """
 
 from fastapi import APIRouter, Depends
@@ -34,17 +33,16 @@ def platform_stats(
     _: User = Depends(require_role(ROLE_ADMIN)),
 ):
     """
-    Platform ke live numbers.
+    Live platform metrics.
 
-    Data teen jagah se aata hai:
+    Data sources:
       Postgres — users, events, bookings, revenue
-      Redis    — abhi kitni seats hold me hain
-      Memory   — is worker pe kitne WebSocket clients
+      Redis    — current seat holds
+      Memory   — active WebSocket clients on this worker
 
-    ⚠️ `live_connections` sirf IS worker ka count hai. Multi-worker
-    deployment me har worker apna alag number dega. Sahi total ke liye
-    ye number bhi Redis me rakhna padega — abhi wo zaroorat nahi hai,
-    par ye limitation jaan-boojh ke bata rahe hain.
+    ⚠️ `live_connections` reflects only the current worker. In multi-worker
+    deployments, this value is local to each instance. Global totals would
+    require Redis-based tracking; this limitation is intentional for now.
     """
     booking_counts = dict(
         db.execute(
@@ -58,8 +56,8 @@ def platform_stats(
         )
     )
 
-    # scan_iter — KEYS ka istemaal production me kabhi nahi karna chahiye,
-    # wo poore Redis ko block kar deta hai. scan cursor-based hai.
+    # scan_iter — Avoid using KEYS in production to prevent blocking the Redis
+    # event loop. scan provides a cursor-based, non-blocking alternative.
     active_locks = sum(1 for _ in redis_client.scan_iter("seat:*:lock"))
 
     live = sum(manager.count(event_id) for event_id in manager.rooms())

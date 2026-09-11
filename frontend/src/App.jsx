@@ -20,10 +20,9 @@ import Profile from './pages/Profile'
 /**
  * Role-gated route.
  *
- * ⚠️ Ye sirf UX ke liye hai — asli security backend me hai (`require_role`).
- * Frontend check bypass karna trivial hai (React DevTools se state badal do),
- * isliye client-side gate ko kabhi security mat maanna. Ye bas user ko wo
- * page dikhne se rokta hai jo waise bhi 403 dega.
+ * ⚠️ This is for UX only; actual security is enforced via backend `require_role`.
+ * Client-side checks are easily bypassed (e.g., via React DevTools), so do not
+ * rely on this for security. It merely prevents navigation to unauthorized views.
  */
 function RequireRole({ roles, children }) {
   const { user } = useAuth()
@@ -33,8 +32,7 @@ function RequireRole({ roles, children }) {
 export default function App() {
   const { loading, isAuthenticated, user } = useAuth()
 
-  // Session restore hone tak kuch mat dikhao — warna ek pal ko login page
-  // flash hota hai aur phir gayab ho jata hai
+  // Prevent UI flicker during session restoration.
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center text-slate-500">
@@ -46,11 +44,11 @@ export default function App() {
   if (!isAuthenticated) return <AuthPage />
 
   return (
-    // key={user.id} — user badalne par poora state fresh. Warna pichhle user
-    // ki bookings aur selection nayi login me dikh jaati.
+    // key={user.id} ensures state resets on user switch, preventing data leakage
+    // between sessions.
     //
-    // BookingProvider Routes ke BAHAR hai, isliye page badalne par WebSocket
-    // aur seat state bache rehte hain — har navigation pe reconnect nahi hota.
+    // BookingProvider is outside Routes to persist WebSocket and seat state
+    // across navigation, avoiding unnecessary reconnections.
     <BookingProvider key={user.id}>
       <Routes>
         <Route element={<AppShell />}>
@@ -60,7 +58,7 @@ export default function App() {
           <Route path="bookings" element={<MyBookings />} />
           <Route path="profile" element={<Profile />} />
           <Route path="pay/:paymentId" element={<MockCheckout />} />
-          {/* Group link se aane wala seedha yahan land karta hai */}
+          {/* Entry point for shared group links */}
           <Route path="groups/:shareToken" element={<GroupBooking />} />
           <Route path="payment/return" element={<PaymentReturn />} />
 

@@ -1,50 +1,50 @@
 # Phase 4 — Redis Distributed Seat Locking
 
-[Phase 3 — API + Seat Grid](03-api-and-seat-grid.md) ke baad ka kaam.
+[Phase 3 — API + Seat Grid](03-api-and-seat-grid.md) follow-up.
 
-**Kya banega:** "select karo → 5 min ke liye hold → phir pay karo" wala asli flow, live countdown ke saath.
+**Objective:** Implement the "select → 5-minute hold → pay" flow with a live countdown.
 
-> ⭐ **Interview me sabse zyada sawaal isi phase par aayenge.** Ye samajh ke likhna, copy-paste mat karna.
+> ⭐ **This phase is critical for interviews.** Understand the logic thoroughly; do not just copy-paste.
 
 ---
 
-## Phase 3 tak kya tha (aur wo galat nahi tha)
+## Recap of Phase 3 (and why it was sufficient)
 
-Phase 3 ke end me compose me sirf **3 services** thi (db, backend, frontend), aur `requirements.txt` me `redis` package tha hi nahi.
+At the end of Phase 3, the compose setup had **3 services** (db, backend, frontend), and `requirements.txt` did not include `redis`.
 
-Concurrency protection **poori database-level** thi:
+Concurrency protection was handled entirely at the database level:
 - `version` column (optimistic locking)
-- partial unique index
+- Partial unique index
 
-Aur wo **sahi kaam kar rahi thi** — 20-parallel-request test pass ho raha tha, DB me exactly 1 booking aati thi.
+This **worked correctly**—the 20-parallel-request test passed, ensuring exactly one booking per seat in the DB.
 
-**To phir Redis kyu?**
+**Why add Redis?**
 
-| | Phase 3 (sirf DB) | Phase 4 (Redis + DB) |
+| | Phase 3 (DB only) | Phase 4 (Redis + DB) |
 |---|---|---|
-| Flow | Seat select karo → seedha book | Select karo → **5 min hold** → phir pay/confirm |
-| Load | Har request DB tak jaati hai | 5000 me se 4999 Redis pe hi ruk jaati hain |
-| Layers | 2 (version + constraint) | 3 — Redis **upar** aata hai, DB layers waise hi rehti hain |
-| Abandoned cart | Concept hi nahi tha | TTL khud release kar deta hai |
+| Flow | Select seat → book immediately | Select seat → **5-min hold** → pay/confirm |
+| Load | Every request hits the DB | 4999 out of 5000 requests are blocked by Redis |
+| Layers | 2 (version + constraint) | 3 — Redis acts as a **top layer**; DB layers remain |
+| Abandoned cart | Not supported | TTL automatically releases the lock |
 
-> **Ye line yaad rakhna:** Redis ne correctness nahi badli — wo **pehle se hi sahi thi**. Redis ne sirf **speed** di aur "hold" ka concept diya. Interviewer isi farak ko test karta hai.
+> **Key takeaway:** Redis does not change correctness—that was already achieved. Redis provides **speed** and the "hold" functionality. Interviewers test this distinction.
 
 ---
 
-## Concept — lock lene ka core
+## Concept — Core Locking Logic
 
 ```python
 ok = r.set(f"seat:{seat_id}:lock", user_id, nx=True, ex=300)
 ```
 
-| Flag | Kaam |
+| Flag | Purpose |
 |---|---|
-| `nx=True` | Sirf tab set karo jab key **exist na kare**. **Ye ek atomic operation hai** — check aur set alag-alag steps nahi hain, isliye do log ek saath lock nahi le sakte |
-| `ex=300` | 5 min me apne aap release. User cart chhod ke chala gaya? Seat khud wapas available — **koi cleanup job nahi chahiye** |
+| `nx=True` | Set only if the key **does not exist**. This is an **atomic operation**—the check and set occur simultaneously, preventing race conditions. |
+| `ex=300` | Auto-release after 5 minutes. If the user abandons the cart, the seat becomes available automatically—**no cleanup job required**. |
 
-`ok` False mila → seat kisi aur ke paas hai → **409 Conflict**
+If `ok` is False, the seat is held by someone else → **409 Conflict**.
 
-### Release Lua script se, seedha `DEL` nahi
+### Release via Lua script, not `DEL`
 
 ```lua
 if redis.call("get", KEYS[1]) == ARGV[1] then
@@ -54,22 +54,20 @@ else
 end
 ```
 
-**Seedha `DEL` karne me kya risk hai:**
+**Risk of using `DEL` directly:**
 
 ```
-1. User A ka lock hai, wo 5 min me expire ho gaya
-2. User B ne turant lock le liya
-3. User A ka "release" request ab aata hai aur DEL kar deta hai
-   -> B ka lock uda diya, jabki B ne kuch galat nahi kiya
+1. User A's lock expires after 5 minutes.
+2. User B immediately acquires the lock.
+3. User A's "release" request arrives and executes DEL.
+   -> User B's lock is deleted, even though User B did nothing wrong.
 ```
 
-Isliye pehle check karo "lock mera hi hai?", **tabhi** delete karo.
-
-Python me do steps (`GET` phir `DEL`) likhte to unke beech me bhi wahi race reh jati. **Lua script Redis ke andar atomic chalti hai** — beech me kuch nahi ghus sakta.
+Therefore, verify ownership before deleting. Writing this in Python as two steps (`GET` then `DEL`) would introduce a race condition. **Lua scripts execute atomically within Redis**—no other operation can intervene.
 
 ---
 
-## Step 1 — Compose me Redis add karo
+## Step 1 — Add Redis to Compose
 
 ```yaml
   redis:
@@ -94,62 +92,62 @@ Python me do steps (`GET` phir `DEL`) likhte to unke beech me bhi wahi race reh 
         condition: service_healthy
 ```
 
-Root `.env` me:
+In root `.env`:
 ```
 REDIS_PORT=6379
 ```
 
-> ⚠️ Koi aur Redis already 6379 pe chal raha ho (dusra project) to `REDIS_PORT=6380` kar do. Backend pe koi asar nahi — wo `redis:6379` use karta hai, container network ke andar.
+> ⚠️ If another Redis instance is running on 6379, set `REDIS_PORT=6380`. The backend remains unaffected as it uses `redis:6379` within the container network.
 
-### Redis ka volume kyu nahi hai?
+### Why no volume for Redis?
 
-**Jaan-boojh ke.** Redis me sirf temporary seat locks hain (5 min TTL wale). Restart pe wo chale bhi jayein to koi nuksan nahi — seats DB me available ho jaayengi.
+**By design.** Redis only stores temporary seat locks (5-minute TTL). If they are lost on restart, it is acceptable—seats will simply revert to available in the DB.
 
-**Paisa aur booking ka data hamesha Postgres me hai.** Redis kabhi source of truth nahi hai. Ye design decision hai, laparwahi nahi — aur interview me poocha jaye to yahi jawab hai.
+**Financial and booking data reside in Postgres.** Redis is never the source of truth. This is a deliberate design decision, not an oversight—state this clearly in interviews.
 
 ---
 
 ## Step 2 — `redis_client.py`
 
-Poora code: [../backend/redis_client.py](../../backend/redis_client.py)
+Full code: [../backend/redis_client.py](../../backend/redis_client.py)
 
 ```python
 redis_client = redis.Redis.from_url(
     settings.REDIS_URL,
-    decode_responses=True,      # bytes ki jagah str
+    decode_responses=True,      # str instead of bytes
     socket_connect_timeout=3,
     socket_timeout=3,
 )
 ```
 
-| Setting | Kyu |
+| Setting | Reason |
 |---|---|
-| `decode_responses=True` | Bina iske har jagah `b"123".decode()` likhna padta |
-| `socket_timeout=3` | Redis hang ho jaye to request hamesha ke liye atki na rahe |
+| `decode_responses=True` | Avoids manual `b"123".decode()` calls. |
+| `socket_timeout=3` | Prevents requests from hanging indefinitely if Redis is unresponsive. |
 
 **Functions:**
 
-| Function | Kaam |
+| Function | Purpose |
 |---|---|
-| `acquire_seat_lock(seat_id, user_id)` | `SET ... NX EX` — True/False |
-| `release_seat_lock(seat_id, user_id)` | Lua script se safe release |
-| `get_lock_owner(seat_id)` | Kiske paas hai |
-| `get_lock_ttl(seat_id)` | Kitne second bache |
+| `acquire_seat_lock(seat_id, user_id)` | `SET ... NX EX` — Returns True/False |
+| `release_seat_lock(seat_id, user_id)` | Safe release via Lua script |
+| `get_lock_owner(seat_id)` | Check current owner |
+| `get_lock_ttl(seat_id)` | Remaining seconds |
 | `ping()` | Health check |
 
-**Key ka naam:** `seat:42:lock` — namespace rakhne se Redis me cheezein saaf rehti hain aur `KEYS seat:*` se sab dikh jaate hain.
+**Key naming:** `seat:42:lock` — Namespacing keeps Redis organized and allows `KEYS seat:*` to list all locks.
 
 ---
 
-## Step 3 — Lock endpoints
+## Step 3 — Lock Endpoints
 
-| Method | Route | Kaam |
+| Method | Route | Purpose |
 |---|---|---|
-| POST | `/api/seats/{id}/lock` | Seat hold karo (409 = kisi aur ke paas) |
-| DELETE | `/api/seats/{id}/lock?user_id=` | Apna hold chhodo |
-| GET | `/api/seats/{id}/lock` | Kiske paas hai + TTL (debugging) |
+| POST | `/api/seats/{id}/lock` | Hold seat (409 if held by another) |
+| DELETE | `/api/seats/{id}/lock?user_id=` | Release hold |
+| GET | `/api/seats/{id}/lock` | Check owner + TTL (debugging) |
 
-**Lock lene ke baad DB me bhi likhte hain:**
+**After acquiring the lock, update the DB:**
 ```python
 update(Seat).values(
     status=SEAT_LOCKED,
@@ -159,13 +157,13 @@ update(Seat).values(
 )
 ```
 
-**Kyu, jab lock Redis me hai hi?** Taki **dusre users** ko grid me wo seat peeli dikhe. Asli lock Redis me hi hai — DB me sirf "dikhane" ke liye copy hai.
+**Why, if the lock is in Redis?** To show the seat as yellow to **other users** in the grid. The actual lock is in Redis; the DB holds a copy for display purposes.
 
-### ⚠️ Expired locks ka problem (aur uska hal)
+### ⚠️ Expired locks (and the solution)
 
-Redis key TTL par **chupchap** delete ho jaati hai — wo Postgres ko batane nahi aati. To DB me seat `locked` padi reh jati hai jabki asal me free ho chuki hai.
+Redis deletes keys silently upon TTL expiry—it does not notify Postgres. Consequently, the DB might show a seat as `locked` when it is actually free.
 
-**Hal — lazy cleanup.** Seats padhne se pehle ek sasta UPDATE:
+**Solution — Lazy cleanup.** Perform a lightweight UPDATE before reading seats:
 
 ```python
 def release_expired_locks(db, event_id):
@@ -182,65 +180,64 @@ def release_expired_locks(db, event_id):
     db.commit()
 ```
 
-Background job ya cron ki zaroorat nahi — jab koi grid dekhega, tab saaf ho jayega.
+No background job or cron is needed; the cleanup occurs whenever a user views the grid.
 
 ---
 
-## Step 4 — Booking me lock check
+## Step 4 — Booking Lock Check
 
-Ab `POST /api/bookings` teeno layers se guzarta hai:
+`POST /api/bookings` now passes through three layers:
 
 ```python
 # LAYER 1 — Redis
 lock_owner = get_lock_owner(seat_id)
 if lock_owner is None:
-    # Koi seedha book kar raha hai (UI flow ke bina) — yahin lock le lo
     if not acquire_seat_lock(seat_id, user_id):
-        raise HTTPException(409, "Seat abhi kisi aur ne hold kar li")
+        raise HTTPException(409, "Seat already held by someone else")
     lock_taken_here = True
 elif lock_owner != user_id:
-    raise HTTPException(409, "Ye seat kisi aur ke paas hold hai")
+    raise HTTPException(409, "Seat held by someone else")
 
-# LAYER 2 — optimistic locking (Phase 3 wala, unchanged)
+# LAYER 2 — Optimistic locking (Phase 3, unchanged)
 result = db.execute(update(Seat).where(..., Seat.version == expected_version, ...))
 if result.rowcount == 0:
     raise HTTPException(409, ...)
 
-# LAYER 3 — DB constraint (Phase 2 wala, unchanged)
+# LAYER 3 — DB constraint (Phase 2, unchanged)
 try:
     db.commit()
 except IntegrityError:
     raise HTTPException(409, ...)
 
-# Booking ho gayi — lock ki ab zaroorat nahi
+# Booking successful — release lock
 release_seat_lock(seat_id, user_id)
 ```
 
-**Do raaste handle kiye hain:**
-- **a)** User ne UI se seat select ki thi → lock uske paas hai
-- **b)** Koi seedha `POST /api/bookings` maar raha hai → yahin lock lete hain
+**Handles two scenarios:**
+- **a)** User selected via UI → lock already exists.
+- **b)** Direct API call → acquire lock here.
 
-Dono me booking Redis lock ke bina aage nahi badhti.
+Both paths require the Redis lock to proceed.
 
-> **Layer 2 aur 3 ka code bilkul nahi badla.** Yahi baat sabse important hai — Redis ek filter hai jo unke upar baitha hai, unki jagah nahi liya.
+> **Layers 2 and 3 remain unchanged.** This is crucial—Redis acts as a filter sitting on top, not a replacement.
 
-**Har error path pe lock release karna zaroori hai** (`lock_taken_here` flag) — warna seat 5 min ke liye bekaar me atki rahegi.
+**Always release the lock on error paths** (`lock_taken_here` flag) to prevent unnecessary 5-minute blocks.
 
 ---
 
-## Step 5 — Frontend: hold + countdown
+## Step 5 — Frontend: Hold + Countdown
 
-**Seat click ab server call hai:**
+**Seat click is now a server call:**
 ```js
 async function handleSelect(seat) {
-  if (selectedSeat) await unlockSeat(selectedSeat.id, user.id)  // purana chhodo
-  const lock = await lockSeat(seat.id, user.id)                 // naya lo
+  if (selectedSeat) await unlockSeat(selectedSeat.id, user.id)  // Release old
+  const lock = await lockSeat(seat.id, user.id)                 // Acquire new
   setSelectedSeat(seat)
-  setLockSecondsLeft(lock.expires_in)                           // countdown shuru
+  setLockSecondsLeft(lock.expires_in)                           // Start countdown
 }
 ```
 
-Phase 3 me ye sirf local state set karta tha. Ab **409 mil sakta hai** — matlab koi aur pehle le gaya.
+In Phase 3, this only updated local state. Now, it can return **409** if someone else grabbed the seat.
 
 **Countdown:**
 ```js
@@ -256,37 +253,37 @@ useEffect(() => {
 }, [lockSecondsLeft, ...])
 ```
 
-> ⚠️ **Ye timer sirf dikhane ke liye hai.** Asli expiry **Redis me** hoti hai. Browser band kar do, tab crash ho jaye, laptop band ho jaye — seat phir bhi 5 min me apne aap free hogi. Timer sirf user ko batata hai kitna time bacha hai.
+> ⚠️ **The timer is for display only.** The actual expiry happens in **Redis**. If the browser crashes or the laptop shuts down, the seat will still be freed in 5 minutes. The timer only informs the user.
 >
-> Ye distinction interview me poocha jata hai: *"agar user browser band kar de to?"* — jawab: TTL. Client par kuch bhi depend nahi karta.
+> Interview question: *"What if the user closes the browser?"* — Answer: TTL. Nothing depends on the client.
 
-**Tab band karte waqt lock chhodna** (TTL ka wait na karna pade):
+**Release lock on tab close** (to avoid waiting for TTL):
 ```js
 window.addEventListener('beforeunload', () => {
   fetch(`${API_URL}/api/seats/${seat.id}/lock?user_id=${u.id}`, {
     method: 'DELETE',
-    keepalive: true,     // page band hote waqt bhi request nikal jati hai
+    keepalive: true,     // Ensures request completes even if page closes
   })
 })
 ```
-Ye sirf **optimization** hai. Na chale to TTL sambhal lega.
+This is an **optimization**. If it fails, TTL handles it.
 
-**Grid me ab 4 colors:**
+**Grid colors:**
 
-| Color | Matlab |
+| Color | Meaning |
 |---|---|
-| 🟢 Hara | Available |
-| 🔵 Neela | **Meri** hold |
-| 🟡 Peela | **Kisi aur** ki hold |
-| 🔴 Laal | Booked |
+| 🟢 Green | Available |
+| 🔵 Blue | **My** hold |
+| 🟡 Yellow | **Someone else's** hold |
+| 🔴 Red | Booked |
 
-`seat.locked_by === currentUserId` se decide hota hai — isliye `SeatOut` schema me `locked_by` add karna pada.
+Decided by `seat.locked_by === currentUserId` — requires adding `locked_by` to the `SeatOut` schema.
 
 ---
 
 ## Step 6 — Rebuild
 
-`requirements.txt` badla hai:
+`requirements.txt` has changed:
 
 ```bash
 docker compose up -d --build backend redis
@@ -296,7 +293,7 @@ docker compose up -d --build backend redis
 
 ## ✅ Proof
 
-### 1. Health me Redis
+### 1. Health Check
 http://localhost:8000/api/health
 ```json
 { "status": "healthy", "database": "connected", "redis": "connected", "version": "0.4.0" }
@@ -318,7 +315,7 @@ user2 -> 409
 user3 -> 409
 user1 -> 409
 user4 -> 409
-user5 -> 200      <- sirf ek jeeta
+user5 -> 200      <- winner
 user6 -> 409
 ```
 
@@ -326,27 +323,27 @@ user6 -> 409
 docker compose exec redis redis-cli get "seat:10:lock"     # -> 5
 ```
 
-### 3. Lock ownership enforce hoti hai
+### 3. Lock ownership enforcement
 
 ```bash
-# user1 book kare, lock user5 ke paas hai
+# user1 attempts to book, but user5 holds the lock
 curl -X POST http://localhost:8000/api/bookings -H "Content-Type: application/json" -d '{"seat_id":10,"user_id":1}'
-# -> {"detail":"Ye seat kisi aur ke paas hold hai"}
+# -> {"detail":"Seat held by someone else"}
 ```
 
-### 4. ⭐ Lua script dusre ka lock nahi hatata
+### 4. ⭐ Lua script prevents unauthorized release
 
 ```bash
 curl -X DELETE "http://localhost:8000/api/seats/10/lock?user_id=1"
-# -> {"released": false}          <- user1 ka lock tha hi nahi
+# -> {"released": false}          <- user1 did not hold the lock
 
 docker compose exec redis redis-cli get "seat:10:lock"
-# -> 5                            <- user5 ka lock salamat
+# -> 5                            <- user5's lock remains
 ```
 
-**Ye Lua script ka asli proof hai.** Seedha `DEL` hota to user5 ka lock ud jata.
+**This proves the Lua script's effectiveness.** A direct `DEL` would have deleted user5's lock.
 
-### 5. TTL apne aap expire hota hai
+### 5. TTL expiry
 
 ```bash
 docker compose exec redis redis-cli set "seat:99:lock" "3" EX 5
@@ -355,25 +352,25 @@ sleep 6
 docker compose exec redis redis-cli exists "seat:99:lock"   # -> 0
 ```
 
-### 6. Browser me
-- Hari seat click → turant **neeli** + right panel me **5:00 countdown** shuru
-- Dusri seat click → pehli wapas hari, nayi neeli (purana lock chhut gaya)
-- **Release Hold** → wapas hari
-- **Confirm Booking** → laal, lock saaf
-- Countdown 1:00 se neeche → laal ho jata hai
+### 6. Browser behavior
+- Click green seat → turns **blue** + **5:00 countdown** starts in right panel.
+- Click another seat → first turns green, new one turns blue (old lock released).
+- **Release Hold** → reverts to green.
+- **Confirm Booking** → turns red, lock cleared.
+- Countdown < 1:00 → turns red.
 
-**Do browser me test** (ek normal, ek incognito): abhi dono ko refresh karna padega — **live update Phase 5 me aayega**.
+**Two-browser test** (normal + incognito): Requires refresh for now — **live updates arrive in Phase 5**.
 
-### 7. Redis andar se dekho
+### 7. Inspecting Redis
 ```bash
 docker compose exec redis redis-cli
 > KEYS seat:*
 > GET seat:10:lock
 > TTL seat:10:lock
-> MONITOR          # live commands dekho, phir dusre tab me seat click karo
+> MONITOR          # Watch live commands, then click a seat in the UI
 ```
 
-`MONITOR` chala ke UI me seat click karna — `SET seat:12:lock 1 EX 300 NX` live dikhega. Demo ke liye badhiya hai.
+Running `MONITOR` while clicking a seat in the UI will show `SET seat:12:lock 1 EX 300 NX` in real-time.
 
 ### 8. Reset
 ```bash
@@ -384,16 +381,16 @@ docker compose exec db psql -U seatpulse -d seatpulse -c \
 
 ---
 
-## Interview me kya poocha jayega
+## Interview Questions
 
-| Sawaal | Jawab |
+| Question | Answer |
 |---|---|
-| "Sirf Redis se kaam nahi chalta?" | Redis restart hone par saare locks chale jaate hain. Us window me overselling ho sakti thi. DB constraints hamesha rehti hain |
-| "Sirf DB se kaam nahi chalta?" | Chalta hai — Phase 3 me chal raha tha. Par har request DB pe load daalti. Redis 99% ko pehle hi reject kar deta hai |
-| "User browser band kar de to?" | TTL. Client par kuch depend nahi karta — 5 min me lock apne aap chhut jata hai |
-| "Lock release me Lua kyu?" | GET aur DEL alag steps me karo to beech me lock expire ho ke kisi aur ko mil sakta hai, aur tum uska lock delete kar doge. Lua atomic hai |
-| "Redis me data persist kyu nahi kiya?" | Usme sirf temporary locks hain. Paisa/booking Postgres me hai. Redis kabhi source of truth nahi |
-| "Do backend server chalein to?" | Redis dono ke liye ek hi hai — isliye "distributed" lock hai. Aur DB constraint dono ke neeche hai |
+| "Why not just use Redis?" | Redis locks are lost on restart. DB constraints ensure data integrity during those windows. |
+| "Why not just use the DB?" | It works (Phase 3), but every request hits the DB. Redis rejects 99% of requests before they reach the DB. |
+| "What if the user closes the browser?" | TTL. Nothing depends on the client; the lock expires in 5 minutes. |
+| "Why Lua for release?" | GET and DEL as separate steps allow a race condition where a lock expires and is re-acquired by someone else before you delete it. Lua is atomic. |
+| "Why no persistence in Redis?" | It only stores temporary locks. Financial data is in Postgres. Redis is not the source of truth. |
+| "What if two backend servers run?" | Redis is shared, making it a "distributed" lock. DB constraints act as the final safety net. |
 
 ---
 
@@ -402,28 +399,28 @@ docker compose exec db psql -U seatpulse -d seatpulse -c \
 | Problem | Fix |
 |---|---|
 | `ModuleNotFoundError: No module named 'redis'` | `docker compose up -d --build backend` |
-| `Error 111 connecting to redis:6379` | Redis chal raha hai? `docker compose ps` me `healthy` dekho |
-| `port is already allocated` (6379) | Root `.env` me `REDIS_PORT=6380` |
-| Seat peeli atki hai, koi use nahi kar raha | Redis key expire ho gayi par DB me `locked` pada hai. Grid refresh karo — `release_expired_locks` saaf kar dega |
-| Lock lene par 404 "User nahi mila" | Test users nahi hain — `docker compose exec backend python seed.py` |
-| Countdown chal raha hai par seat already booked | Do tab khule hain aur ek me book ho gaya. **Phase 5 (WebSocket) yahi solve karega** |
-| Locks jam gaye testing ke baad | `docker compose exec redis redis-cli flushall` |
+| `Error 111 connecting to redis:6379` | Check if Redis is running: `docker compose ps` (should be `healthy`). |
+| `port is already allocated` (6379) | Set `REDIS_PORT=6380` in root `.env`. |
+| Seat stuck yellow, no one using it | Redis key expired, but DB still shows `locked`. Refresh grid — `release_expired_locks` will clear it. |
+| 404 "User not found" on lock | Seed test users: `docker compose exec backend python seed.py` |
+| Countdown running but seat booked | Two tabs open; one booked. **Phase 5 (WebSockets) solves this.** |
+| Locks jammed after testing | `docker compose exec redis redis-cli flushall` |
 
 ---
 
-## Files jo is phase me bane/badle
+## Files Modified/Created
 
 ```
 docker-compose.yml              ← update (redis service)
 .env / .env.example             ← update (REDIS_PORT)
 
 backend/
-├── redis_client.py             ← naya  ⭐ lock logic + Lua script
+├── redis_client.py             ← new  ⭐ lock logic + Lua script
 ├── config.py                   ← update (REDIS_URL, SEAT_LOCK_TTL)
 ├── requirements.txt            ← update (redis)
 ├── schemas.py                  ← update (SeatLockRequest/Out, locked_by)
 ├── seed.py                     ← update (5 test users)
-├── main.py                     ← update (health me redis)
+├── main.py                     ← update (health check)
 └── routers/
     ├── seats.py                ← update  ⭐ lock/unlock endpoints
     └── bookings.py             ← update (layer 1 add)
@@ -432,7 +429,7 @@ frontend/src/
 ├── api.js                      ← update (lock/unlock)
 ├── App.jsx                     ← update (lock flow + countdown)
 └── components/
-    ├── SeatGrid.jsx            ← update (4 colors, "meri hold")
+    ├── SeatGrid.jsx            ← update (4 colors, "my hold")
     └── BookingPanel.jsx        ← update (countdown, Release Hold)
 ```
 
@@ -450,10 +447,10 @@ git push
 
 ## Related
 
-- [postgres-commands.md](../reference/postgres-commands.md) — DB queries aur reset
+- [postgres-commands.md](../reference/postgres-commands.md) — DB queries and reset
 - [docker-commands.md](../reference/docker-commands.md) — container commands
-- [roadmap.md](../roadmap.md) — aage kya
+- [roadmap.md](../roadmap.md) — next steps
 
 ---
 
-**Agla:** Phase 5 — WebSockets. Abhi dusre user ko seat peeli dikhne ke liye refresh karna padta hai; Phase 5 me wo **turant** dikhega.
+**Next:** Phase 5 — WebSockets. Currently, users must refresh to see seat status changes; Phase 5 enables **instant** updates.

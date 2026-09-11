@@ -13,10 +13,10 @@ function mmss(total) {
 }
 
 /**
- * Group booking ka share page — link kholne par yahi dikhta hai.
+ * Group booking share page — displayed when the link is opened.
  *
- * Poora page ek hi sawaal ka jawab deta hai: **abhi kaun rok raha hai?**
- * Isliye har share ka status aur kiska hai, sabse upar aur sabse saaf.
+ * This page answers one question: **who is holding up the process?**
+ * Status and ownership are shown clearly at the top.
  */
 export default function GroupBooking() {
   const { shareToken } = useParams()
@@ -43,22 +43,21 @@ export default function GroupBooking() {
     load()
   }, [load])
 
-  // Dusre log alag browser me pay kar rahe hain — unka paisa aane par ye
-  // page apne aap update ho jaana chahiye.
+  // Others are paying in different browsers — this page should update
+  // automatically when their payment arrives.
   //
-  // Yahan polling use ki hai, WebSocket nahi. Seat grid ka socket EVENT ke
-  // hisaab se subscribe karta hai; group ek alag cheez hai aur uske liye
-  // ek naya channel + subscription lifecycle banana padta. 5 second ki
-  // polling ek page ke liye bilkul kaafi hai — group me log minton me
-  // pay karte hain, milliseconds me nahi.
+  // Using polling here instead of WebSockets. The seat grid subscribes to
+  // socket events; groups are separate and would require a new channel and
+  // subscription lifecycle. 5-second polling is sufficient for this page —
+  // people pay for groups in minutes, not milliseconds.
   useEffect(() => {
     if (!group || group.status !== 'collecting') return
     const id = setInterval(load, 5000)
     return () => clearInterval(id)
   }, [group, load])
 
-  // Countdown sirf DIKHANE ke liye. Asli expiry server ke cron job me
-  // hoti hai — ye 0 pe pahunch jaye tab bhi kuch "ho" nahi jata.
+  // The countdown is for display only. The actual expiry is handled by a
+  // server cron job — nothing happens automatically when it reaches 0.
   useEffect(() => {
     if (!group || group.status !== 'collecting') return
     const id = setInterval(() => setSecondsLeft((s) => s - 1), 1000)
@@ -106,7 +105,7 @@ export default function GroupBooking() {
     )
   }
 
-  if (!group) return <p className="text-sm text-slate-500">Load ho raha hai…</p>
+  if (!group) return <p className="text-sm text-slate-500">Loading…</p>
 
   const mine = group.shares.find((s) => s.claimed_by === user.id)
   const iAmIn = Boolean(mine)
@@ -143,10 +142,10 @@ export default function GroupBooking() {
           <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
             <div className="flex items-baseline justify-between text-sm">
               <span className="text-slate-300">
-                {group.paid_shares} / {group.total_shares} ne pay kar diya
+                {group.paid_shares} / {group.total_shares} paid
               </span>
               <span className="text-xs text-slate-500">
-                sabke paise aane par hi seats pakki hongi
+                Seats are confirmed only after everyone pays
               </span>
             </div>
             <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/5">
@@ -162,7 +161,7 @@ export default function GroupBooking() {
             className="w-full rounded-xl border border-[var(--border)] px-4 py-2.5 text-sm
                        text-slate-300 transition hover:bg-white/5"
           >
-            {copied ? '✓ Link copy ho gaya' : '🔗 Link copy karo aur dosto ko bhejo'}
+            {copied ? '✓ Link copied' : '🔗 Copy link and send to friends'}
           </button>
         </>
       )}
@@ -191,7 +190,7 @@ export default function GroupBooking() {
           className="w-full rounded-xl border border-[var(--border)] px-4 py-2.5 text-xs
                      text-slate-500 transition hover:bg-white/5 hover:text-rose-300"
         >
-          Group cancel karo (jo paise aaye hain wo wapas ho jaayenge)
+          Cancel group (payments received will be refunded)
         </button>
       )}
     </div>
@@ -205,20 +204,20 @@ function StatusBanner({ group }) {
     confirmed: {
       bg: 'bg-emerald-500/15 ring-emerald-500/30 text-emerald-300',
       icon: '✓',
-      title: 'Sab confirm!',
-      body: 'Sabne pay kar diya. Har seat book ho gayi hai aur tickets ban rahe hain.',
+      title: 'Confirmed!',
+      body: 'Everyone has paid. All seats are booked and tickets are being generated.',
     },
     expired: {
       bg: 'bg-amber-500/15 ring-amber-500/30 text-amber-300',
       icon: '⏱',
-      title: 'Time khatam',
-      body: 'Deadline tak sabka paisa nahi aaya, isliye saari seats chhod di gayi. Jinhone pay kiya tha unka refund ho raha hai.',
+      title: 'Time expired',
+      body: 'Not everyone paid by the deadline, so all seats have been released. Refunds are being processed for those who paid.',
     },
     cancelled: {
       bg: 'bg-slate-500/15 ring-slate-500/30 text-slate-300',
       icon: '✕',
-      title: 'Cancel ho gaya',
-      body: 'Group banane wale ne cancel kar diya. Jo paise aaye the wo refund ho rahe hain.',
+      title: 'Cancelled',
+      body: 'The group organizer cancelled the booking. Payments are being refunded.',
     },
   }[group.status]
 
@@ -264,13 +263,13 @@ function ShareRow({ share, isMine, canClaim, busy, onClaim, onPay }) {
 
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm text-slate-200">
-          {share.claimed_by_name ?? <span className="text-slate-600">khaali seat</span>}
-          {isMine && <span className="ml-1.5 text-xs text-violet-400">(tum)</span>}
+          {share.claimed_by_name ?? <span className="text-slate-600">empty seat</span>}
+          {isMine && <span className="ml-1.5 text-xs text-violet-400">(you)</span>}
         </p>
         <p className="text-xs text-slate-500">
           ₹{share.amount}
-          {paid && <span className="ml-1.5 text-emerald-400">· pay ho gaya</span>}
-          {refunded && <span className="ml-1.5 text-slate-400">· refund</span>}
+          {paid && <span className="ml-1.5 text-emerald-400">· paid</span>}
+          {refunded && <span className="ml-1.5 text-slate-400">· refunded</span>}
         </p>
       </div>
 
@@ -281,7 +280,7 @@ function ShareRow({ share, isMine, canClaim, busy, onClaim, onPay }) {
           className="shrink-0 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-medium
                      transition hover:bg-violet-500 disabled:opacity-40"
         >
-          Ye seat lo
+          Claim seat
         </button>
       )}
 
@@ -292,7 +291,7 @@ function ShareRow({ share, isMine, canClaim, busy, onClaim, onPay }) {
           className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold
                      transition hover:bg-emerald-500 disabled:opacity-40"
         >
-          {busy ? '…' : `₹${share.amount} do`}
+          {busy ? '…' : `Pay ₹${share.amount}`}
         </button>
       )}
     </div>

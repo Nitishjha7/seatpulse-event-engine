@@ -1,30 +1,31 @@
 """
 Payment routes.
 
-⭐ Is phase ki asli problem gateway integrate karna nahi hai — wo docs padh
-ke koi bhi kar leta hai. Asli problem wo hai jo payments MAJBOORI me laate
-hain:
+⭐ The core challenge in this phase is not gateway integration — that is trivial
+with documentation. The real challenge is the "Dual-Write" problem inherent to
+payments:
 
-    Paisa kat gaya, par booking fail ho gayi. Ab kya?
+    The user was charged, but the booking failed. Now what?
 
-Ye classic DUAL-WRITE problem hai: do systems (gateway aur hamara database)
-ko consistent rakhna, jab dono me se koi bhi kabhi bhi fail ho sakta hai.
+We must keep two systems (the gateway and our database) consistent, even though
+either can fail at any time.
 
----- Design ke teen faisle ----
+---- Design Decisions ----
 
-1. WEBHOOK SOURCE OF TRUTH HAI, browser redirect nahi.
-   Redirect par bharosa nahi kar sakte:
-     - user pay karke tab band kar de -> redirect aata hi nahi, par paisa
-       kat chuka hai. Booking honi CHAHIYE.
-     - koi seedha success URL hit kar de -> bina paise ke booking ban jayegi.
-   Redirect sirf "thank you" page dikhane ke liye hai, faisla lene ke liye nahi.
+1. WEBHOOKS ARE THE SOURCE OF TRUTH, not browser redirects.
+   Redirects are unreliable:
+     - Users may close the tab after payment -> redirect never occurs, but the
+       charge succeeded. The booking must still be created.
+     - Malicious users may hit the success URL directly -> this would create
+       bookings without payment.
+   Redirects are strictly for UI/UX ("thank you" pages), not for business logic.
 
-2. FULFILMENT IDEMPOTENT HAI.
-   Webhooks AT-LEAST-ONCE hote hain — gateway same event do baar bhej sakta
-   hai agar pehla response miss ho jaye. To fulfil dobara chale to naya kaam
-   na ho, wahi booking wapas mile.
+2. FULFILMENT IS IDEMPOTENT.
+   Webhooks are "at-least-once" delivery — the gateway may send the same event
+   multiple times if a response is missed. Fulfilment logic must handle
+   duplicate calls gracefully without creating duplicate bookings.
 
-3. SEAT PAYMENT KE DAURAAN payment_pending REHTI HAI.
+3. SEATS REMAIN payment_pending DURING PAYMENT.
    available -> locked -> payment_pending -> booked
                               |
                      (fail/timeout) -> available
@@ -88,7 +89,7 @@ def _to_out(payment: Payment) -> PaymentOut:
 
 
 # ---------------------------------------------------------------------------
-# Checkout shuru karo
+# Initialize checkout
 # ---------------------------------------------------------------------------
 
 @router.post(
@@ -103,36 +104,31 @@ def start_checkout(
     user: User = Depends(get_current_user),
 ):
     """
-    Seat ke liye payment session banao.
+    Create a payment session for a seat.
 
-    User ke paas is seat ka Redis lock hona chahiye — matlab usne pehle
-    seat select ki hui hai. Bina lock ke checkout allow karte to do log
-    ek hi seat ka payment shuru kar dete, aur ek ka paisa refund karna padta.
+    Requires a Redis lock to prevent concurrent payment attempts for the same seat.
     """
     seat = db.get(Seat, payload.seat_id)
     if seat is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Seat nahi mili")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Seat not found")
 
     if seat.status == SEAT_BOOKED:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Seat pehle se booked hai")
+        raise HTTPException(status.HTTP_409_CONFLICT, "Seat is already booked")
 
-    # ---- Lock verify ----
+    # ---- Lock verification ----
     owner = get_lock_owner(payload.seat_id)
     if owner is None:
-        # Lock TTL pe chhut gaya — dobara lene ki koshish karo
+        # Lock expired; attempt to re-acquire.
         if not acquire_seat_lock(payload.seat_id, user.id, ttl=settings.PAYMENT_TTL_SECONDS):
-            raise HTTPException(status.HTTP_409_CONFLICT, "Seat abhi kisi aur ne hold kar li")
+            raise HTTPException(status.HTTP_409_CONFLICT, "Seat is held by another user")
     elif owner != user.id:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Ye seat kisi aur ke paas hold hai")
+        raise HTTPException(status.HTTP_409_CONFLICT, "Seat is held by another user")
     else:
-        # ⚠️ Lock ki TTL badha do. Default hold 5 min ka hai par checkout me
-        # user ko card details bharni hoti hain — beech me lock chhut jaye to
-        # paisa kat jayega aur seat kisi aur ki ho chuki hogi.
+        # ⚠️ Extend lock TTL. Checkout requires user input; prevent expiration
+        # during the payment process.
         redis_client.expire(f"seat:{payload.seat_id}:lock", settings.PAYMENT_TTL_SECONDS)
 
-    # Purana pending payment hai? Wahi session wapas do — naya mat banao.
-    # (Ye bhi idempotency ka ek roop hai: user ne back dabaya aur phir se
-    # "Pay" click kiya, to do sessions nahi banne chahiye.)
+    # Check for existing pending payments to maintain idempotency.
     existing = db.scalar(
         select(Payment).where(
             Payment.seat_id == payload.seat_id,
@@ -141,7 +137,7 @@ def start_checkout(
     )
     if existing:
         if existing.user_id != user.id:
-            raise HTTPException(status.HTTP_409_CONFLICT, "Is seat ka payment already chal raha hai")
+            raise HTTPException(status.HTTP_409_CONFLICT, "Payment already in progress for this seat")
         if existing.expires_at > utcnow():
             return CheckoutOut(
                 payment_id=existing.id,
@@ -150,27 +146,20 @@ def start_checkout(
                 amount=float(existing.amount),
                 expires_at=existing.expires_at,
             )
-        # Expire ho chuka — usse band karke naya banate hain
+        # Expired; mark as such and proceed to create a new one.
         existing.status = PAYMENT_EXPIRED
         db.flush()
 
     provider = get_provider()
     expires_at = utcnow() + timedelta(seconds=settings.PAYMENT_TTL_SECONDS)
 
-    # ⭐ Ek hi baar price nikalte hain aur payment row + gateway session
-    # dono me WAHI bhejte hain.
-    #
-    # Do baar `price_now()` call karna bug hai: beech me hold expire ho
-    # sakta hai, aur tab gateway ₹920 charge karta jabki hamare DB me ₹800
-    # likha hota. Wo mismatch reconciliation me hi pakda jata — user ka
-    # paisa kat chuka hota.
+    # ⭐ Calculate price once to ensure consistency between DB and gateway.
     quoted = price_now(db, seat)
 
     payment = Payment(
         user_id=user.id,
         seat_id=seat.id,
         event_id=seat.event_id,
-        # Hold ka LOCKED price. User ne jo dekha, wahi charge hoga.
         amount=quoted,
         currency=settings.CURRENCY,
         provider=provider.name,
@@ -180,14 +169,11 @@ def start_checkout(
     db.add(payment)
 
     try:
-        # ⚠️ Yahan flush karte hain, commit nahi — payment id chahiye gateway
-        # ko bhejne ke liye, par transaction abhi khuli rakhni hai.
+        # ⚠️ Flush to generate payment ID for the gateway.
         db.flush()
     except IntegrityError:
-        # Partial unique index ne pakda: is seat ka pending payment already hai.
-        # Do parallel checkout requests me se ek yahin ruk jayega.
         db.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, "Is seat ka payment already chal raha hai")
+        raise HTTPException(status.HTTP_409_CONFLICT, "Payment already in progress for this seat")
 
     try:
         session = provider.create_checkout(
@@ -196,14 +182,12 @@ def start_checkout(
             description=f"Seat {seat.row_label}-{seat.seat_number}",
         )
     except PaymentError as exc:
-        # Gateway se baat nahi hui — payment row mat chhodo, warna seat ka
-        # pending payment atka rahega aur user retry nahi kar payega.
         db.rollback()
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
 
     payment.provider_ref = session.reference
 
-    # Seat ko payment_pending karo — dusre users ko grid me dikh jayega
+    # Update seat status to payment_pending.
     db.execute(
         update(Seat)
         .where(Seat.id == seat.id, Seat.status.in_((SEAT_AVAILABLE, SEAT_LOCKED)))
@@ -232,48 +216,32 @@ def _checkout_url_for(payment: Payment) -> str:
     frontend = settings.FRONTEND_URL.rstrip("/")
     if payment.provider == "mock":
         return f"{frontend}/pay/{payment.id}"
-    # Stripe session URL sirf ek baar milta hai. Dobara chahiye to session
-    # retrieve karna padta — abhi return page pe bhej dete hain, jo status
-    # dekh ke user ko bata dega.
     return f"{frontend}/payment/return?payment_id={payment.id}"
 
 
 # ---------------------------------------------------------------------------
-# ⭐ Fulfilment — dono raaste yahin milte hain
+# ⭐ Fulfilment — entry point for both webhooks and reconciliation
 # ---------------------------------------------------------------------------
 
 def _fulfil(db: Session, payment: Payment) -> Booking | None:
     """
-    Payment succeed hua — booking banao aur seat book karo.
+    Finalize payment: create booking and update seat status.
 
-    ⚠️ Group share ka payment yahan se nahi guzarta.
-
-    Normal payment ka matlab hai "seat bik gayi" — booking turant ban
-    jati hai. Group share ka matlab sirf "ek hissa aa gaya" hai; booking
-    tab banti hai jab SAB hisse aa jaate hain. Isliye wo poori tarah alag
-    raaste par jata hai aur ye function `None` lauta deta hai.
-
-    ⚠️ IDEMPOTENT hona zaroori hai. Webhooks at-least-once hote hain, aur
-    reconciliation job bhi isi ko call karta hai. Do baar chale to dusri
-    baar wahi booking wapas milni chahiye, nayi nahi.
+    ⚠️ Group share payments are handled separately in groups.py.
     """
-    # Pehle se ho chuka? Wahi booking lauta do.
+    # If already succeeded, return the existing booking.
     if payment.status == PAYMENT_SUCCEEDED and payment.booking_id:
         return db.get(Booking, payment.booking_id)
 
     if payment.group_share_id is not None:
         payment.status = PAYMENT_SUCCEEDED
         db.commit()
-        # Yahan se aage ka faisla groups.py karta hai — sab paid hue to
-        # confirm, group toot chuka to refund.
         mark_share_paid(db, payment)
         return None
 
     seat = db.get(Seat, payment.seat_id)
 
-    # Optimistic update — wahi pattern jo direct booking me hai.
-    # payment_pending se booked, ya locked se (agar reconciliation se aaye
-    # aur beech me lock expire ho gaya ho).
+    # Optimistic update: transition seat to booked.
     result = db.execute(
         update(Seat)
         .where(
@@ -290,19 +258,14 @@ def _fulfil(db: Session, payment: Payment) -> Booking | None:
     )
 
     if result.rowcount == 0:
-        # Seat kisi aur ne le li — paisa kat chuka hai, refund karna padega.
-        #
-        # ⚠️ Ye theoretically nahi hona chahiye (lock hamare paas tha), par
-        # "nahi hona chahiye" aur "nahi hoga" alag baatein hain. Isliye ise
-        # chupchap ignore nahi kar rahe — payment ko failed mark karke reason
-        # likh dete hain, taki refund flow ise utha sake.
+        # Seat was taken; mark payment as failed to trigger refund flow.
         db.rollback()
         payment.status = PAYMENT_FAILED
         payment.failure_reason = "seat_taken_after_payment"
         db.commit()
-        logger.error("Payment %s succeeded par seat %s le li gayi — REFUND CHAHIYE",
+        logger.error("Payment %s succeeded but seat %s was taken — REFUND REQUIRED",
                      payment.id, payment.seat_id)
-        raise HTTPException(status.HTTP_409_CONFLICT, "Seat le li gayi — refund process hoga")
+        raise HTTPException(status.HTTP_409_CONFLICT, "Seat unavailable; refund process initiated")
 
     booking = Booking(
         user_id=payment.user_id,
@@ -316,7 +279,6 @@ def _fulfil(db: Session, payment: Payment) -> Booking | None:
     try:
         db.flush()
     except IntegrityError:
-        # Layer 3 — partial unique index. Booking pehle se hai.
         db.rollback()
         existing = db.scalar(
             select(Booking).where(
@@ -336,8 +298,6 @@ def _fulfil(db: Session, payment: Payment) -> Booking | None:
     release_seat_lock(payment.seat_id, payment.user_id)
     broadcast_seat_update(db, payment.seat_id, "booked")
 
-    # Payment confirm hone ke BAAD ticket queue karo — pehle nahi,
-    # warna failed payment ka bhi ticket ban jata
     enqueue_ticket(booking.id)
 
     db.refresh(booking)
@@ -345,9 +305,9 @@ def _fulfil(db: Session, payment: Payment) -> Booking | None:
 
 
 def _fail(db: Session, payment: Payment, reason: str) -> None:
-    """Payment fail — seat wapas available karo."""
+    """Handle payment failure: release the seat."""
     if payment.status != PAYMENT_PENDING:
-        return      # already settled, kuch mat karo
+        return
 
     payment.status = PAYMENT_FAILED
     payment.failure_reason = reason
@@ -370,21 +330,13 @@ def _fail(db: Session, payment: Payment, reason: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Webhook — Stripe yahan bolta hai
+# Webhook — Stripe integration
 # ---------------------------------------------------------------------------
 
 @router.post("/webhook", include_in_schema=False)
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     """
-    ⭐ Stripe ka webhook. Yahi asli source of truth hai.
-
-    ⚠️ Ye endpoint AUTHENTICATED nahi ho sakta — Stripe ke paas hamara JWT
-    nahi hai. Iski jagah SIGNATURE hi authentication hai. Bina verify kiye
-    koi bhi POST maar ke free ticket le leta.
-
-    Aur raw body chahiye — parsed JSON nahi. Signature exact bytes par bani
-    hai; JSON parse karke dobara serialize karoge to spacing badal jayegi
-    aur signature match nahi karegi.
+    ⭐ Stripe webhook: The primary source of truth.
     """
     raw = await request.body()
     provider = get_provider()
@@ -392,7 +344,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     try:
         event = provider.verify_webhook(raw, request.headers.get("stripe-signature"))
     except PaymentError as exc:
-        logger.warning("Webhook reject: %s", exc)
+        logger.warning("Webhook rejected: %s", exc)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
     event_type = event.get("type", "")
@@ -401,8 +353,6 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 
     payment = db.scalar(select(Payment).where(Payment.provider_ref == session_id))
     if payment is None:
-        # Unknown session — 200 hi lautao, warna Stripe hamesha retry karta
-        # rahega. Log karke aage badh jao.
         logger.warning("Webhook for unknown session %s", session_id)
         return {"received": True, "handled": False}
 
@@ -411,12 +361,11 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     elif event_type in ("checkout.session.expired", "checkout.session.async_payment_failed"):
         _fail(db, payment, event_type)
 
-    # Stripe ko 200 chahiye. Non-2xx doge to wo retry karta rahega.
     return {"received": True, "handled": True}
 
 
 # ---------------------------------------------------------------------------
-# Mock checkout — jab Stripe keys na hon
+# Mock checkout — for development/testing
 # ---------------------------------------------------------------------------
 
 @router.post("/{payment_id}/simulate", response_model=PaymentOut)
@@ -427,24 +376,20 @@ def simulate_payment(
     user: User = Depends(get_current_user),
 ):
     """
-    Mock provider ka "gateway".
-
-    Wahi `_fulfil` / `_fail` call karta hai jo asli webhook karta hai —
-    matlab hum mock ke liye alag code path test nahi kar rahe. Sirf trigger
-    alag hai, logic bilkul same.
+    Mock gateway simulator.
     """
     if settings.payment_provider != "mock":
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "Simulate sirf mock provider ke saath chalta hai",
+            "Simulation only available for mock provider",
         )
 
     payment = db.get(Payment, payment_id)
     if payment is None or payment.user_id != user.id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Payment nahi mila")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Payment not found")
 
     if payment.status != PAYMENT_PENDING:
-        return _to_out(payment)     # already settled — idempotent
+        return _to_out(payment)
 
     if payment.expires_at < utcnow():
         _fail(db, payment, "expired")
@@ -461,7 +406,7 @@ def simulate_payment(
 
 
 # ---------------------------------------------------------------------------
-# Status — frontend return page isse poll karta hai
+# Status — polling endpoint for the frontend
 # ---------------------------------------------------------------------------
 
 @router.get("/{payment_id}", response_model=PaymentOut)
@@ -471,12 +416,10 @@ def get_payment(
     user: User = Depends(get_current_user),
 ):
     payment = db.get(Payment, payment_id)
-    # 404 (403 nahi) — dusre ko ye bhi na pata chale ki ye payment exist karta hai
     if payment is None or payment.user_id != user.id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Payment nahi mila")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Payment not found")
 
-    # Expire ho gaya par kisi ne settle nahi kiya — abhi kar do.
-    # Ye "lazy cleanup" hai, wahi pattern jo expired seat locks me hai.
+    # Lazy cleanup for expired payments.
     if payment.status == PAYMENT_PENDING and payment.expires_at < utcnow():
         _fail(db, payment, "expired")
         db.refresh(payment)

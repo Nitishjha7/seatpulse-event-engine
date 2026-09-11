@@ -54,12 +54,10 @@ def upgrade() -> None:
         existing_nullable=False,
     )
 
-    # ⚠️ Autogenerate ne ye MISS kiya — wo existing check constraints ka
-    # content compare nahi karta.
+    # ⚠️ Alembic autogenerate does not compare existing check constraints.
     #
-    # Purani constraint sirf available/locked/booked allow karti hai. Bina
-    # ise badle payment_pending insert karte hi CheckViolation aata.
-    # Constraints ko "badla" nahi ja sakta — drop karke dobara banana padta hai.
+    # The existing constraint only allows available/locked/booked.
+    # Constraints must be dropped and recreated to modify them.
     op.drop_constraint("ck_seat_status", "seats", type_="check")
     op.create_check_constraint(
         "ck_seat_status",
@@ -69,8 +67,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Constraint pehle wapas karo — warna payment_pending wali rows
-    # column shrink hone par bhi bachi rahengi aur constraint fail hoga.
+    # Revert constraint before shrinking column to avoid CheckViolation on 'payment_pending' rows.
     op.execute("UPDATE seats SET status = 'available' WHERE status = 'payment_pending'")
     op.drop_constraint("ck_seat_status", "seats", type_="check")
     op.create_check_constraint(

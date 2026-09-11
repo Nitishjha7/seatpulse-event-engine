@@ -1,63 +1,63 @@
 # Phase 7 — JWT Auth + Google OAuth
 
-[Phase 6 — Load Testing](06-load-testing.md) ke baad ka kaam.
+Follows [Phase 6 — Load Testing](06-load-testing.md).
 
-**Kya theek hua:** Phase 6 tak `POST /api/bookings` me **`user_id` body me** jata tha. Matlab koi bhi ye bhej ke kisi aur ke naam booking kar sakta tha:
+**Fixes implemented:** Up to Phase 6, `POST /api/bookings` accepted `user_id` in the request body. This allowed any user to book on behalf of others:
 
 ```json
 { "seat_id": 5, "user_id": 7 }
 ```
 
-Interviewer `/docs` khol ke pehle hi endpoint pe ye pakad leta. Ab user **token se** aata hai.
+An interviewer could easily exploit this via `/docs`. Now, the user identity is derived from the token.
 
 ---
 
-## Token strategy (ye design decision hai — interview me poocha jata hai)
+## Token strategy (Design decision — frequently asked in interviews)
 
-| Token | Kahan rehta hai | Kitni der | Kaam |
+| Token | Storage | Duration | Purpose |
 |---|---|---|---|
-| **Access** | React ki memory (RAM) | 30 min | Har API call me `Authorization: Bearer` |
-| **Refresh** | httpOnly cookie | 7 din | Sirf naya access token lene ke liye |
+| **Access** | React memory (RAM) | 30 min | `Authorization: Bearer` header for every API call |
+| **Refresh** | httpOnly cookie | 7 days | Exclusively for obtaining a new access token |
 
-### localStorage me kyu nahi rakha
+### Why not localStorage?
 
-localStorage ko **koi bhi JavaScript padh sakta hai** — koi XSS, koi malicious npm package, koi browser extension. httpOnly cookie JS se readable hi nahi hoti.
+`localStorage` is accessible by **any JavaScript** — including XSS, malicious npm packages, or browser extensions. `httpOnly` cookies are inaccessible to JavaScript.
 
-### To phir sab kuch cookie se kyu nahi?
+### Why not use cookies for everything?
 
-Cookie har request me apne aap jati hai — isse **CSRF** ka darwaza khulta hai. Isliye:
+Cookies are sent automatically with every request, which exposes the application to **CSRF**. Therefore:
 
-- **Asli kaam access token karta hai** — `Authorization` header se, jo CSRF attack me automatically nahi jata
-- **Cookie sirf refresh ke liye** — aur wo bhi `path=/api/auth`, `samesite=lax` ke saath
+- **Access token handles primary operations** — via the `Authorization` header, which is not automatically included in CSRF attacks.
+- **Cookie is for refresh only** — restricted to `path=/api/auth` and `samesite=lax`.
 
-### Access token RAM me — reload pe kya hota hai?
+### What happens to the RAM-based access token on reload?
 
-Chala jata hai. Isliye app mount hote hi ek `POST /api/auth/refresh` marta hai. Cookie valid hui to session turant wapas — user ko pata bhi nahi chalta.
+It is cleared. To handle this, the app triggers a `POST /api/auth/refresh` immediately upon mounting. If the cookie is valid, the session is restored seamlessly.
 
-Yahi mechanism **Google login ke baad** bhi kaam aata hai (neeche).
+This same mechanism is used after **Google login** (see below).
 
 ---
 
 ## Refresh token revocation — Redis whitelist
 
-JWT stateless hota hai: ek baar bana diya to expiry tak valid rehta hai. Matlab **logout ka koi matlab hi nahi** — token 7 din chalta rahega.
+JWTs are stateless; once issued, they remain valid until expiry. This makes **logout** ineffective without a revocation mechanism.
 
-Isliye har refresh token me ek `jti` (unique id) hota hai jo Redis me whitelist hoti hai:
+Each refresh token contains a `jti` (unique ID) whitelisted in Redis:
 
 ```python
 jti = uuid.uuid4().hex
 redis_client.setex(f"refresh:{user_id}:{jti}", timedelta(days=7), "1")
 ```
 
-- **Logout** → wo key delete → token turant bekaar
-- **Redis TTL** = token expiry → purani entries apne aap saaf, koi cleanup job nahi
-- **logout-all** → `scan_iter(f"refresh:{user_id}:*")` → sab devices se logout
+- **Logout** → Delete the key → Token becomes invalid immediately.
+- **Redis TTL** = Token expiry → Entries expire automatically; no cleanup job required.
+- **Logout-all** → `scan_iter(f"refresh:{user_id}:*")` → Revokes access across all devices.
 
 ### Rotation
 
-`/refresh` par purana token **turant revoke** hota hai aur naya milta hai.
+Upon calling `/refresh`, the old token is **immediately revoked** and a new one is issued.
 
-Faayda: token chori ho jaye aur attacker use kare, to asli user ka token invalid ho jayega aur uska logout ho jayega — **chori pakdi jayegi**.
+Benefit: If a token is stolen and used, the legitimate user's token will be invalidated, forcing a logout and exposing the theft.
 
 ---
 
@@ -67,148 +67,148 @@ Faayda: token chori ho jaye aur attacker use kare, to asli user ka token invalid
 bcrypt.hashpw(password.encode(), bcrypt.gensalt())
 ```
 
-**bcrypt jaan-boojh ke DHEEMA hai (~100ms).** SHA256 jaisa fast hash yahan galat hai — attacker ek second me crores guesses kar leta. bcrypt pe brute force practically namumkin ho jata hai. Salt bhi apne aap andar aa jata hai.
+**bcrypt is intentionally slow (~100ms).** Fast hashes like SHA256 are unsuitable here, as attackers could perform millions of guesses per second. bcrypt makes brute force practically impossible. Salting is handled automatically.
 
-> Ye "slow by design" wali baat aage load test me kaat gayi — neeche "Auth ne load test todha" section dekho.
+> The "slow by design" nature impacted load testing — see the "Auth broke the load test" section below.
 
 ---
 
 ## Google OAuth — Authorization Code flow
 
 ```
-1. User "Continue with Google" dabata hai
-   -> browser backend ke /api/auth/google/login pe jata hai
+1. User clicks "Continue with Google"
+   -> Browser navigates to backend /api/auth/google/login
 
-2. Backend user ko Google pe bhej deta hai (ek random `state` ke saath)
+2. Backend redirects user to Google (with a random `state` parameter)
 
-3. User Google pe login karta hai aur permission deta hai
+3. User logs in to Google and grants permissions
 
-4. Google user ko wapas /api/auth/google/callback pe bhejta hai, `code` ke saath
+4. Google redirects user back to /api/auth/google/callback with a `code`
 
-5. ⭐ BACKEND wo code Google ko wapas bhejta hai (client_secret ke saath)
-   aur badle me user ki info leta hai — SERVER-TO-SERVER, browser beech me nahi
+5. ⭐ BACKEND sends the code to Google (with client_secret)
+   and retrieves user info — SERVER-TO-SERVER, bypassing the browser
 
-6. Backend refresh cookie set karta hai aur frontend pe redirect kar deta hai
+6. Backend sets the refresh cookie and redirects to the frontend
 ```
 
-### Kyu ye flow, koi aur nahi
+### Why this flow?
 
-| Sawaal | Jawab |
+| Question | Answer |
 |---|---|
-| Purana "Implicit" flow kyu nahi? | Wo token seedha URL me deta tha — browser history aur server logs me chhap jata |
-| Frontend-only OAuth kyu nahi? | `client_secret` browser me chala jata, jahan koi bhi use padh sakta hai |
-| `state` kis liye? | CSRF protection — random string Redis me rakhte hain, Google wahi wapas bhejta hai. Match na kare to reject |
-| Access token URL me kyu nahi bheja? | Wahi wajah — history/logs. Sirf cookie set karke redirect karte hain, frontend `/refresh` se token le leta hai |
+| Why not the "Implicit" flow? | It exposed tokens directly in the URL, leaking them into browser history and server logs. |
+| Why not frontend-only OAuth? | It would expose the `client_secret` to the browser, where it could be stolen. |
+| What is `state` for? | CSRF protection — a random string stored in Redis; Google returns it for verification. |
+| Why not send access token in URL? | Same reason — history/logs. We set a cookie and redirect; the frontend fetches the token via `/refresh`. |
 
-### google_id pe match, email pe nahi
+### Matching on `google_id`, not email
 
 ```python
 user = db.scalar(select(User).where(User.google_id == google_id))
 ```
 
-User Google me apna email badal sakta hai, par `sub` (google_id) kabhi nahi badalta.
+Users can change their Google email, but the `sub` (`google_id`) is immutable.
 
-Agar us email se **password wala account pehle se hai**, to use link kar dete hain — naya duplicate account nahi banate.
+If an account with the same email already exists, we link it rather than creating a duplicate.
 
-### Google users ka password NULL hota hai
+### Google users have NULL passwords
 
 ```python
 hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
 ```
 
-Isliye migration me column nullable karna pada. `verify_password()` `None` par hamesha `False` deta hai.
+The migration makes this column nullable. `verify_password()` returns `False` for `None`.
 
 ---
 
-## Google credentials kaise banayein
+## How to create Google credentials
 
-1. [console.cloud.google.com](https://console.cloud.google.com) → **New Project** → naam `SeatPulse`
+1. [console.cloud.google.com](https://console.cloud.google.com) → **New Project** → Name: `SeatPulse`
 
 2. **APIs & Services → OAuth consent screen**
    - User Type: **External**
-   - App name, support email, developer email bharo
-   - Scopes: `userinfo.email` aur `userinfo.profile`
-   - **Test users** me apna Gmail add karo (publish na karo to sirf yahi log login kar payenge)
+   - Fill in App name, support email, and developer email.
+   - Scopes: `userinfo.email` and `userinfo.profile`.
+   - **Test users**: Add your Gmail (only these users can log in until published).
 
 3. **APIs & Services → Credentials → Create Credentials → OAuth client ID**
    - Type: **Web application**
-   - **Authorized redirect URIs** me bilkul ye:
+   - **Authorized redirect URIs**:
      ```
      http://localhost:8000/api/auth/google/callback
      ```
 
-4. Client ID aur Secret `backend/.env` me daalo
+4. Add Client ID and Secret to `backend/.env`.
 
-> ⚠️ Redirect URI **exactly** wahi honi chahiye — ek extra slash bhi ho to `redirect_uri_mismatch` aata hai. Port **8000** (backend), 5173 nahi.
+> ⚠️ The Redirect URI must be **exact** — even an extra slash causes `redirect_uri_mismatch`. Use port **8000** (backend), not 5173.
 
-> `.env` gitignored hai, to credentials GitHub pe nahi jaate. Kabhi galti se push ho jaayein to Google Console se **turant revoke** karke naye bana lena.
+> `.env` is gitignored. If credentials are accidentally pushed, **revoke them immediately** in the Google Console and generate new ones.
 
-**Credentials na ho to?** `GOOGLE_CLIENT_ID` khali chhod do — Google button apne aap chhup jayega (`/api/auth/config` batata hai), email/password chalta rahega.
+**If credentials are missing?** Leave `GOOGLE_CLIENT_ID` empty — the Google button will be hidden automatically (`/api/auth/config` handles this), and email/password login will continue to function.
 
 ---
 
 ## Endpoints
 
-| Method | Route | Kaam |
+| Method | Route | Purpose |
 |---|---|---|
-| GET | `/api/auth/config` | Google button dikhana hai ya nahi |
-| POST | `/api/auth/register` | Naya account (signup ke baad seedha logged in) |
-| POST | `/api/auth/login` | Email + password |
-| POST | `/api/auth/refresh` | Cookie se naya access token (rotation ke saath) |
-| POST | `/api/auth/logout` | Ye device |
-| POST | `/api/auth/logout-all` | Sab devices |
-| GET | `/api/auth/me` | Current user |
-| GET | `/api/auth/google/login` | Google pe redirect |
-| GET | `/api/auth/google/callback` | Google se wapas |
+| GET | `/api/auth/config` | Determine if Google button should be shown |
+| POST | `/api/auth/register` | Create account (auto-login after signup) |
+| POST | `/api/auth/login` | Email + password login |
+| POST | `/api/auth/refresh` | Get new access token via cookie (with rotation) |
+| POST | `/api/auth/logout` | Logout current device |
+| POST | `/api/auth/logout-all` | Logout all devices |
+| GET | `/api/auth/me` | Get current user |
+| GET | `/api/auth/google/login` | Redirect to Google |
+| GET | `/api/auth/google/callback` | Callback from Google |
 
 ---
 
-## Security fixes jo saath me hue
+## Security fixes implemented
 
-| Kya | Pehle | Ab |
+| Feature | Before | After |
 |---|---|---|
-| Booking kis ke naam | Body me `user_id` — koi bhi kuch bhej sakta tha | Token se |
-| Seat lock kis ke naam | Body me `user_id` | Token se |
-| `GET /api/bookings` | `?user_id=` — koi bhi kisi ki bookings dekh leta | Sirf apni |
-| `DELETE /api/bookings/{id}` | **Koi bhi kisi ki booking cancel kar sakta tha (IDOR)** | Ownership check |
-| Login error message | — | "email nahi mila" aur "password galat" ka **ek hi** message (user enumeration se bachne ke liye) |
-| WebSocket | Koi bhi connect kar sakta tha | Token chahiye (`?token=`) |
+| Booking ownership | `user_id` in body — spoofable | Derived from token |
+| Seat lock ownership | `user_id` in body | Derived from token |
+| `GET /api/bookings` | `?user_id=` — exposed all bookings | Only own bookings |
+| `DELETE /api/bookings/{id}` | **IDOR vulnerability** | Ownership check |
+| Login error message | Specific errors | Generic "Invalid email or password" (prevents enumeration) |
+| WebSocket | Open to all | Requires token (`?token=`) |
 
-### IDOR fix me 404, 403 nahi
+### IDOR fix: 404 instead of 403
 
 ```python
 if booking.user_id != user.id:
-    raise HTTPException(404, "Booking nahi mili")
+    raise HTTPException(404, "Booking not found")
 ```
 
-403 dete to attacker ko pata chal jata ki **wo booking exist karti hai**. 404 kuch nahi batata.
+Returning 403 would confirm the booking exists. 404 provides no information to an attacker.
 
-### WebSocket auth — token query param me kyu
+### WebSocket auth via query param
 
-Browser ka WebSocket API **custom headers bhejne hi nahi deta**. Isliye `?token=...`.
+The browser WebSocket API **does not support custom headers**. Hence, `?token=...`.
 
-Trade-off: URL server logs me aa sakta hai. Isliye wahan sirf **short-lived access token** bhejte hain (30 min), refresh token kabhi nahi.
+Trade-off: The token may appear in server logs. Therefore, we only send a **short-lived access token** (30 min), never the refresh token.
 
 ---
 
 ## Frontend
 
-Teen nayi cheezein: token kahan rakhna hai, 401 pe kya karna hai, aur login page.
+Three key additions: token storage, 401 handling, and the login page.
 
 ### `api.js` — token + automatic retry
 
-**Token module-level variable me hai, `localStorage` me nahi:**
+**Token is stored in a module-level variable, not `localStorage`:**
 
 ```js
-let accessToken = null;            // sirf RAM me
+let accessToken = null;            // RAM only
 
 export function setAccessToken(token) { accessToken = token; }
 export function getAccessToken()      { return accessToken; }
 ```
 
-Page reload pe ye chala jata hai — aur **wahi to chahiye**. Reload pe cookie se naya le lete hain.
+This clears on reload, which is intended. We restore it via the cookie on reload.
 
-**401 aane par ek baar refresh karke retry:**
+**Automatic retry on 401:**
 
 ```js
 async function request(path, options = {}, { retry = true } = {}) {
@@ -222,25 +222,25 @@ async function request(path, options = {}, { retry = true } = {}) {
 }
 ```
 
-| Cheez | Kyu |
+| Feature | Why |
 |---|---|
-| `retry` flag | Ek hi baar retry. Warna refresh bhi 401 de to infinite loop ban jata |
-| `!path.startsWith("/api/auth/")` | `/login` ka 401 "galat password" hai — usko refresh karke retry karna bewakoofi hai |
-| `credentials: "include"` | Iske bina cookie na jayegi na set hogi (cross-origin 5173 → 8000) |
+| `retry` flag | Limit to one retry to prevent infinite loops. |
+| `!path.startsWith("/api/auth/")` | 401 on `/login` means "wrong password"; retrying is useless. |
+| `credentials: "include"` | Required for cookies to be sent/set (cross-origin 5173 → 8000). |
 
-**Faayda:** access token beech kaam me expire ho jaye — jaise user seat hold karke coffee peene chala gaya — to bhi use dobara login nahi karna padta. Retry chupchap ho jata hai.
+**Benefit:** If the access token expires while the user is idle, the app silently refreshes it without forcing a re-login.
 
-### `AuthContext.jsx` — session ka dimaag
+### `AuthContext.jsx` — session management
 
-**Mount pe session restore:**
+**Restore session on mount:**
 
 ```js
 useEffect(() => {
   async function boot() {
-    const config = await api.getAuthConfig()      // Google button dikhana hai?
+    const config = await api.getAuthConfig()
     setGoogleEnabled(config.google_enabled)
 
-    const data = await api.refreshSession()       // cookie se session wapas
+    const data = await api.refreshSession()
     if (data) applySession(data)
 
     setLoading(false)
@@ -249,9 +249,9 @@ useEffect(() => {
 }, [applySession])
 ```
 
-> ⚠️ **`loading` state zaroori hai.** Iske bina ek pal ko login page flash hota hai aur phir gayab ho jata hai — kyunki refresh complete hone se pehle `user` null hota hai.
+> ⚠️ **`loading` state is mandatory.** Without it, the login page flashes briefly because `user` is null before the refresh completes.
 
-**Silent refresh — expire hone se 1 min pehle:**
+**Silent refresh — 1 minute before expiry:**
 
 ```js
 const scheduleRefresh = useCallback((expiresIn) => {
@@ -262,35 +262,18 @@ const scheduleRefresh = useCallback((expiresIn) => {
     const data = await api.refreshSession()
     if (data) {
       setUser(data.user)
-      scheduleRefresh(data.expires_in)     // khud ko dobara schedule
+      scheduleRefresh(data.expires_in)
     } else {
-      setUser(null)                        // refresh token bhi mar gaya
+      setUser(null)
     }
   }, delay)
 }, [])
 ```
 
-| Cheez | Kyu |
+| Feature | Why |
 |---|---|
-| `expiresIn - 60` | Expire hone ka wait nahi karte — 1 min pehle hi naya le lete hain |
-| `Math.max(..., 10_000)` | Server chhoti expiry bheje to bhi kam se kam 10 sec ka gap. Warna refresh loop ban jata |
-| `clearTimeout` pehle | Do timers ek saath na chalein |
-| Khud ko dobara schedule | Chain chalti rehti hai jab tak user logged in hai |
-
-> `api.js` ka 401-retry **safety net** hai; ye timer **usse pehle** hi problem khatam kar deta hai. Dono chahiye — timer tab kaam nahi karta jab laptop sleep se utha ho.
-
-**Google callback ke baad URL saaf:**
-
-```js
-useEffect(() => {
-  const params = new URLSearchParams(window.location.search)
-  if (params.has('auth') || params.has('auth_error')) {
-    window.history.replaceState({}, '', window.location.pathname)
-  }
-}, [])
-```
-
-Backend `?auth=google` ke saath redirect karta hai. Wo URL me pada rehta to refresh karne pe error message dobara dikhta.
+| `expiresIn - 60` | Refresh 1 minute early to avoid expiration. |
+| `Math.max(..., 10_000)` | Ensure at least 10s gap to prevent refresh loops. |
 
 ### `App.jsx` — auth gate
 
@@ -301,13 +284,13 @@ if (!isAuthenticated) return <AuthPage />
 return <BookingApp key={user.id} />
 ```
 
-> **`key={user.id}` par dhyan do.** User badalne par React poora component naya banata hai. Iske bina pichhle user ki bookings aur selected seat nayi login me dikh jaati.
+> **Note `key={user.id}`.** This forces React to re-render the component tree when the user changes, preventing data leakage between sessions.
 
 ### `AuthPage.jsx`
 
-Ek hi component login aur signup dono karta hai (`mode` state se) — do alag pages banane ki zaroorat nahi, 80% code same hota.
+Handles both login and signup via a `mode` state.
 
-Aur ek chhoti cheez jo demo me bahut kaam aati hai:
+**Demo button:**
 
 ```jsx
 <button onClick={() => {
@@ -318,27 +301,13 @@ Aur ek chhoti cheez jo demo me bahut kaam aati hai:
 </button>
 ```
 
-Recruiter/interviewer ek click me andar. Type karne ki zaroorat nahi.
-
-**Google button** tabhi dikhta hai jab `googleEnabled` true ho — credentials na ho to UI me wo option hai hi nahi, tootа hua button nahi dikhta.
-
-### `useWebSocket.js` — token query param
-
-```js
-const token = getAccessToken()
-if (!token) return                    // token nahi to connect hi mat karo
-
-const base = API_URL.replace(/^http/, 'ws')
-const wsUrl = `${base}/ws/events/${eventId}?token=${encodeURIComponent(token)}`
-```
-
-Browser ka WebSocket API **custom headers bhejne hi nahi deta**, isliye query param. `encodeURIComponent` zaroori hai warna token ke special characters URL tod dete.
+Allows recruiters to log in with one click.
 
 ---
 
-## ⭐ Auth ne load test todha — aur usse do asli bug mile
+## ⭐ Auth broke the load test — and revealed two bugs
 
-Auth add karne ke baad load test dobara chalaya. **Sab kuch phat gaya:**
+After adding auth, the load test failed:
 
 ```
 Total requests   : 1250
@@ -347,16 +316,15 @@ Requests/sec     : 30.3
 p99              : 21000 ms
 ```
 
-Logs me:
+Logs:
 ```
 sqlalchemy.exc.TimeoutError: QueuePool limit of size 20 overflow 30 reached,
 connection timed out, timeout 10.00
 ```
 
-### Bug 1 — bcrypt transaction khuli rakhta tha
+### Bug 1 — bcrypt held transactions open
 
-Postgres se pucha ki ho kya raha hai:
-
+Postgres analysis:
 ```sql
 SELECT count(*) total,
        count(*) FILTER (WHERE state='idle in transaction') idle_txn,
@@ -364,40 +332,19 @@ SELECT count(*) total,
 FROM pg_stat_activity WHERE datname='seatpulse';
 ```
 
-```
- total | idle_txn | active
-    51 |       50 |      1
-```
+**50 connections were "idle in transaction".** SQLAlchemy opened a transaction on the first query, which remained open during the ~100ms bcrypt operation.
 
-**50 me se 50 connections "idle in transaction", sirf 1 active.** Kaam koi nahi kar raha tha — sab connections pakde baithe the.
-
-Wajah: SQLAlchemy pehli query pe transaction khol deta hai aur commit/close tak khuli rehti hai. Login me:
-
-```python
-user = db.scalar(select(User).where(...))    # transaction khul gayi
-...
-verify_password(payload.password, user.hashed_password)   # bcrypt ~100ms+
-```
-
-Utni der Postgres us connection ko "idle in transaction" me pakde baitha rehta tha.
-
-**Fix** — read ke turant baad transaction band:
+**Fix** — Commit immediately after the read:
 ```python
 user = db.scalar(select(User).where(User.email == payload.email.lower()))
-db.commit()      # <- bcrypt se PEHLE
+db.commit()      # <- BEFORE bcrypt
 ```
 
-### Bug 2 — in-flight requests > DB pool
+### Bug 2 — In-flight requests > DB pool
 
-Ye asli wala tha.
+Our routes are synchronous (`def`), and `get_db` acquires a connection at the start of the request. If the threadpool is saturated, the connection is held while waiting for a thread.
 
-Hamare routes sync hain (`def`), aur `get_db` request ke **shuru me** connection pakad leta hai. Phir request threadpool slot ka wait karti hai — aur us poore intezaar me connection pakda hi rehta hai.
-
-Isliye "held connections" threadpool size se **zyada** ho jaate the. Threadpool 32 rakhne ke baad bhi 40 connections checked out the.
-
-Pool badha ke fix karne ki koshish bekaar hai — in-flight requests **unbounded** hain, kitna bhi pool rakho, load badhne pe phir phategi.
-
-**Fix — admission control.** Darwaze pe hi rok lagao:
+**Fix — Admission control:**
 
 ```python
 _request_slots = asyncio.Semaphore(settings.MAX_CONCURRENT_REQUESTS)   # 30
@@ -408,39 +355,28 @@ async def limit_concurrency(request, call_next):
         return await call_next(request)
 ```
 
-**Invariant:**
-```
-MAX_CONCURRENT_REQUESTS (30)  <  pool_size + max_overflow (20 + 20 = 40)
-threadpool (40)               >=  MAX_CONCURRENT_REQUESTS (30)
-```
-
-Ab request andar aane se pehle rukti hai, connection pakadne se pehle. **Slow response 500 error se hazaar guna behtar hai.**
+Requests now queue *before* acquiring a database connection.
 
 ### Result
 
-| | Fix se pehle | Fix ke baad |
+| | Before Fix | After Fix |
 |---|---|---|
 | Total requests | 1,250 | **8,154** |
 | Failures | 58 | **0** |
 | Throughput | 30 rps | **137 rps** |
-| p50 | 470 ms | **1,000 ms** |
 | p99 | 21,000 ms | **1,400 ms** |
 
-6.5× zyada throughput, **zero errors**, aur p99 21s se 1.4s.
-
-> p50 thoda badha (470 → 1000ms) — kyunki ab requests queue me lagti hain. Par pehle wala 470ms **jhootha** tha: usme se 58 requests fail ho rahi thi aur p99 21 second tha. Ab har request poori hoti hai.
-
-**Ye interview ki sabse achhi kahani hai:** load test se bug mila, `pg_stat_activity` se root cause nikala, aur guess karne ke bajaye measure karke fix kiya.
+6.5× higher throughput, **zero errors**, and p99 reduced from 21s to 1.4s.
 
 ---
 
 ## ✅ Proof
 
-### 1. Bina token ke kuch nahi hota
+### 1. Protected routes
 ```bash
 curl -X POST http://localhost:8000/api/bookings \
   -H "Content-Type: application/json" -d '{"seat_id":1}'
-# {"detail":"Login karna zaroori hai"}
+# {"detail":"Login required"}
 ```
 
 ### 2. Login → booking
@@ -456,56 +392,13 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
   -d '{"seat_id":1}' http://localhost:8000/api/bookings
 ```
 
-### 3. Galat password — same message
-```bash
-curl -X POST http://localhost:8000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"demo@seatpulse.dev","password":"galat"}'
-# {"detail":"Email ya password galat hai"}
-
-curl -X POST http://localhost:8000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"nahi@hai.dev","password":"kuchbhi"}'
-# {"detail":"Email ya password galat hai"}     <- BILKUL same
-```
-
-### 4. Refresh cookie se
-```bash
-curl -b /tmp/ck.txt -X POST http://localhost:8000/api/auth/refresh
-```
-
-### 5. Test suite
+### 3. Test suite
 ```bash
 docker compose exec backend pytest tests/ -v
 ```
 ```
 13 passed in 20.83s
 ```
-Isme hain: protected routes, garbage token, user enumeration, refresh rotation, logout revocation, IDOR, aur poore concurrency tests.
-
-### 6. Browser
-http://localhost:5173 → login page. Demo credentials ka button hai (ek click me bhar jata hai).
-
-Google configured ho to **Continue with Google** dikhega.
-
----
-
-## Common Problems
-
-| Problem | Fix |
-|---|---|
-| `redirect_uri_mismatch` | Google Console me URI **exactly** `http://localhost:8000/api/auth/google/callback` honi chahiye |
-| Google button dikh hi nahi raha | `GOOGLE_CLIENT_ID`/`SECRET` `.env` me hain? `curl localhost:8000/api/auth/config` check karo |
-| `Access blocked: app not verified` | Consent screen ke **Test users** me apna Gmail add karo |
-| Login ho jata hai par reload pe logout | CORS me `allow_credentials=True` hai? Frontend me `credentials: "include"`? |
-| Cookie set hi nahi ho rahi | `allow_origins` me `["*"]` nahi chalega credentials ke saath — specific origin do |
-| `401` sab jagah | Access token 30 min ka hai. Frontend khud refresh karta hai; na ho to `/refresh` call karo |
-| Login page ek pal ko flash hota hai | `AuthContext` ka `loading` state check nahi kar rahe App.jsx me |
-| Pichhle user ka data naye login me dikh raha | `<BookingApp key={user.id} />` missing hai |
-| Logout ke baad bhi WebSocket chal raha | `useWebSocket` me token check hai? Token null hone par connect nahi karna chahiye |
-| Infinite refresh loop | `scheduleRefresh` me `Math.max(..., 10_000)` hai? Chhoti expiry pe loop ban jata hai |
-| Load test me 500 errors | `MAX_CONCURRENT_REQUESTS` pool se chhota hai? Invariant check karo |
-| `ModuleNotFoundError: jwt` | `docker compose up -d --build backend` |
 
 ---
 
@@ -513,29 +406,24 @@ Google configured ho to **Continue with Google** dikhega.
 
 ```
 backend/
-├── auth.py                 ← naya  ⭐ hashing, JWT, dependencies, cookies
-├── routers/auth.py         ← naya  ⭐ signup/login/refresh/logout/Google
+├── auth.py                 ← new  ⭐ hashing, JWT, dependencies, cookies
+├── routers/auth.py         ← new  ⭐ signup/login/refresh/logout/Google
 ├── models.py               ← update (google_id, avatar_url, is_active, password nullable)
-├── schemas.py              ← update (auth schemas, user_id hataya)
+├── schemas.py              ← update (auth schemas, removed user_id)
 ├── config.py               ← update (JWT, Google, MAX_CONCURRENT_REQUESTS)
-├── database.py             ← update (pool sizing + comment)
-├── main.py                 ← update (admission control, WS auth, /api/me hataya)
-├── seed.py                 ← update (asli bcrypt hashes)
+├── database.py             ← update (pool sizing)
+├── main.py                 ← update (admission control, WS auth)
 ├── routers/seats.py        ← update (auth)
 ├── routers/bookings.py     ← update (auth + IDOR fix)
-├── tests/test_concurrency.py  ← update (13 tests)
-└── alembic/versions/...    ← nayi migration
+└── tests/test_concurrency.py  ← update (13 tests)
 
 frontend/src/
 ├── auth/
-│   ├── AuthContext.jsx     ← naya  ⭐ token memory + silent refresh
-│   └── AuthPage.jsx        ← naya  (login/signup + Google button)
+│   ├── AuthContext.jsx     ← new  ⭐ token memory + silent refresh
+│   └── AuthPage.jsx        ← new  (login/signup + Google button)
 ├── api.js                  ← update (Bearer, 401 retry, credentials)
-├── App.jsx                 ← update (auth gate, logout, avatar)
-├── main.jsx                ← update (AuthProvider)
+├── App.jsx                 ← update (auth gate, logout)
 └── hooks/useWebSocket.js   ← update (token query param)
-
-loadtest/locustfile.py      ← update (AuthedUser base class)
 ```
 
 ---
@@ -552,11 +440,3 @@ git commit -m "Phase 7: JWT auth (access + httpOnly refresh) and Google OAuth
   200 concurrent users: 1250 reqs/58 failures -> 8154 reqs/0 failures"
 git push
 ```
-
----
-
-## Related
-
-- [Phase 6 — Load Testing](06-load-testing.md) — load testing
-- [testing.md](../reference/testing.md) — saare test commands
-- [roadmap.md](../roadmap.md) — poora plan

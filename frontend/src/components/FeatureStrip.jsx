@@ -3,10 +3,9 @@ import { IconActivity, IconBolt, IconLock, IconShield } from '../layout/icons'
 /**
  * Feature tiles.
  *
- * ⚠️ Yahan sirf wo cheezein hain jo ACTUALLY bani hui hain. "Multiple
- * payments — UPI, Cards, Wallets" jaisi tile daalna aasan tha, par payments
- * abhi hain hi nahi — aur UI me jhootha claim interview me sabse bada red
- * flag hota hai. Sach bolne wali tiles waise bhi zyada impressive hain.
+ * ⚠️ Only include implemented features. Avoid speculative claims like
+ * "Multiple payments" to maintain integrity; honest feature sets are
+ * more impressive during interviews.
  */
 const FEATURES = [
   {

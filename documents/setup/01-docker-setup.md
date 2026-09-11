@@ -1,6 +1,6 @@
 # SeatPulse Event Engine — Project Setup Steps
 
-FastAPI (backend) + React/Vite (frontend), dono Docker ke through. Host machine pe Node ya Python install karne ki zaroorat nahi — sirf **Docker Desktop** chahiye.
+FastAPI (backend) + React/Vite (frontend), both via Docker. No need to install Node or Python on the host machine — only **Docker Desktop** is required.
 
 ---
 
@@ -21,19 +21,19 @@ seatpulse-event-engine/
 
 ---
 
-## Step 1 — Root folder banao
+## Step 1 — Create the root folder
 
 ```
 seatpulse-event-engine
 ```
 
-Ye project ka main folder hai. Isi ke andar sab kuch banega. Terminal isi folder me kholo.
+This is the main project folder. Everything will be created inside it. Open your terminal in this folder.
 
 ---
 
-## Step 2 — Vite React app banao (Docker se)
+## Step 2 — Create the Vite React app (via Docker)
 
-Node install kiye bina Docker container ke andar Vite chalayenge. Command har shell me thodi alag hai kyunki current-directory ka syntax alag hota hai.
+We will run Vite inside a Docker container without installing Node. The command syntax varies by shell due to how they handle the current directory.
 
 **PowerShell**
 ```powershell
@@ -50,34 +50,34 @@ docker run --rm -v "%cd%:/app" -w /app node:22-alpine npm create vite@latest fro
 docker run --rm -v $(pwd):/app -w /app node:22-alpine npm create vite@latest frontend -- --template react
 ```
 
-> ⚠️ `$(pwd)` sirf bash me chalta hai — PowerShell/CMD me upar wali version use karo.
+> ⚠️ `$(pwd)` only works in bash — use the versions above for PowerShell/CMD.
 
-Ye command root ke andar `frontend/` folder bana degi.
+This command creates a `frontend/` folder inside the root.
 
-### Ye command kaam kaise karti hai?
+### How does this command work?
 
 ```
 docker run --rm -v "${PWD}:/app" -w /app node:22-alpine npm create vite@latest frontend -- --template react
-   │      │     │                   │        │            └─────────── container ke andar chalne wali command
-   │      │     │                   │        └─ kaunsi image use karni hai
-   │      │     │                   └─ working directory (container ke andar)
-   │      │     └─ folder mount karo (host:container)
-   │      └─ kaam khatam hote hi container delete kar do
-   └─ naya container banao aur chalao
+   │      │     │                   │        │            └─────────── Command to run inside the container
+   │      │     │                   │        └─ Image to use
+   │      │     │                   └─ Working directory (inside the container)
+   │      │     └─ Mount folder (host:container)
+   │      └─ Delete container after completion
+   └─ Create and run a new container
 ```
 
-| Part | Kyu likha hai |
+| Part | Purpose |
 |---|---|
-| `docker run` | Naya container banao aur usme command chalao |
-| `--rm` | Kaam khatam hote hi container **delete** ho jaye. Ye ek baar ka kaam hai, container padha rehne ka koi matlab nahi |
-| `-v "${PWD}:/app"` | Current folder ko container ke `/app` se **jod do**. Isi wajah se container jo `frontend/` folder banayega wo **tumhare asli folder me dikhega** — warna container delete hote hi sab udd jata |
-| `-w /app` | Container ke andar terminal `/app` me khulega, isliye files sahi jagah banengi |
-| `node:22-alpine` | Node.js ki ready-made image. **Isi wajah se tumhe apne PC pe Node install karne ki zaroorat nahi** |
-| `npm create vite@latest frontend` | Vite ka project banao, folder ka naam `frontend` |
-| `--` | Separator — iske baad ke flags npm ke nahi, **Vite ke** hain |
-| `--template react` | React template use karo (Vue/Svelte nahi) |
+| `docker run` | Create and run a new container |
+| `--rm` | **Delete** the container after completion. This is a one-time task. |
+| `-v "${PWD}:/app"` | **Bind** the current folder to the container's `/app`. This ensures the `frontend/` folder created by the container appears in your local directory. |
+| `-w /app` | Set the terminal working directory to `/app` inside the container. |
+| `node:22-alpine` | Ready-made Node.js image. **No need to install Node on your PC.** |
+| `npm create vite@latest frontend` | Create a Vite project named `frontend`. |
+| `--` | Separator — flags following this belong to **Vite**, not npm. |
+| `--template react` | Use the React template. |
 
-**`${PWD}` / `%cd%` / `$(pwd)` alag kyu?** Teeno ka matlab ek hi hai — "current folder ka full path". Bas har shell ka apna syntax hai:
+**Why different syntax for `${PWD}` / `%cd%` / `$(pwd)`?** They all represent the "full path of the current folder," but each shell has its own syntax.
 
 | Shell | Syntax |
 |---|---|
@@ -87,7 +87,7 @@ docker run --rm -v "${PWD}:/app" -w /app node:22-alpine npm create vite@latest f
 
 ---
 
-## Step 3 — Frontend folder me jao
+## Step 3 — Navigate to the frontend folder
 
 ```bash
 cd frontend
@@ -95,51 +95,10 @@ cd frontend
 
 ---
 
-## Step 4 — Frontend ka Dockerfile banao
+## Step 4 — Create the frontend Dockerfile
 
-Content sab shells me same hai, bas file likhne ka tarika alag hai.
+**Dockerfile content**
 
-**Dockerfile content — samajhne ke liye (comments ke saath)**
-
-```dockerfile
-# FROM = base image. Har Dockerfile FROM se hi shuru hota hai.
-# Ye ek ready-made Linux + Node.js 20 ka box hai — hume khud Node install nahi karna padta.
-# "alpine" = sabse chhoti Linux (~50MB). Isme bash nahi hota, sirf sh.
-FROM node:20-alpine
-
-# WORKDIR = container ke andar kaam karne ka folder set karo.
-# Iske baad ke saare commands (COPY, RUN, CMD) isi folder me chalenge.
-# Folder na ho to Docker khud bana deta hai.
-WORKDIR /app
-
-# Sirf package.json aur package-lock.json copy karo — abhi poora code nahi.
-# * ka matlab: package.json + package-lock.json dono.
-# Ye alag se isliye kiya hai (neeche wali line dekho) taki Docker ka cache kaam kare.
-COPY package*.json ./
-
-# Dependencies install karo.
-# Ye layer tabhi dubara chalegi jab package.json badlega.
-# Sirf code badla to Docker ise cache se utha lega = build fast.
-RUN npm install
-
-# Ab baaki poora code copy karo (src/, index.html, vite.config.js waqerah).
-# Pehla "." = tumhara folder, doosra "." = container ka /app
-COPY . .
-
-# Sirf documentation hai — "ye app 5173 port pe chalti hai".
-# Ye khud port open NAHI karta, wo kaam docker-compose ki "ports:" line karti hai.
-EXPOSE 5173
-
-# Container start hote hi ye command chalegi — dev server on.
-# --host isliye: bina iske Vite sirf 127.0.0.1 (container ke andar) sunta hai,
-# aur tumhara browser use nahi kar paata. --host se wo 0.0.0.0 pe sunta hai.
-# Beech wala -- npm ka separator hai: iske baad ka flag Vite ko jayega, npm ko nahi.
-CMD ["npm", "run", "dev", "--", "--host"]
-```
-
-> Comments sirf samajhne ke liye hain. Neeche wale commands **bina comment** wali clean file banate hain — chahe to comments rakh bhi sakte ho, `#` Dockerfile me valid hai.
-
-**Clean version (jo actually banegi)**
 ```dockerfile
 FROM node:20-alpine
 
@@ -211,7 +170,7 @@ echo CMD ["npm", "run", "dev", "--", "--host"]
 
 ---
 
-## Step 5 — File check karo
+## Step 5 — Verify the file
 
 **CMD**
 ```cmd
@@ -225,7 +184,7 @@ cat Dockerfile
 
 ---
 
-## Step 6 — Root folder me wapas jao
+## Step 6 — Return to the root folder
 
 ```bash
 cd ..
@@ -233,7 +192,7 @@ cd ..
 
 ---
 
-## Step 7 — Backend folder banao aur usme jao
+## Step 7 — Create and enter the backend folder
 
 ```bash
 mkdir backend
@@ -242,43 +201,26 @@ cd backend
 
 ---
 
-## Step 8 — `requirements.txt` banao
+## Step 8 — Create `requirements.txt`
 
-Ye file batati hai ki backend ko kaunse Python packages chahiye. `pip install -r requirements.txt` isi file ko padh ke sab install karta hai.
+This file lists the Python packages required by the backend.
 
-**Content — samajhne ke liye (comments ke saath)**
-
-```python
-# fastapi = wo framework jisse API banti hai (routes, validation, auto docs)
-# >= ka matlab: 0.110.0 ya usse naya version chalega
-# (== likhte to bilkul wahi version lock ho jata — production me aksar wahi karte hain)
-fastapi>=0.110.0
-
-# uvicorn = server jo FastAPI app ko actually chalata hai.
-# FastAPI khud server nahi hai, sirf framework hai — chalane ke liye uvicorn chahiye.
-# [standard] = extra packages ka bundle: fast websockets, better logs,
-# aur watchfiles (jo --reload ko kaam karne deta hai)
-uvicorn[standard]>=0.28.0
-```
-
-> `#` Python aur requirements.txt dono me comment hota hai, to comments rakhna safe hai.
-
-**Clean version**
+**Content**
 ```
 fastapi>=0.110.0
 uvicorn[standard]>=0.28.0
 ```
 
-**Naya package add karna ho** (jaise database ke liye):
+**Adding new packages** (e.g., for database):
 ```
 fastapi>=0.110.0
 uvicorn[standard]>=0.28.0
 sqlalchemy>=2.0.0
 psycopg2-binary>=2.9.0
 ```
-Add karne ke baad `docker compose up -d --build backend` chalana zaroori hai.
+After adding, run `docker compose up -d --build backend`.
 
-**CMD** (`>` ko escape karne ke liye `^` lagta hai)
+**CMD**
 ```cmd
 (
 echo fastapi^>=0.110.0
@@ -296,57 +238,11 @@ EOF
 
 ---
 
-## Step 9 — `main.py` banao
+## Step 9 — Create `main.py`
 
-Backend ka entry point. Dockerfile me likha `main:app` isi file ko point karta hai — `main` = file ka naam, `app` = neeche banaya gaya variable. **Isliye file ka naam `main.py` aur variable ka naam `app` hi rakhna**, warna server start nahi hoga.
+The backend entry point. The Dockerfile points to `main:app` — `main` is the filename, `app` is the variable.
 
-**Content — samajhne ke liye (comments ke saath)**
-
-```python
-# FastAPI class import — isi se app banega
-from fastapi import FastAPI
-# CORS middleware — browser ki security rule handle karne ke liye (neeche detail me)
-from fastapi.middleware.cors import CORSMiddleware
-
-# app = poori application ka object.
-# Dockerfile me "main:app" likha hai — wo isi variable ko dhoondhta hai.
-# Naam badla (jaise server = FastAPI()) to Dockerfile bhi badalna padega.
-app = FastAPI()
-
-# ---- CORS ----
-# Problem: frontend port 5173 pe hai, backend 8000 pe. Browser inhe
-# "alag websites" maanta hai aur by default API call block kar deta hai.
-# Ye middleware browser ko batata hai "haan, ye call allowed hai".
-app.add_middleware(
-    CORSMiddleware,
-    # kaun call kar sakta hai. ["*"] = koi bhi.
-    # Development me theek hai. Production me: ["https://tumhara-domain.com"]
-    allow_origins=["*"],
-    # cookies / auth headers bhejne ki permission
-    allow_credentials=True,
-    # kaunse HTTP methods allowed — ["*"] = GET, POST, PUT, DELETE sab
-    allow_methods=["*"],
-    # kaunse headers allowed — ["*"] = sab (jaise Authorization, Content-Type)
-    allow_headers=["*"],
-)
-
-# @app.get("/") = decorator. FastAPI ko batata hai:
-# "jab koi GET request / pe aaye, to neeche wala function chalao"
-@app.get("/")
-def read_root():
-    # dict return karo — FastAPI ise automatically JSON bana deta hai
-    return {"message": "FastAPI Server Running Perfectly!"}
-
-# Health check route. Ye batane ke liye ki server zinda hai.
-# Deployment, monitoring aur load balancers isi tarah ka endpoint check karte hain.
-@app.get("/api/health")
-def health_check():
-    return {"status": "healthy"}
-```
-
-> ⚠️ `allow_origins=["*"]` + `allow_credentials=True` saath me production me **kaam nahi karta** (browser reject karta hai) aur secure bhi nahi hai. Live jaane se pehle `allow_origins` me apna actual domain daalna.
-
-**Clean version**
+**Content**
 ```python
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -396,7 +292,7 @@ def health_check():
 EOF
 ```
 
-**CMD** (brackets `(` `)` escape karne padte hain)
+**CMD**
 ```cmd
 (
 echo from fastapi import FastAPI
@@ -424,49 +320,9 @@ echo     return {"status": "healthy"}
 
 ---
 
-## Step 10 — Backend ka Dockerfile banao
+## Step 10 — Create the backend Dockerfile
 
-**Content — samajhne ke liye (comments ke saath)**
-
-```dockerfile
-# Base image: Linux + Python 3.11 pehle se installed.
-# "slim" = chhoti version (~130MB), bina extra tools ke.
-# alpine bhi hoti hai par Python me alpine slow build karti hai — isliye slim.
-FROM python:3.11-slim
-
-# Container ke andar kaam karne ka folder
-WORKDIR /app
-
-# Sirf requirements.txt copy karo — abhi baaki code nahi.
-# Wajah: agar poora code pehle copy karte, to har chhote code change pe
-# pip install dubara chalta (slow). Ab wo sirf requirements badalne pe chalega.
-COPY requirements.txt .
-
-# Packages install karo.
-# --no-cache-dir = pip apni downloaded files save na kare.
-# Image chhoti rehti hai, aur container me wo cache kisi kaam ka nahi hota.
-# -r = "is file me se padh ke install kar"
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Ab poora backend code copy karo (main.py waqerah)
-COPY . .
-
-# Documentation: ye app 8000 pe chalti hai. Port khud open nahi hota —
-# wo docker-compose ki "ports:" line karti hai.
-EXPOSE 8000
-
-# Container start hote hi server chalu.
-# main:app     -> main.py file ka "app" variable
-# --host 0.0.0.0 -> ZAROORI. Default 127.0.0.1 hota hai jo sirf container ke
-#                   andar sunta hai; tumhara browser connect hi nahi kar paata.
-#                   0.0.0.0 = "sab network interfaces pe suno"
-# --port 8000  -> kis port pe suno
-# --reload     -> file save karte hi server restart. Sirf development ke liye.
-#                 Production me ye hata dena (CPU khata hai aur risky hai).
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
-```
-
-**Clean version**
+**Content**
 ```dockerfile
 FROM python:3.11-slim
 
@@ -520,7 +376,7 @@ echo CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reloa
 
 ---
 
-## Step 11 — Root folder me wapas jao
+## Step 11 — Return to the root folder
 
 ```bash
 cd ..
@@ -528,71 +384,9 @@ cd ..
 
 ---
 
-## Step 12 — `docker-compose.yml` banao
+## Step 12 — Create `docker-compose.yml`
 
-Ab tak humne do alag Dockerfile banaye. Compose ka kaam: **dono ko ek saath, ek command se chalana** aur aapas me jodna.
-
-**Content — samajhne ke liye (comments ke saath)**
-
-```yaml
-# services = kaun kaun se containers chalane hain.
-# Yahan do hain: backend aur frontend.
-services:
-
-  # "backend" ye service ka naam hai. Ye naam do jagah kaam aata hai:
-  #  1. commands me -> docker compose logs -f backend
-  #  2. network me  -> frontend isko http://backend:8000 se call kar sakta hai
-  backend:
-    # is folder ke Dockerfile se image banao.
-    # (agar ready-made image use karni ho to "build" ki jagah "image: postgres:16" likhte)
-    build: ./backend
-
-    # container ka fixed naam. Na dete to Docker random naam deta
-    # (jaise seatpulse-backend-1). Fixed naam se docker exec likhna aasan.
-    container_name: fastapi_backend
-
-    # "host_port:container_port"
-    # Left  8000 = tumhare PC ka port (browser me localhost:8000)
-    # Right 8000 = container ke andar ka port (jahan uvicorn sun raha hai)
-    # Port busy ho to left wala badal sakte ho: "8001:8000"
-    ports:
-      - "8000:8000"
-
-    # host ka ./backend folder container ke /app se jod do.
-    # Isi wajah se tum apne editor me main.py save karte ho aur --reload
-    # turant server restart kar deta hai — dubara build karne ki zaroorat nahi.
-    volumes:
-      - ./backend:/app
-
-  frontend:
-    build: ./frontend
-    container_name: react_frontend
-
-    # 5173 = Vite ka default dev port
-    ports:
-      - "5173:5173"
-
-    volumes:
-      # code live sync — React file save karo, browser turant update
-      - ./frontend:/app
-
-      # ⚠️ Ye line SABSE important hai.
-      # Upar wali line ne tumhara ./frontend container ke /app pe chipka diya —
-      # isme node_modules hai hi nahi (wo build ke waqt container ke ANDAR bana tha).
-      # Nateeja: container ka node_modules chhup jata aur app crash ho jati.
-      # Ye line kehti hai "/app/node_modules ko host se mat jodo, container wala hi rakho".
-      - /app/node_modules
-
-    # backend pehle start hoga, phir frontend.
-    # Note: ye sirf START ka order hai — ye guarantee NAHI karta ki
-    # backend ready ho chuka hai. Poori guarantee ke liye healthcheck lagta hai.
-    depends_on:
-      - backend
-```
-
-> ⚠️ YAML me **indentation (spaces) hi sab kuch hai** — tabs kabhi mat use karna, warna error aayegi. Har level pe 2 spaces.
-
-**Clean version**
+**Content**
 ```yaml
 services:
   backend:
@@ -667,7 +461,7 @@ echo       - backend
 
 ---
 
-## Step 13 — Sab kuch start karo
+## Step 13 — Start everything
 
 ```bash
 docker compose up --build
@@ -675,9 +469,9 @@ docker compose up --build
 
 ---
 
-## Verify — sab chal raha hai?
+## Verify — Is everything running?
 
-| Kya | URL |
+| Service | URL |
 |---|---|
 | Frontend (React) | http://localhost:5173 |
 | Backend (FastAPI) | http://localhost:8000 |
@@ -692,110 +486,78 @@ docker compose up --build
 
 | Action | Command |
 |---|---|
-| Build karke start karo | `docker compose up --build` |
-| Background me chalao (detached) | `docker compose up -d` |
+| Build and start | `docker compose up --build` |
+| Run in background (detached) | `docker compose up -d` |
 | Stop containers | `docker compose down` |
-| Stop + volumes bhi delete karo | `docker compose down -v` |
-| Sirf ek service restart karo | `docker compose restart backend` |
-| Ek hi service start karo | `docker compose up -d backend` |
+| Stop + delete volumes | `docker compose down -v` |
+| Restart a service | `docker compose restart backend` |
+| Start a single service | `docker compose up -d backend` |
 
-> ⚠️ `down -v` volumes delete kar deta hai — database data bhi udd jayega. Soch ke chalana.
+> ⚠️ `down -v` deletes volumes — database data will be lost.
 
 ### Logs
 
 | Action | Command |
 |---|---|
-| Live logs (sab services) | `docker compose logs -f` |
-| Sirf backend ke logs | `docker compose logs -f backend` |
-| Sirf frontend ke logs | `docker compose logs -f frontend` |
-| Last 100 lines hi dikhao | `docker compose logs --tail=100 backend` |
+| Live logs (all services) | `docker compose logs -f` |
+| Backend logs | `docker compose logs -f backend` |
+| Frontend logs | `docker compose logs -f frontend` |
+| Last 100 lines | `docker compose logs --tail=100 backend` |
 
 ### Build / Rebuild
 
 | Action | Command |
 |---|---|
-| Single service rebuild + restart | `docker compose up -d --build backend` |
-| Scratch se rebuild (cache ignore) | `docker compose build --no-cache` |
-| Sirf frontend scratch se rebuild | `docker compose build --no-cache frontend` |
+| Rebuild + restart single service | `docker compose up -d --build backend` |
+| Rebuild from scratch (ignore cache) | `docker compose build --no-cache` |
+| Rebuild frontend from scratch | `docker compose build --no-cache frontend` |
 
 ### Status
 
 | Action | Command |
 |---|---|
-| Compose ke containers | `docker compose ps` |
-| Saare running containers | `docker ps` |
-| Stopped containers bhi | `docker ps -a` |
-| Images list | `docker images` |
+| Compose containers | `docker compose ps` |
+| All running containers | `docker ps` |
+| All containers (including stopped) | `docker ps -a` |
+| List images | `docker images` |
 
 ---
 
-## `docker exec` — Container ke andar command chalao
+## `docker exec` — Run commands inside a container
 
-Container **chalta hua** hona chahiye (`docker compose up -d` ke baad). Do tarike hain:
+The container must be running.
 
-- `docker compose exec <service>` → service ka naam use karo (`backend`, `frontend`)
-- `docker exec -it <container_name>` → container ka naam (`fastapi_backend`, `react_frontend`)
-
-Dono same cheez karte hain. `-it` matlab interactive terminal.
-
-### Container ke andar shell kholo
+### Open a shell inside a container
 
 ```bash
-# Backend (python:3.11-slim me bash hota hai)
+# Backend (python:3.11-slim includes bash)
 docker compose exec backend bash
-docker exec -it fastapi_backend bash
 
-# Frontend (node:20-alpine me bash NAHI hota — sh use karo)
+# Frontend (node:20-alpine does NOT include bash — use sh)
 docker compose exec frontend sh
-docker exec -it react_frontend sh
 ```
 
-> ⚠️ Alpine images me `bash` nahi hota, `sh` chalta hai. Isliye frontend ke liye hamesha `sh`.
-
-Andar jaane ke baad normal terminal ki tarah kaam karo, `exit` likh ke bahar aao.
-
-### Backend ke andar commands (bina shell khole)
+### Run commands without opening a shell
 
 ```bash
 docker compose exec backend python --version
-docker compose exec backend pip list                    # installed packages
-docker compose exec backend pip install requests        # temporary install
-docker compose exec backend ls -la                      # files dekho
-docker compose exec backend python -c "import fastapi; print(fastapi.__version__)"
-docker compose exec backend cat requirements.txt
+docker compose exec backend pip list
+docker compose exec backend ls -la
 ```
 
-> ⚠️ `pip install` container ke andar **temporary** hai — `docker compose down` pe chala jayega.
-> Permanent chahiye to `requirements.txt` me line add karo, phir `docker compose up -d --build backend`.
-
-### Frontend ke andar commands
-
-```bash
-docker compose exec frontend npm install axios          # naya package
-docker compose exec frontend npm list                   # installed packages
-docker compose exec frontend node --version
-docker compose exec frontend ls -la
-docker compose exec frontend npm run build              # production build
-```
-
-> Package install karne ke baad `docker compose restart frontend` kar lena, taki Vite naya package pick kare.
-
-### Root user ke taur pe andar jao
-
-Permission error aa raha ho to:
+### Run as root user
 
 ```bash
 docker compose exec -u root backend bash
 docker exec -it -u root react_frontend sh
 ```
 
-### Container band hai to?
+### If the container is stopped
 
-`exec` sirf running container pe chalta hai. Band container me command chalani ho to `run` use karo (naya temporary container banega, kaam ke baad delete):
+Use `run` to create a temporary container:
 
 ```bash
 docker compose run --rm backend python --version
-docker compose run --rm frontend npm install
 ```
 
 ---
@@ -803,14 +565,12 @@ docker compose run --rm frontend npm install
 ## Cleanup Commands
 
 ```bash
-docker compose down -v              # containers + volumes delete
-docker system prune                 # unused containers/networks/images hatao
-docker system prune -a              # aur aggressive (saari unused images bhi)
-docker volume ls                    # volumes dekho
-docker volume prune                 # unused volumes delete
+docker compose down -v              # Delete containers + volumes
+docker system prune                 # Remove unused containers/networks/images
+docker system prune -a              # Aggressive cleanup (includes unused images)
+docker volume ls                    # List volumes
+docker volume prune                 # Delete unused volumes
 ```
-
-> ⚠️ `prune -a` sabhi projects ki unused images delete karta hai, sirf is project ki nahi. Agli baar sab dubara download hoga.
 
 ---
 
@@ -818,9 +578,9 @@ docker volume prune                 # unused volumes delete
 
 | Problem | Fix |
 |---|---|
-| `$(pwd)` PowerShell me kaam nahi kar raha | `${PWD}` use karo (CMD me `%cd%`) |
-| Browser me frontend nahi khul raha | Dockerfile me `--host` flag check karo |
-| Port already in use | `docker compose down` chalao, ya `docker ps` se purana container band karo |
-| Frontend me code change dikh nahi raha | volume mount check karo `docker-compose.yml` me |
-| Naya npm package install kiya, container me nahi mila | `docker compose build --no-cache frontend` |
-| Frontend se API call CORS error de rahi | `main.py` me CORS middleware laga hai ya nahi, check karo |
+| `$(pwd)` not working in PowerShell | Use `${PWD}` |
+| Frontend not loading | Check `--host` flag in Dockerfile |
+| Port already in use | Run `docker compose down` |
+| Code changes not reflecting | Check volume mounts in `docker-compose.yml` |
+| New npm package not found | `docker compose build --no-cache frontend` |
+| CORS error | Ensure CORS middleware is configured in `main.py` |

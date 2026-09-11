@@ -1,60 +1,60 @@
 # Phase 5 — WebSockets + Real-Time Broadcasting
 
-[Phase 4 — Redis Locking](04-redis-locking.md) ke baad ka kaam.
+[Phase 4 — Redis Locking](04-redis-locking.md) follow-up.
 
-**Kya banega:** ek tab me seat hold karo → **dusre tab me turant peeli** ho jaye, bina refresh ke.
+**Goal:** Hold a seat in one tab → **instantly turn yellow** in another tab, without refreshing.
 
 ---
 
-## Problem jo ye solve karta hai
+## Problem Solved
 
-Phase 4 ke baad locking to sahi thi, par experience kharab tha:
+After Phase 4, locking was correct, but the user experience was poor:
 
 ```
-User A: seat B-5 hold kar li
-User B: uske screen pe B-5 abhi bhi HARI dikh rahi hai
-User B: click karta hai -> 409 "kisi aur ne hold kar li"
+User A: holds seat B-5
+User B: seat B-5 still looks GREEN on their screen
+User B: clicks -> 409 "seat already held"
 User B: 😠
 ```
 
-User B ko galat data dikh raha tha kyunki uska page purana tha. **Sahi tarika:** seat ki haalat badalte hi sabko bata do.
+User B was seeing stale data because their page was outdated. **Solution:** Notify everyone as soon as a seat status changes.
 
 | | Phase 4 | Phase 5 |
 |---|---|---|
-| Dusre user ka change | Refresh karo tab pata chalega | **Turant** dikhta hai |
-| Data flow | Client poochhta hai (pull) | Server bhejta hai (push) |
-| Har booking ke baad | Poora seat list dubara download | Sirf **ek seat** ka update |
+| Other user's change | Refresh required | **Instant** update |
+| Data flow | Client polls (pull) | Server pushes (push) |
+| After every booking | Full seat list re-download | **Single seat** update |
 
 ---
 
-## Architecture — Redis Pub/Sub kyu?
+## Architecture — Why Redis Pub/Sub?
 
-Seedha broadcast bhi ho sakta tha:
+A simple broadcast could look like this:
 
 ```python
 for socket in connected_sockets:
     await socket.send_json(message)
 ```
 
-**Ye ek server pe theek hai. Production me toot jata hai.**
+**This works on a single server but breaks in production.**
 
-Production me do-teen uvicorn workers chalte hain, aur har worker ke paas **apne alag** WebSocket connections hote hain:
+In production, multiple Uvicorn workers run, each with **its own** WebSocket connections:
 
 ```
-Worker 1: User A, User C ke sockets
-Worker 2: User B ka socket
+Worker 1: User A, User C sockets
+Worker 2: User B socket
 ```
 
-User A ka lock request Worker 1 pe process hua. Agar wo sirf apne local sockets ko batayega to **User B ko kabhi pata hi nahi chalega** — wo dusre worker pe hai.
+User A's lock request is processed by Worker 1. If it only notifies its local sockets, **User B will never know** because they are on a different worker.
 
-**Hal — Redis message bus:**
+**Solution — Redis message bus:**
 
 ```
                     ┌──────────────────────────┐
    User A ─ lock ──▶│  Worker 1                │
-                    │  1. Redis me lock lo      │
-                    │  2. Postgres update karo  │
-                    │  3. Redis pe PUBLISH karo │
+                    │  1. Acquire lock in Redis │
+                    │  2. Update Postgres      │
+                    │  3. PUBLISH to Redis     │
                     └────────────┬──────────────┘
                                  │
                     ┌────────────▼──────────────┐
@@ -68,15 +68,15 @@ User A ka lock request Worker 1 pe process hua. Agar wo sirf apne local sockets 
               └───────────────┘   └────────────────┘
 ```
 
-Har worker **publish** bhi karta hai aur **subscribe** bhi. Message kisi bhi worker se aaye, sabke clients tak pahunchta hai.
+Every worker both **publishes** and **subscribes**. Messages from any worker reach all clients.
 
-> **Bonus:** Redis pehle se hai (Phase 4 se). Koi nayi service nahi lagi — RabbitMQ/Kafka jaisa kuch add nahi karna pada.
+> **Bonus:** Redis is already in use (from Phase 4). No new services like RabbitMQ/Kafka are required.
 
 ---
 
 ## Step 1 — `websocket.py`
 
-Poora code: [../backend/websocket.py](../../backend/websocket.py)
+Full code: [../backend/websocket.py](../../backend/websocket.py)
 
 ### ConnectionManager
 
@@ -85,11 +85,11 @@ self._rooms: dict[int, set[WebSocket]] = {}     # { event_id: {socket, ...} }
 self._lock = asyncio.Lock()
 ```
 
-| Cheez | Kyu |
+| Item | Reason |
 |---|---|
-| Event-wise rooms | Event 1 ke updates event 2 ke users tak nahi jaane chahiye |
-| `set` (list nahi) | Remove O(1) me, aur duplicate socket add nahi hota |
-| `asyncio.Lock` | Ek saath do connect/disconnect aayein to dict corrupt na ho |
+| Event-wise rooms | Updates for event 1 should not reach users of event 2 |
+| `set` (not list) | O(1) removal, prevents duplicate socket additions |
+| `asyncio.Lock` | Prevents dictionary corruption during concurrent connect/disconnect |
 
 **Dead connections:**
 ```python
@@ -98,10 +98,10 @@ for ws in sockets:
     try:
         await ws.send_json(message)
     except Exception:
-        dead.append(ws)      # baad me hatayenge
+        dead.append(ws)      # remove later
 ```
 
-Client ja chuka ho par disconnect handler na chala ho (network toot gaya) — aisa hota hai. Loop ke **andar** set se remove karoge to Python error dega, isliye jama karke baad me hatate hain.
+Connections may drop without triggering the disconnect handler (network failure). Modifying a set while iterating causes Python errors, so we collect and remove them later.
 
 ### Publish — sync function
 
@@ -113,12 +113,12 @@ def publish(event_id: int, message: dict) -> None:
         logger.warning("Broadcast publish fail: %s", exc)
 ```
 
-| Decision | Kyu |
+| Decision | Reason |
 |---|---|
-| **Sync** (`def`, `async def` nahi) | Hamare routes bhi sync hain. Ye fire-and-forget hai, ~0.1ms lagta hai |
-| **Exception swallow** | Broadcast fail hone se **booking fail nahi honi chahiye**. Real-time update "nice to have" hai, booking "must have" |
+| **Sync** (not `async def`) | Our routes are sync. This is fire-and-forget, taking ~0.1ms |
+| **Exception swallow** | Broadcast failure **must not fail the booking**. Real-time updates are "nice to have," booking is "must have" |
 
-> Ye dusri baat design ka faisla hai. Redis pub/sub gir jaye to users ko live update nahi milega — par unki booking phir bhi ho jayegi.
+> This is a design choice. If Redis Pub/Sub goes down, users won't get live updates, but their bookings will still succeed.
 
 ### Subscriber loop
 
@@ -135,19 +135,19 @@ async def _subscriber_loop():
                 await manager.broadcast_local(event_id, json.loads(raw["data"]))
 
         except asyncio.CancelledError:
-            raise                    # app band ho raha hai — normal
+            raise                    # app shutting down — normal
         except Exception:
-            await asyncio.sleep(2)   # Redis gira — 2s baad retry
+            await asyncio.sleep(2)   # Redis down — retry in 2s
 ```
 
-| Cheez | Kyu |
+| Item | Reason |
 |---|---|
-| `redis.asyncio` | Ye async context me chal raha hai. Sync client yahan event loop block kar deta |
-| `psubscribe` (pattern) | `seatpulse:event:*` — har event ka channel alag, par ek hi subscription se sab sun lete hain |
-| `while True` + retry | Redis restart ho jaye to subscriber apne aap wapas jud jata hai |
-| `CancelledError` re-raise | Warna app shutdown ke waqt task marta hi nahi |
+| `redis.asyncio` | Runs in an async context. A sync client would block the event loop |
+| `psubscribe` (pattern) | `seatpulse:event:*` — separate channels per event, but one subscription listens to all |
+| `while True` + retry | Subscriber automatically reconnects if Redis restarts |
+| `CancelledError` re-raise | Ensures the task stops during app shutdown |
 
-### Lifespan me start
+### Lifespan startup
 
 ```python
 @asynccontextmanager
@@ -157,7 +157,7 @@ async def lifespan(app: FastAPI):
     task.cancel()
 ```
 
-App start hote hi subscriber chalu, band hote hi ruk jata hai.
+Subscriber starts with the app and stops on shutdown.
 
 ---
 
@@ -176,17 +176,17 @@ async def event_socket(websocket: WebSocket, event_id: int):
         await manager.disconnect(websocket, event_id)
 ```
 
-> ⚠️ **`while True: await receive_text()` zaroori hai** — bhale hi hum client se kuch expect nahi kar rahe.
+> ⚠️ **`while True: await receive_text()` is required** — even if we don't expect input from the client.
 >
-> Bina iske function turant return kar jayega aur FastAPI socket band kar dega. Ye loop connection ko zinda rakhta hai aur disconnect ka pata bhi deta hai.
+> Without this, the function returns immediately and FastAPI closes the socket. This loop keeps the connection alive and detects disconnects.
 
-> ⚠️ **CORS middleware WebSockets par lagu nahi hota** — wo HTTP ke liye hai. Production me yahan khud origin check karna chahiye.
+> ⚠️ **CORS middleware does not apply to WebSockets** — it is for HTTP. You must check the origin manually in production.
 
 ---
 
 ## Step 3 — `events_broadcast.py`
 
-Routers ko WebSocket ki detail nahi pata honi chahiye. Unhe bas ek call karni hai:
+Routers should not know WebSocket details. They only need one call:
 
 ```python
 broadcast_seat_update(db, seat_id, "locked")
@@ -197,7 +197,7 @@ def broadcast_seat_update(db, seat_id, action):
     seat = db.get(Seat, seat_id)
     if seat is None:
         return
-    db.refresh(seat)          # <- ZAROORI
+    db.refresh(seat)          # <- REQUIRED
     publish(seat.event_id, {
         "type": "seat_update",
         "action": action,
@@ -205,13 +205,13 @@ def broadcast_seat_update(db, seat_id, action):
     })
 ```
 
-> ⚠️ **`db.refresh(seat)` bhoolna sabse common bug hai.**
+> ⚠️ **Forgetting `db.refresh(seat)` is the most common bug.**
 >
-> Routers me humne `update()` statement se seat badli hai, aur `synchronize_session=False` diya hai — matlab SQLAlchemy ne session ka cached object update **nahi** kiya. Refresh ke bina **purana status broadcast ho jayega** (jaise "available" jabki wo abhi "locked" hui hai).
+> In routers, we update seats using an `update()` statement with `synchronize_session=False` — meaning SQLAlchemy did not update the cached session object. Without refresh, the **stale status will be broadcast** (e.g., "available" when it is actually "locked").
 
-**Kahan-kahan broadcast lagaya:**
+**Broadcast locations:**
 
-| Jagah | Action |
+| Location | Action |
 |---|---|
 | `POST /seats/{id}/lock` | `locked` |
 | `DELETE /seats/{id}/lock` | `released` |
@@ -223,7 +223,7 @@ def broadcast_seat_update(db, seat_id, action):
 
 ## Step 4 — `useWebSocket` hook
 
-Poora code: [../frontend/src/hooks/useWebSocket.js](../../frontend/src/hooks/useWebSocket.js)
+Full code: [../frontend/src/hooks/useWebSocket.js](../../frontend/src/hooks/useWebSocket.js)
 
 ### Exponential backoff
 
@@ -238,15 +238,15 @@ socket.onclose = () => {
 }
 ```
 
-**Fixed 1s retry kyu nahi:** server down ho to 100 clients har second hammer karenge, aur wo uthne hi nahi payega. Backoff usse bachata hai. Successful connect pe counter reset ho jata hai.
+**Why not fixed 1s retry?** If the server is down, 100 clients hammering it every second will prevent it from recovering. Backoff prevents this. The counter resets on successful connection.
 
-### Teen refs, teen alag problems
+### Three refs, three problems
 
-| Ref | Problem jo solve karta hai |
+| Ref | Problem solved |
 |---|---|
-| `handlerRef` | Callback har render pe naya banta hai. Use dependency banate to **har render pe reconnect** hota |
-| `closedByUsRef` | Component unmount hone par `onclose` chalta hai — tab reconnect **nahi** karna |
-| `timerRef` | Pending retry timer cleanup me clear karna hai |
+| `handlerRef` | Callbacks are recreated every render. Using them as dependencies would cause **reconnects on every render** |
+| `closedByUsRef` | `onclose` triggers on component unmount — we shouldn't reconnect then |
+| `timerRef` | Allows clearing the pending retry timer during cleanup |
 
 ### StrictMode
 
@@ -258,25 +258,25 @@ return () => {
 }
 ```
 
-React StrictMode (dev) me effects **do baar** chalte hain. Cleanup na ho to do sockets khul jaate hain aur har message do baar aata hai.
+In React StrictMode (dev), effects run **twice**. Without cleanup, two sockets open, causing duplicate messages.
 
 ### URL
 
 ```js
 const wsUrl = `${API_URL.replace(/^http/, 'ws')}/ws/events/${eventId}`
 ```
-`http://` → `ws://`, aur `https://` → `wss://` (kyunki `https` bhi `http` se shuru hota hai).
+`http://` → `ws://`, and `https://` → `wss://` (since `https` starts with `http`).
 
 ---
 
-## Step 5 — App.jsx me use karo
+## Step 5 — Use in App.jsx
 
 ```js
 const handleSeatUpdate = useCallback((updatedSeat) => {
-  // Sirf wo EK seat replace karo, poori list nahi
+  // Replace only that ONE seat, not the whole list
   setSeats((prev) => prev.map((s) => (s.id === updatedSeat.id ? updatedSeat : s)))
 
-  // Meri hold kisi aur ke paas chali gayi? Selection saaf karo
+  // Did my hold get taken? Clear selection
   setSelectedSeat((prev) => {
     if (!prev || prev.id !== updatedSeat.id) return prev
     const stillMine = updatedSeat.status === 'locked'
@@ -290,7 +290,7 @@ const handleSeatUpdate = useCallback((updatedSeat) => {
 const { status: wsStatus } = useWebSocket(event?.id ?? null, handleSeatUpdate)
 ```
 
-### Counts ab derive hote hain
+### Counts are now derived
 
 ```js
 const counts = seats.reduce(
@@ -299,17 +299,17 @@ const counts = seats.reduce(
 )
 ```
 
-Pehle `event.available_seats` server se aata tha. Ab counts `seats` se nikalte hain — **WebSocket update aate hi apne aap sahi ho jaate hain**, server call ke bina.
+Previously, `event.available_seats` came from the server. Now, counts are derived from `seats` — **they update automatically when a WebSocket message arrives**, without server calls.
 
-### Header me live badge
+### Live badge in header
 
-`DB · Redis · Live` — teesra dot WebSocket ka hai. Open ho to pulse karta hai, connecting pe peela, offline pe laal.
+`DB · Redis · Live` — the third dot is for WebSockets. Pulses when open, yellow when connecting, red when offline.
 
 ---
 
 ## Step 6 — Restart
 
-Naya package koi nahi. `--reload` khud pick kar lega:
+No new packages. `--reload` will pick it up:
 
 ```bash
 docker compose restart backend
@@ -322,20 +322,20 @@ docker compose restart backend
 ### 1. Health
 http://localhost:8000/api/health → `"version": "0.5.0"`
 
-Header me **Live** dot dikhna chahiye (hara, pulse karta hua).
+The **Live** dot should appear in the header (green, pulsing).
 
-### 2. ⭐ Do browser test — asli proof
+### 2. ⭐ Two-browser test — the real proof
 
-Do window kholo: **ek normal, ek incognito** (dono http://localhost:5173)
+Open two windows: **one normal, one incognito** (both http://localhost:5173)
 
-| Karo | Dusri window me |
+| Action | In other window |
 |---|---|
-| Window A me hari seat click | Wo seat **turant peeli** — bina refresh |
-| Window A me Release Hold | **Turant hari** |
-| Window A me Confirm Booking | **Turant laal**, counts badal jaate hain |
-| Window A me Cancel | **Turant hari** |
+| Click green seat in Window A | Seat **instantly turns yellow** — no refresh |
+| Release Hold in Window A | **Instantly green** |
+| Confirm Booking in Window A | **Instantly red**, counts update |
+| Cancel in Window A | **Instantly green** |
 
-Ye Phase 4 me refresh maangta tha. Ab nahi.
+Phase 4 required a refresh. Now it doesn't.
 
 ### 3. Reconnect test
 
@@ -343,14 +343,14 @@ Ye Phase 4 me refresh maangta tha. Ab nahi.
 docker compose restart backend
 ```
 
-Browser me dekho — badge **Live → Offline → Connecting → Live**. Page refresh nahi karna pada.
+Watch the browser — badge changes **Live → Offline → Connecting → Live**. No page refresh needed.
 
-Console me backoff bhi dikhega (1s, 2s, 4s...).
+Backoff will be visible in the console (1s, 2s, 4s...).
 
-### 4. Script se test
+### 4. Script test
 
 ```python
-# backend/ws_test.py (test ke baad delete kar dena)
+# backend/ws_test.py (delete after testing)
 import asyncio, json, httpx, websockets
 
 async def main():
@@ -377,28 +377,28 @@ book -> 201
 MSG 2: seat_update booked booked
 ```
 
-### 5. Redis pub/sub live dekho
+### 5. Watch Redis pub/sub live
 
 ```bash
 docker compose exec redis redis-cli psubscribe "seatpulse:event:*"
 ```
-Ab UI me seat click karo — raw JSON messages terminal me behte dikhenge.
+Click a seat in the UI — raw JSON messages will stream in the terminal.
 
 ### 6. Browser DevTools
-F12 → Network → **WS** tab → `/ws/events/1` → **Messages**. Har seat change pe frame aata dikhega.
+F12 → Network → **WS** tab → `/ws/events/1` → **Messages**. You will see frames for every seat change.
 
 ---
 
-## Interview me kya poocha jayega
+## Interview Questions
 
-| Sawaal | Jawab |
+| Question | Answer |
 |---|---|
-| "Polling kyu nahi kiya?" | 1000 clients × har 2 sec = 500 req/sec sirf "kuch badla?" poochhne ke liye. WebSocket me sirf tab traffic hota hai jab actually kuch badle |
-| "Multiple servers pe kaise kaam karega?" | Redis pub/sub. Har worker publish aur subscribe dono karta hai, isliye kisi bhi worker ka change sab tak pahunchta hai |
-| "Connection toot jaye to?" | Exponential backoff se reconnect (1s→15s), aur reconnect ke baad poora seat list dubara fetch hota hai |
-| "Message miss ho gaya to?" | Ye at-most-once delivery hai. Isliye reconnect pe full refresh karte hain — WebSocket **optimization** hai, source of truth nahi |
-| "Broadcast fail ho jaye to booking ka kya?" | Booking ho jayegi. `publish()` exception swallow karta hai — real-time nice-to-have hai, booking must-have |
-| "WebSocket authenticate kaise karoge?" | Abhi nahi kiya. Query param ya first-message me JWT bhejna hoga — CORS WS pe kaam nahi karta |
+| "Why not polling?" | 1000 clients × every 2s = 500 req/sec just to ask "did anything change?". WebSockets only send traffic when something actually changes |
+| "How does it work across multiple servers?" | Redis Pub/Sub. Every worker publishes and subscribes, so changes from any worker reach everyone |
+| "What if the connection drops?" | Reconnect via exponential backoff (1s→15s), and fetch the full seat list again upon reconnect |
+| "What if a message is missed?" | This is at-most-once delivery. That's why we do a full refresh on reconnect — WebSockets are an **optimization**, not the source of truth |
+| "What if broadcast fails?" | The booking still succeeds. `publish()` swallows exceptions — real-time is nice-to-have, booking is must-have |
+| "How to authenticate WebSockets?" | Not implemented yet. Need to send JWT via query param or first message — CORS doesn't work on WS |
 
 ---
 
@@ -406,30 +406,30 @@ F12 → Network → **WS** tab → `/ws/events/1` → **Messages**. Har seat cha
 
 | Problem | Fix |
 |---|---|
-| Badge hamesha "Connecting" | Backend chal raha hai? `docker compose logs backend` |
-| `WebSocket connection failed` | URL galat — `ws://` hona chahiye, `http://` nahi |
-| Message do baar aa raha hai | Hook me cleanup missing (StrictMode do sockets khol deta hai) |
-| Update aa raha hai par purana status | `db.refresh(seat)` missing hai `broadcast_seat_update` me |
-| Ek tab me change, dusre me nahi | `docker compose exec redis redis-cli psubscribe "seatpulse:event:*"` — message ja raha hai? |
-| Backend restart ke baad reconnect nahi | Browser console dekho, backoff 15s tak ja sakta hai — thoda ruko |
-| `RuntimeError: Event loop is closed` shutdown pe | `task.cancel()` lifespan me hai? |
+| Badge stuck on "Connecting" | Is the backend running? `docker compose logs backend` |
+| `WebSocket connection failed` | Wrong URL — must be `ws://`, not `http://` |
+| Duplicate messages | Missing cleanup in hook (StrictMode opens two sockets) |
+| Update arrives but status is old | `db.refresh(seat)` missing in `broadcast_seat_update` |
+| Change in one tab, not the other | `docker compose exec redis redis-cli psubscribe "seatpulse:event:*"` — is the message arriving? |
+| No reconnect after backend restart | Check browser console, backoff can go up to 15s — wait a moment |
+| `RuntimeError: Event loop is closed` on shutdown | Is `task.cancel()` in lifespan? |
 
 ---
 
-## Files jo is phase me bane/badle
+## Files created/modified
 
 ```
 backend/
-├── websocket.py            ← naya  ⭐ ConnectionManager + Redis pub/sub
-├── events_broadcast.py     ← naya  (routers ke liye simple helper)
+├── websocket.py            ← new  ⭐ ConnectionManager + Redis pub/sub
+├── events_broadcast.py     ← new  (simple helper for routers)
 ├── main.py                 ← update (lifespan + /ws endpoint)
 └── routers/
-    ├── seats.py            ← update (lock/unlock/expired pe broadcast)
-    └── bookings.py         ← update (book/cancel pe broadcast)
+    ├── seats.py            ← update (broadcast on lock/unlock/expired)
+    └── bookings.py         ← update (broadcast on book/cancel)
 
 frontend/src/
 ├── hooks/
-│   └── useWebSocket.js     ← naya  ⭐ reconnect ke saath
+│   └── useWebSocket.js     ← new  ⭐ with reconnect
 ├── App.jsx                 ← update (live updates, derived counts)
 └── components/
     └── BookingPanel.jsx    ← update (counts prop)
@@ -451,8 +451,8 @@ git push
 
 - [Phase 4 — Redis Locking](04-redis-locking.md) — locking
 - [docker-commands.md](../reference/docker-commands.md) — container commands
-- [roadmap.md](../roadmap.md) — aage kya
+- [roadmap.md](../roadmap.md) — what's next
 
 ---
 
-**Agla:** Phase 6 — Load testing (Locust). 500 concurrent users, ek seat, aur proof ki exactly 1 booking hui. Wahi number resume pe jayega.
+**Next:** Phase 6 — Load testing (Locust). 500 concurrent users, one seat, and proof of exactly 1 booking. That number goes on the resume.

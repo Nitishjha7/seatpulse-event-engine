@@ -3,31 +3,29 @@ import { Fragment } from 'react'
 /**
  * Visual seat layout builder.
  *
- * ---- Ye kya hai, aur kya NAHI hai ----
+ * ---- Concept ----
  *
- * Ye ek FORM hai jiska live preview hai — drag-and-drop canvas nahi.
+ * This is a form-based builder with a live preview, not a drag-and-drop canvas.
  *
- * Drag-and-drop pehle sochne me behtar lagta hai, par asli venue rows aur
- * sections me hi bane hote hain. "Row C me 12 seats, seat 4 ke baad aisle"
- * type karna maus se 12 boxes ghaseetne se tez bhi hai aur galti-proof
- * bhi. Aur wo pointer-events, undo/redo, snapping ka poora pahaad bhi
- * nahi laata.
+ * Drag-and-drop is intuitive initially, but real venues are structured in rows
+ * and sections. Typing "12 seats in Row C, aisle after seat 4" is faster and
+ * less error-prone than dragging boxes. It also avoids the complexity of
+ * pointer events, undo/redo stacks, and snapping logic.
  *
- * ⚠️ Yahan ka koi bhi check SECURITY nahi hai. Validation server par
- * `layout.py` me hoti hai — ye sirf usse pehle user ko batata hai ki
- * kya galat hai.
+ * ⚠️ This validation is for UI feedback only. Security validation occurs
+ * server-side in `layout.py`.
  */
 
 const ROW_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
-/** Poore layout me abhi tak kaunse row labels use ho chuke hain. */
+/** Tracks which row labels are currently in use. */
 function usedLabels(sections) {
   return new Set(
     sections.flatMap((s) => s.rows.map((r) => r.label.trim().toUpperCase())),
   )
 }
 
-/** Agla khaali row letter dhoondo — A, B, C… phir A1, B1… */
+/** Finds the next available row label — A, B, C… then A1, B1… */
 function nextLabel(sections) {
   const used = usedLabels(sections)
   for (const ch of ROW_LETTERS) {
@@ -59,40 +57,36 @@ export function emptyLayout() {
 /**
  * Client-side validation.
  *
- * Server ke rules ki copy hai — aur ye duplication jaan-boojh ke hai.
- * Server par ye rules hone hi chahiye (koi bhi API ko seedha hit kar
- * sakta hai), par user ko submit dabane se PEHLE pata chalna chahiye ki
- * do rows ka label same hai. Wo round-trip bekaar hai.
- *
- * Server hi asli faisla karta hai; ye sirf jaldi feedback deta hai.
+ * Duplicates server-side rules to provide immediate feedback before submission,
+ * avoiding unnecessary round-trips. The server remains the source of truth.
  */
 export function validateLayout(layout) {
   const seen = new Map()
   let total = 0
 
   for (const section of layout.sections) {
-    if (!section.name.trim()) return 'Har section ka naam chahiye'
+    if (!section.name.trim()) return 'Section name is required'
 
     for (const row of section.rows) {
       const label = row.label.trim().toUpperCase()
-      if (!label) return 'Har row ka label chahiye'
+      if (!label) return 'Row label is required'
       if (seen.has(label)) {
-        return `Row "${label}" do jagah hai (${seen.get(label)} aur ${section.name})`
+        return `Row "${label}" is duplicated (${seen.get(label)} and ${section.name})`
       }
       seen.set(label, section.name)
 
-      if (row.seats < 1) return `Row ${label} me kam se kam 1 seat`
+      if (row.seats < 1) return `Row ${label} must have at least 1 seat`
       for (const a of row.aisles_after) {
         if (a >= row.seats) {
-          return `Row ${label}: aisle seat ${a} ke baad nahi ho sakti (row me ${row.seats} seats hain)`
+          return `Row ${label}: aisle cannot be after seat ${a} (row only has ${row.seats} seats)`
         }
       }
       total += row.seats
     }
   }
 
-  if (total === 0) return 'Ek bhi seat nahi hai'
-  if (total > 2000) return `Max 2000 seats — is layout me ${total} hain`
+  if (total === 0) return 'Layout must contain at least one seat'
+  if (total > 2000) return `Maximum 2000 seats allowed — current count: ${total}`
   return null
 }
 
@@ -177,8 +171,7 @@ export default function LayoutBuilder({ layout, onChange }) {
                 const last = l.sections[si].rows.at(-1)
                 l.sections[si].rows.push({
                   label: nextLabel(l.sections),
-                  // Pichli row ki shape copy — aksar rows ek jaisi hoti
-                  // hain, to user ko har baar sab type na karna pade
+                  // Copy previous row configuration to speed up entry
                   seats: last?.seats ?? 10,
                   aisles_after: [...(last?.aisles_after ?? [])],
                 })
@@ -260,9 +253,7 @@ function RowEditor({ row, canRemove, onChange, onRemove }) {
           value={aisles}
           onChange={(e) =>
             onChange((r) => {
-              // "4, 8" -> [4, 8]. Adhoora input ("4,") type karte waqt
-              // NaN na aaye isliye filter — warna har keystroke pe
-              // validation error flash karta hai.
+              // Filter input to prevent validation errors during partial typing
               r.aisles_after = e.target.value
                 .split(',')
                 .map((x) => parseInt(x.trim(), 10))
@@ -291,10 +282,10 @@ function RowEditor({ row, canRemove, onChange, onRemove }) {
 }
 
 /**
- * Live preview — bilkul wahi shape jo attendee ko dikhega.
+ * Live preview — visual representation of the attendee experience.
  *
- * Yahi is builder ka poora point hai: 40 seats ki row aur 4 aisles ko
- * numbers me sochna mushkil hai, dekh ke turant samajh aata hai.
+ * Helps visualize seat distribution and aisles, which are difficult to
+ * interpret from raw numbers alone.
  */
 function LayoutPreview({ layout }) {
   return (

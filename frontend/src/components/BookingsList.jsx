@@ -6,8 +6,8 @@ import { downloadTicket, retryTicket } from '../api'
 import { bookingRef } from './BookingConfirmedModal'
 
 /**
- * Bookings ki list. Dashboard ke right rail me (compact) aur
- * My Bookings page pe (full) — dono jagah yahi component.
+ * Shared component for displaying bookings in the dashboard sidebar (compact)
+ * and the My Bookings page (full).
  */
 export default function BookingsList({ bookings, onCancel, compact = false, limit }) {
   const confirmed = bookings.filter((b) => b.status === 'confirmed')
@@ -30,7 +30,7 @@ export default function BookingsList({ bookings, onCancel, compact = false, limi
 
       {bookings.length === 0 ? (
         <div className="py-7 text-center">
-          <p className="text-sm text-slate-500">Abhi koi booking nahi</p>
+          <p className="text-sm text-slate-500">No bookings yet</p>
           {compact && (
             <Link
               to="/events"
@@ -107,16 +107,16 @@ export default function BookingsList({ bookings, onCancel, compact = false, limi
 }
 
 /**
- * Ticket ka download button / status.
+ * Handles ticket download and status display.
  *
- * Teen states dikhte hain kyunki ticket background me banta hai:
- *   pending — worker abhi bana raha hai
- *   ready   — download karo
- *   failed  — retry karo
+ * States:
+ *   pending — Ticket generation in progress
+ *   ready   — Download available
+ *   failed  — Retry option
  *
- * ⚠️ PDF download `window.open` se NAHI ho sakta — endpoint ko
- * `Authorization` header chahiye, aur browser navigation me header nahi
- * jata. Isliye fetch karke blob banate hain.
+ * ⚠️ PDF download cannot use `window.open` because the endpoint requires
+ * an `Authorization` header, which browser navigation does not support.
+ * We fetch the blob manually instead.
  */
 function TicketAction({ booking }) {
   const [busy, setBusy] = useState(false)
@@ -125,7 +125,7 @@ function TicketAction({ booking }) {
     return (
       <span
         className="rounded-lg px-2 py-1 text-xs text-slate-500"
-        title="Ticket background me ban raha hai"
+        title="Ticket is being generated"
       >
         <span className="animate-pulse">Ticket…</span>
       </span>
@@ -162,7 +162,7 @@ function TicketAction({ booking }) {
           a.href = url
           a.download = `SeatPulse-${bookingRef(booking.id)}.pdf`
           a.click()
-          // Blob URL memory me rehta hai jab tak revoke na karo
+          // Revoke object URL to free memory
           URL.revokeObjectURL(url)
         } finally {
           setBusy(false)
@@ -170,7 +170,7 @@ function TicketAction({ booking }) {
       }}
       disabled={busy}
       className="rounded-lg px-2 py-1 text-xs text-violet-400 transition hover:bg-violet-500/10"
-      title="Ticket PDF download karo"
+      title="Download ticket PDF"
     >
       {busy ? '…' : '🎫 Ticket'}
     </button>

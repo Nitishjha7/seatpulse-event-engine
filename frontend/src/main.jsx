@@ -9,8 +9,8 @@ import './index.css'
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <BrowserRouter>
-      {/* AuthProvider Router ke andar hai taki aage protected routes se
-          redirect karna ho to navigation available rahe */}
+      {/* AuthProvider is nested within BrowserRouter to ensure navigation
+          context is available for protected route redirects */}
       <AuthProvider>
         <App />
       </AuthProvider>

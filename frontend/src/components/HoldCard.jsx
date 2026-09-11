@@ -9,10 +9,10 @@ function formatTime(seconds) {
 }
 
 /**
- * Hold ki hui seat + countdown + confirm/release.
+ * Held seat + countdown + confirm/release.
  *
- * Countdown Redis TTL ka reflection hai — asli expiry server pe hoti hai,
- * ye sirf user ko batata hai kitna time bacha.
+ * The countdown reflects the Redis TTL — the actual expiry is server-side;
+ * this only shows the user the remaining time.
  */
 export default function HoldCard({
   seat,
@@ -21,17 +21,17 @@ export default function HoldCard({
   onRelease,
   booking,
   message,
-  // Group booking — optional, taki HoldCard un jagahon pe bhi chale jahan
-  // group ka koi matlab nahi (jaise sirf-view wale pages)
+  // Group booking — optional, so HoldCard works in contexts where
+  // groups are irrelevant (e.g., view-only pages).
   onStartGroup,
   groupSize,
   onGroupSizeChange,
 }) {
-  // Aakhri minute me countdown laal — user ko jaldi karni chahiye
+  // Countdown turns red in the final minute — prompts user to act quickly.
   const urgent = secondsLeft > 0 && secondsLeft <= 60
 
-  // Hold ke waqt LOCK hua price. Grid me baaki seats mehngi ho chuki hon
-  // to bhi ye nahi badalta — server par bhi exactly yahi charge hoga.
+  // Price locked at the time of hold. This remains unchanged even if other
+  // seats in the grid increase in price — the server will charge this exact amount.
   const price = seatPrice(seat)
   const lockedBelowMarket =
     seat &&
@@ -69,28 +69,28 @@ export default function HoldCard({
           </p>
           <p className="mt-0.5 text-lg text-slate-300">₹{price}</p>
 
-          {/* Sirf tab dikhate hain jab faayda SACH me ho — surge off ho ya
-              price abhi tak badla hi na ho to ye line aati hi nahi. Har haal
-              me "you saved!" chipka dena jhooth hota. */}
+          {/* Only show if there is a genuine benefit — this line is hidden if
+              there is no surge or price change. Misleading users with "you saved!"
+              is dishonest. */}
           {lockedBelowMarket && (
             <p
               className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/10
                          px-2 py-1 text-[11px] text-emerald-300 ring-1 ring-emerald-500/20"
             >
-              🔒 Price locked — abhi ye seat ₹{seat.current_price} ki hai
+              🔒 Price locked — current seat price is ₹{seat.current_price}
             </p>
           )}
 
-          {/* version dikha rahe hain kyunki optimistic locking isi par chalti hai —
-              booking/hold ke baad ye number badalta hua dikhta hai */}
+          {/* Displaying version for optimistic locking — this number updates
+              after booking/hold. */}
           <p className="mt-1 font-mono text-[11px] text-slate-600">
             seat version {seat.version}
           </p>
 
           <p className="mt-4 text-xs leading-relaxed text-slate-500">
-            Ye seat tumhare naam hold hai. Booking payment complete hone par
-            hi banegi — aur time khatam hone par seat apne aap wapas available
-            ho jayegi, chahe tum browser band hi kyu na kar do.
+            This seat is held for you. Booking is only confirmed upon payment —
+            the seat will be released automatically when the timer expires,
+            even if you close your browser.
           </p>
 
           <button
@@ -103,9 +103,8 @@ export default function HoldCard({
             {booking ? 'Redirecting…' : `Pay ₹${price}`}
           </button>
 
-          {/* Group booking — hold ki hui seat isme shaamil ho jati hai,
-              baaki seats server available me se leta hai. Isliye user ko
-              pehle N seats select karne ki zaroorat nahi. */}
+          {/* Group booking — the held seat is included; additional seats are
+              pulled from server availability. Users don't need to pre-select N seats. */}
           {onStartGroup && (
             <div className="mt-2 flex items-center gap-2">
               <select
@@ -116,7 +115,7 @@ export default function HoldCard({
               >
                 {[2, 3, 4, 5, 6].map((n) => (
                   <option key={n} value={n}>
-                    {n} log
+                    {n} people
                   </option>
                 ))}
               </select>
@@ -127,7 +126,7 @@ export default function HoldCard({
                            px-4 py-2.5 text-sm font-medium text-violet-200 transition
                            hover:bg-violet-500/20 disabled:opacity-40"
               >
-                👥 Sabka alag-alag payment
+                👥 Individual payments
               </button>
             </div>
           )}
@@ -143,10 +142,10 @@ export default function HoldCard({
       ) : (
         <div className="py-8 text-center">
           <p className="text-3xl">🎫</p>
-          <p className="mt-2 text-sm text-slate-400">Koi seat hold nahi hai</p>
+          <p className="mt-2 text-sm text-slate-400">No seat held</p>
           <p className="mt-1 text-xs text-slate-600">
-            Grid me se koi hari seat chuno — wo turant 5 minute ke liye
-            tumhare naam ho jayegi
+            Select any green seat from the grid — it will be held for you
+            for 5 minutes.
           </p>
         </div>
       )}

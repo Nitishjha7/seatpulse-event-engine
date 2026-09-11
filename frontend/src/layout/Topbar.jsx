@@ -23,7 +23,7 @@ export default function Topbar({ onMenu }) {
       </button>
 
       <div className="ml-auto flex items-center gap-2 sm:gap-3">
-        {/* Live health pills. sm se neeche sirf dots dikhte hain — space bachta hai */}
+        {/* Display status pills; hide labels on small screens to save space */}
         {health && (
           <div className="flex items-center gap-1.5 sm:gap-2">
             <Pill ok={health.database === 'connected'} label="DB" />
@@ -62,7 +62,7 @@ function UserMenu({ user, onLogout }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
 
-  // Bahar click karo to menu band — har dropdown me ye chahiye hota hai
+  // Close menu when clicking outside; standard pattern for dropdowns
   useEffect(() => {
     if (!open) return
     const handler = (e) => {
@@ -137,7 +137,7 @@ export function Avatar({ user, size = 'h-7 w-7' }) {
         src={user.avatar_url}
         alt=""
         className={`${size} rounded-full object-cover`}
-        // Google avatars referrer header ke saath 403 dete hain
+        // Prevent 403 errors on Google-hosted avatar images
         referrerPolicy="no-referrer"
       />
     )

@@ -1,9 +1,9 @@
 """
-Alembic ka entry point.
+Alembic entry point.
 
-Do kaam yahan hue hain jo default template me nahi hote:
-  1. DB URL settings se aata hai (alembic.ini me password nahi likha)
-  2. target_metadata set kiya hai, taki autogenerate models ko dekh sake
+Customizations:
+  1. DB URL is sourced from settings to avoid storing passwords in alembic.ini.
+  2. target_metadata is configured to enable autogenerate model detection.
 """
 
 from logging.config import fileConfig
@@ -14,8 +14,7 @@ from sqlalchemy import engine_from_config, pool
 from config import settings
 from database import Base
 
-# Ye import zaroori hai — bina iske Alembic ko models dikhte hi nahi
-# aur wo "koi table nahi mili" wali khali migration bana deta hai.
+# Required to ensure Alembic registers models; otherwise, it generates empty migrations.
 import models  # noqa: F401
 
 config = context.config
@@ -23,15 +22,15 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# alembic.ini ki khali URL ko yahan bhar rahe hain
+# Inject the database URL into the configuration.
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
-# Autogenerate isi metadata se compare karta hai
+# Metadata used for autogenerate comparison.
 target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
-    """DB se connect kiye bina sirf SQL file banao (--sql flag ke liye)."""
+    """Generate SQL scripts without connecting to the database (--sql flag)."""
     context.configure(
         url=settings.DATABASE_URL,
         target_metadata=target_metadata,
@@ -43,7 +42,7 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    """Normal case — DB se connect karke migrations chalao."""
+    """Execute migrations against the live database."""
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
@@ -54,9 +53,9 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            # Column ka type badla to bhi detect karo (default off hota hai)
+            # Detect column type changes.
             compare_type=True,
-            # Default value badla to bhi detect karo
+            # Detect server default value changes.
             compare_server_default=True,
         )
         with context.begin_transaction():

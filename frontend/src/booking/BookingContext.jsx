@@ -28,29 +28,26 @@ import { useWebSocket } from '../hooks/useWebSocket'
 const BookingContext = createContext(null)
 
 /**
- * Ek seat par abhi kya price lagega.
+ * Determines the effective price for a seat.
  *
- * Priority saaf hai aur JAAN-BOOJH ke isi order me hai:
- *   1. held_price   — hold ke waqt lock hua quote. Sabse upar, kyunki
- *                     user se yahi waada kiya gaya hai.
- *   2. current_price — server ka calculated dynamic price
- *   3. price         — base (dynamic pricing off ho, ya purana API response)
+ * Priority order:
+ *   1. held_price    — Price locked during the hold; ensures price consistency for the user.
+ *   2. current_price — Server-calculated dynamic price.
+ *   3. price         — Base price (fallback).
  *
- * Ye ek hi function hai jo ye faisla karta hai. Har component apna hisaab
- * lagata to kisi ek jagah `held_price` bhoolna aasan hota — aur wahi ek
- * jagah user ko galat price dikha deti.
+ * Centralizing this logic prevents inconsistencies where components might
+ * accidentally ignore the held price.
  */
 export function seatPrice(seat) {
   if (!seat) return null
   return seat.held_price ?? seat.current_price ?? seat.price
 }
 
-/** Error ko user ke padhne layak text me badlo. */
+/** Converts error objects into user-friendly messages. */
 function errorText(err) {
   if (err.status === 429) {
-    // Server Retry-After header me batata hai kitni der ruko
-    const wait = err.retryAfter ? ` ${err.retryAfter} second ruk ke try karo.` : ''
-    return `🐢 Thoda dheere!${wait}`
+    const wait = err.retryAfter ? ` Please wait ${err.retryAfter} seconds and try again.` : ''
+    return `🐢 Slow down!${wait}`
   }
   if (err.status === 409) return `⚠️ ${err.message}`
   return err.message
@@ -58,17 +55,16 @@ function errorText(err) {
 
 export function useBooking() {
   const ctx = useContext(BookingContext)
-  if (!ctx) throw new Error('useBooking ko BookingProvider ke andar hi use karo')
+  if (!ctx) throw new Error('useBooking must be used within a BookingProvider')
   return ctx
 }
 
 /**
- * Poora booking state ek jagah.
+ * Manages global booking state.
  *
- * Pehle ye sab App.jsx me tha. Ab multiple pages (Dashboard, My Bookings,
- * Events) ko same data chahiye — aur sabse important, **WebSocket connection
- * ek hi rehna chahiye**. Har page apna socket kholta to server pe 4 gunа
- * connections ban jaate aur updates duplicate aate.
+ * Centralizing state here allows multiple pages (Dashboard, My Bookings, Events)
+ * to share data and maintain a single WebSocket connection, preventing duplicate
+ * updates and excessive server load.
  */
 export function BookingProvider({ children }) {
   const { user } = useAuth()
@@ -78,14 +74,13 @@ export function BookingProvider({ children }) {
   const [event, setEvent] = useState(null)
   const [seats, setSeats] = useState([])
   const [bookings, setBookings] = useState([])
-  // Event ka demand/surge state. WebSocket se live update hota hai,
-  // isliye `event.pricing` se alag rakha hai — warna har pricing message
-  // pe poora event object replace karna padta.
+  // Event demand/surge state. Kept separate from the event object to avoid
+  // re-rendering the entire event object on every pricing update.
   const [pricing, setPricing] = useState(null)
 
   const [selectedSeat, setSelectedSeat] = useState(null)
   const [lockSecondsLeft, setLockSecondsLeft] = useState(0)
-  // Booking confirm hone ke baad success modal ka data: { booking, seat, event }
+  // Data for the success modal after a booking is confirmed: { booking, seat, event }
   const [lastBooking, setLastBooking] = useState(null)
 
   const [locking, setLocking] = useState(false)
@@ -94,13 +89,9 @@ export function BookingProvider({ children }) {
   const [loading, setLoading] = useState(true)
   const [fatalError, setFatalError] = useState(null)
 
-  // Cleanup me latest value chahiye, par uspe effect dobara nahi chalana
   const selectedRef = useRef(null)
   selectedRef.current = selectedSeat
 
-  // Pricing update aane par kaunsa event refetch karna hai — callback ko
-  // `event` pe depend karana pada to har event change pe socket handler
-  // badal jata (aur wo useWebSocket ke andar reconnect trigger karta).
   const eventIdRef = useRef(null)
   const pricingRefetchRef = useRef(null)
 
@@ -126,7 +117,7 @@ export function BookingProvider({ children }) {
 
         if (eventList.length === 0) {
           setFatalError(
-            "Koi event nahi mila — 'docker compose exec backend python seed.py' chalao",
+            "No events found — run 'docker compose exec backend python seed.py'",
           )
           return
         }
@@ -140,12 +131,12 @@ export function BookingProvider({ children }) {
     init()
   }, [refresh])
 
-  /** WebSocket se live seat updates — sirf badli hui seat replace hoti hai. */
+  /** Updates seat status via WebSocket. */
   const handleSeatUpdate = useCallback(
     (updatedSeat) => {
       setSeats((prev) => prev.map((s) => (s.id === updatedSeat.id ? updatedSeat : s)))
 
-      // Meri hold kisi aur ke paas chali gayi? Selection saaf karo
+      // Clear selection if the seat is no longer held by the current user
       setSelectedSeat((prev) => {
         if (!prev || prev.id !== updatedSeat.id) return prev
         const stillMine =
@@ -159,22 +150,17 @@ export function BookingProvider({ children }) {
   )
 
   /**
-   * Demand se price badla — poore event ka multiplier aaya hai.
+   * Handles dynamic pricing updates.
    *
-   * ⚠️ Yahan hum client-side me `base × multiplier` NAHI karte, chahe wo
-   * ek line ka kaam ho. Wajah: JS ka Math.round(100.5) = 101, par Python ka
-   * round(100.5) = 100. Ties par dono alag jawab dete hain — matlab UI
-   * ₹1010 dikhata aur server ₹1000 charge karta. ₹10 ka farq chhota lagta
-   * hai, par "jo dikha wahi kata" ka bharosa toot jata hai.
-   *
-   * Isliye: banner turant update karo (wahi user dekhta hai), aur exact
-   * prices server se hi lo.
+   * ⚠️ We do not calculate `base × multiplier` on the client side to avoid
+   * floating-point rounding discrepancies between JS and Python. We rely
+   * on the server for exact pricing to ensure the displayed price matches
+   * the charged amount.
    */
   const handlePricingUpdate = useCallback((next) => {
     setPricing(next)
 
-    // Debounce — flash sale me ek second me 20 bookings ho sakti hain,
-    // aur har ek pe seat refetch karna server ko bekaar me peetna hai.
+    // Debounce refetching to prevent excessive API calls during high traffic
     clearTimeout(pricingRefetchRef.current)
     pricingRefetchRef.current = setTimeout(() => {
       const id = eventIdRef.current
@@ -188,13 +174,11 @@ export function BookingProvider({ children }) {
     handlePricingUpdate,
   )
 
-  // Unmount pe pending refetch cancel — warna gaye hue page ka setState
   useEffect(() => () => clearTimeout(pricingRefetchRef.current), [])
 
   /**
-   * Hold ka countdown — sirf DIKHANE ke liye.
-   * Asli expiry Redis TTL me hoti hai: browser band kar do ya tab crash ho
-   * jaye, seat phir bhi 5 min me apne aap free ho jayegi.
+   * Countdown for seat hold.
+   * The actual expiry is handled by Redis TTL on the server.
    */
   useEffect(() => {
     if (lockSecondsLeft <= 0) return
@@ -205,7 +189,7 @@ export function BookingProvider({ children }) {
           setSelectedSeat(null)
           setMessage({
             type: 'error',
-            text: '⏱️ Hold time khatam — seat wapas available hai',
+            text: '⏱️ Hold time expired — seat is now available',
           })
           if (event) refresh(event.id)
           return 0
@@ -217,7 +201,7 @@ export function BookingProvider({ children }) {
     return () => clearInterval(id)
   }, [lockSecondsLeft, event, refresh])
 
-  // Tab band karte waqt lock chhod do — TTL ka wait na karna pade
+  // Release lock on tab close to avoid waiting for TTL
   useEffect(() => {
     const handler = () => {
       const seat = selectedRef.current
@@ -226,7 +210,7 @@ export function BookingProvider({ children }) {
         fetch(`${API_URL}/api/seats/${seat.id}/lock`, {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${token}` },
-          keepalive: true, // page band hote waqt bhi request nikal jati hai
+          keepalive: true,
         })
       }
     }
@@ -237,7 +221,6 @@ export function BookingProvider({ children }) {
   async function selectSeat(seat) {
     if (locking) return
 
-    // Wahi seat dubara click = deselect + lock release
     if (selectedSeat?.id === seat.id) {
       await releaseHold()
       return
@@ -246,18 +229,14 @@ export function BookingProvider({ children }) {
     setLocking(true)
     setMessage(null)
     try {
-      // Purani seat ka lock pehle chhodo, warna do seats hold rahengi
       if (selectedSeat) await unlockSeat(selectedSeat.id).catch(() => {})
 
       const lock = await lockSeat(seat.id)
-      // Server ne is hold ke liye jo price LOCK kiya, wahi seat pe chipka
-      // dete hain. Checkout card seedha isse dikhata hai — dobara calculate
-      // karne ki koshish hi nahi karta, kyunki charge exactly yahi hoga.
       setSelectedSeat({ ...seat, held_price: lock.price })
       setLockSecondsLeft(lock.expires_in)
       setMessage({
         type: 'success',
-        text: `Seat ${seat.row_label}-${seat.seat_number} hold ho gayi`,
+        text: `Seat ${seat.row_label}-${seat.seat_number} held`,
       })
     } catch (err) {
       setSelectedSeat(null)
@@ -274,7 +253,7 @@ export function BookingProvider({ children }) {
     try {
       await unlockSeat(selectedSeat.id)
     } catch {
-      /* lock TTL pe expire ho chuka hoga — koi baat nahi */
+      /* Ignore if already expired */
     }
     setSelectedSeat(null)
     setLockSecondsLeft(0)
@@ -283,11 +262,9 @@ export function BookingProvider({ children }) {
   }
 
   /**
-   * Checkout shuru karo — user ko gateway pe bhejo.
+   * Initiates checkout.
    *
-   * ⚠️ Yahan booking NAHI banti. Booking tabhi banti hai jab payment
-   * confirm ho — aur wo confirmation webhook se aati hai, is redirect se
-   * nahi. Ye function sirf session bana ke user ko bhej deta hai.
+   * ⚠️ Booking is only finalized via webhook after payment confirmation.
    */
   async function payForSeat() {
     if (!selectedSeat) return
@@ -296,8 +273,6 @@ export function BookingProvider({ children }) {
     setMessage(null)
     try {
       const session = await startCheckout(selectedSeat.id)
-      // Full page redirect, SPA navigation nahi — Stripe ke case me ye
-      // unka domain hota hai, mock me hamara apna /pay/:id page.
       window.location.href = session.checkout_url
     } catch (err) {
       setMessage({ type: 'error', text: errorText(err) })
@@ -307,17 +282,10 @@ export function BookingProvider({ children }) {
   }
 
   /**
-   * Group booking shuru karo — hold ki hui seat + uske aas-paas ki
-   * available seats.
+   * Initiates group booking.
    *
-   * Seats YAHAN chunte hain, user se N clicks nahi karwate. Wajah: group
-   * ka poora point saath baithna hai, aur bikhri hui seats chunna aasan
-   * galti hai. Isliye hold ki hui seat se shuru karke usi row me aage
-   * badhte hain.
-   *
-   * ⚠️ Server phir bhi har seat ko atomically claim karta hai aur ek bhi
-   * na mile to poora group reject kar deta hai. Ye selection sirf ek
-   * suggestion hai — correctness server ke paas hai.
+   * ⚠️ Server-side validation is the source of truth; this logic is a
+   * client-side suggestion to help users select adjacent seats.
    */
   async function startGroup(size) {
     if (!selectedSeat) return
@@ -329,7 +297,6 @@ export function BookingProvider({ children }) {
     const start = sameRow.findIndex((s) => s.id === selectedSeat.id)
     const picked = [selectedSeat.id]
 
-    // Pehle right, phir left — jitni chahiye utni mil jayein
     for (let i = start + 1; i < sameRow.length && picked.length < size; i++) {
       if (sameRow[i].status === 'available') picked.push(sameRow[i].id)
     }
@@ -340,7 +307,7 @@ export function BookingProvider({ children }) {
     if (picked.length < size) {
       setMessage({
         type: 'error',
-        text: `Is row me ${size} seats saath me nahi mil rahi — kam log chuno ya dusri row try karo`,
+        text: `Could not find ${size} adjacent seats in this row — try a different row`,
       })
       return
     }
@@ -367,12 +334,7 @@ export function BookingProvider({ children }) {
     setMessage(null)
     try {
       const created = await createBooking(selectedSeat.id)
-
-      // Success modal ke liye. Seat aur event abhi capture kar rahe hain,
-      // kyunki neeche selectedSeat null ho jayega aur refresh ke baad wo
-      // seat 'booked' ho chuki hogi.
       setLastBooking({ booking: created, seat: selectedSeat, event })
-
       setSelectedSeat(null)
       setLockSecondsLeft(0)
     } catch (err) {
@@ -387,15 +349,13 @@ export function BookingProvider({ children }) {
     setMessage(null)
     try {
       await cancelBooking(bookingId)
-      setMessage({ type: 'success', text: 'Booking cancel — seat wapas available hai' })
+      setMessage({ type: 'success', text: 'Booking cancelled — seat is now available' })
       await refresh(event.id)
     } catch (err) {
       setMessage({ type: 'error', text: err.message })
     }
   }
 
-  // Counts hamesha seats se derive — WebSocket update aate hi apne aap sahi.
-  // Server se dobara poochne ki zaroorat nahi.
   const counts = seats.reduce(
     (acc, s) => ({ ...acc, [s.status]: (acc[s.status] || 0) + 1 }),
     {},

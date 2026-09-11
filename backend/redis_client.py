@@ -1,29 +1,28 @@
 """
 Redis distributed seat locking.
 
-⭐ Ye Phase 4 ka core hai. Interview me sabse zyada isi par sawaal aayenge.
+⭐ Core component of Phase 4. Critical for interview assessments.
 
-Kaam kya hai:
-  User seat select kare -> wo seat 5 minute ke liye uske naam hold ho jaye,
-  taki wo aaram se payment kar sake aur beech me koi aur na le jaye.
+Purpose:
+  When a user selects a seat, hold it for 5 minutes to allow payment processing
+  without interference from other users.
 
-Redis kyu, Postgres kyu nahi:
-  1. Speed  — in-memory hai, lock check ~0.1ms me ho jata hai.
-              5000 log ek saath aayein to 4999 yahin ruk jaate hain,
-              DB tak pahunchte hi nahi.
-  2. TTL    — Redis khud key expire kar deta hai. "Cart chhod ke chala gaya
-              user" ka cleanup job likhne ki zaroorat hi nahi.
+Why Redis instead of Postgres:
+  1. Speed: In-memory operations ensure lock checks take ~0.1ms. This acts as a
+     buffer, preventing high-concurrency traffic (e.g., 5000 requests) from
+     hitting the database.
+  2. TTL: Redis handles key expiration automatically, eliminating the need for
+     manual cleanup jobs for abandoned carts.
 
-Redis "asli" guarantee NAHI hai — wo Postgres ke constraints hi dete hain.
-Redis ek fast filter hai jo load kam karta hai. Isliye dono chahiye.
+Note: Redis provides a fast, load-reducing filter, not a strict ACID guarantee.
+Postgres constraints remain the final source of truth.
 """
 
 import redis
 
 from config import settings
 
-# decode_responses=True -> Redis bytes ki jagah str deta hai.
-# Iske bina har jagah b"123".decode() likhna padta.
+# decode_responses=True returns strings instead of bytes, avoiding manual .decode().
 redis_client = redis.Redis.from_url(
     settings.REDIS_URL,
     decode_responses=True,
@@ -33,24 +32,22 @@ redis_client = redis.Redis.from_url(
 
 
 def _lock_key(seat_id: int) -> str:
-    """seat:42:lock — namespace rakhne se Redis me cheezein saaf rehti hain."""
+    """seat:42:lock — Namespacing for organized Redis keys."""
     return f"seat:{seat_id}:lock"
 
 
 # ---------------------------------------------------------------------------
-# Lock chhodne ka Lua script
+# Lua script for atomic lock release
 # ---------------------------------------------------------------------------
-# Seedha DEL kyu nahi kar sakte:
+# Why not a simple DEL:
 #
-#   1. User A ka lock hai, wo 5 min me expire ho gaya
-#   2. User B ne turant lock le liya
-#   3. User A ka "release" request ab aata hai aur DEL kar deta hai
-#      -> B ka lock uda diya, jabki B ne kuch galat nahi kiya
+#   1. User A's lock expires after 5 minutes.
+#   2. User B acquires the lock immediately.
+#   3. User A's delayed "release" request arrives and executes DEL.
+#      -> User B's valid lock is incorrectly deleted.
 #
-# Isliye pehle check karo "lock mera hi hai?", tabhi delete karo.
-# Python me do steps (GET phir DEL) likhte to unke beech me bhi wahi race
-# reh jati. Lua script Redis ke andar ATOMIC chalti hai — beech me kuch
-# nahi ghus sakta.
+# The script verifies ownership before deletion. Executing this as a Lua script
+# ensures atomicity within Redis, preventing race conditions between GET and DEL.
 _RELEASE_SCRIPT = """
 if redis.call("get", KEYS[1]) == ARGV[1] then
     return redis.call("del", KEYS[1])
@@ -64,18 +61,17 @@ _release_lock = redis_client.register_script(_RELEASE_SCRIPT)
 
 def acquire_seat_lock(seat_id: int, user_id: int, ttl: int | None = None) -> bool:
     """
-    Seat pe lock lo.
+    Acquire a lock on a seat.
 
-    True  = lock mil gaya
-    False = kisi aur ke paas hai
+    Returns:
+        True: Lock acquired.
+        False: Lock held by another user.
 
-    Poora faisla ek hi command me hota hai:
-
+    Uses atomic SET with NX and EX options:
         SET seat:42:lock 7 NX EX 300
 
-    nx=True -> key pehle se hai to kuch mat karo, False lauta do.
-    Ye Redis ke andar ATOMIC hai — "check karo phir set karo" do alag steps
-    nahi hain. Isliye 5000 parallel requests me se theek EK ko True milta hai.
+    nx=True ensures the operation only succeeds if the key does not exist.
+    This is atomic, ensuring only one of many concurrent requests succeeds.
     """
     return bool(
         redis_client.set(
@@ -89,25 +85,26 @@ def acquire_seat_lock(seat_id: int, user_id: int, ttl: int | None = None) -> boo
 
 def release_seat_lock(seat_id: int, user_id: int) -> bool:
     """
-    Apna lock chhodo. Doosre ka lock ho to kuch nahi hoga (Lua script check karta hai).
+    Release the lock. The Lua script ensures only the owner can release it.
 
-    True = hamara lock tha aur release ho gaya
+    Returns:
+        True: Lock was held by the user and successfully released.
     """
     return bool(_release_lock(keys=[_lock_key(seat_id)], args=[str(user_id)]))
 
 
 def get_lock_owner(seat_id: int) -> int | None:
-    """Lock kiske paas hai? None = kisi ke paas nahi."""
+    """Returns the user_id of the lock owner, or None if unlocked."""
     owner = redis_client.get(_lock_key(seat_id))
     return int(owner) if owner else None
 
 
 def get_lock_ttl(seat_id: int) -> int:
     """
-    Lock kitne second aur chalega.
+    Returns remaining TTL in seconds.
 
-    Redis -2 deta hai (key hi nahi hai) ya -1 (key hai par TTL nahi).
-    Dono case me 0 lauta rahe hain — caller ko sirf "kitna time bacha" chahiye.
+    Redis returns -2 (key missing) or -1 (no TTL).
+    Returns 0 for these cases to simplify caller logic.
     """
     ttl = redis_client.ttl(_lock_key(seat_id))
     return ttl if ttl > 0 else 0
@@ -118,7 +115,7 @@ def is_lock_owner(seat_id: int, user_id: int) -> bool:
 
 
 def ping() -> bool:
-    """Health check ke liye."""
+    """Health check."""
     try:
         return redis_client.ping()
     except redis.RedisError:

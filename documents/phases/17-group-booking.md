@@ -1,87 +1,70 @@
 # Phase 17 — Group Booking + Split Payment
 
-> 4 dost saath baithna chahte hain. Har koi apna paisa khud dega.
-> 3 ka paisa aa gaya, chauthe ka nahi, aur deadline aa gayi.
+> 4 friends want to sit together. Everyone pays for themselves.
+> 3 have paid, the 4th hasn't, and the deadline has passed.
 >
-> **Ab kya?**
+> **Now what?**
 
 ---
 
-## Problem naya kyu hai
+## Why this problem is new
 
-Ab tak project ka har correctness sawaal ek hi shakal ka tha: **ek seat,
-ek booking**. Redis lock, `version` column, partial unique index — teeno
-usi ek sawaal ke teen jawab the.
+Until now, every correctness question in the project had the same shape: **one seat, one booking**. Redis lock, `version` column, partial unique index — these were three answers to that same question.
 
-Group me sawaal badal jata hai:
+In a group, the question changes:
 
 ```
 Ek seat, ek booking          ->  ek row par exactly-once
 Sab ya koi nahi              ->  N ALAG payments par atomicity
 ```
 
-Aur ye asli distributed problem hai, kyunki har payment apne waqt par
-aati hai, alag user se, alag browser se — aur beech me deadline nikal
-sakti hai.
+This is a true distributed problem because every payment arrives at a different time, from a different user, via a different browser — and the deadline can pass in between.
 
-**Faisla: sab ya koi nahi.** Teen logon ko seat dena aur chauthe ko nahi,
-poore group ka maqsad hi khatam kar deta hai (wo saath baithne aaye the).
-To group tootta hai, seats chhootti hain, aur teeno ka paisa wapas jata hai.
+**Decision: All or nothing.** Giving seats to three people and not the fourth defeats the purpose of the group (they wanted to sit together). So, the group breaks, seats are released, and the three payments are refunded.
 
 ---
 
-## ⭐ Faisla 1 — seat ka naya status, `booking` nahi
+## ⭐ Decision 1 — New seat status, not `booking`
 
-Seedha rasta ye lagta hai ki N normal bookings bana do aur unhe ek
-`group_id` se jod do.
+The straightforward path seems to be creating N normal bookings and linking them with a `group_id`.
 
-Wo galat hai: **booking ka matlab hi hai "seat pakki ho gayi"**. Group me
-seat kisi ki bhi pakki nahi hoti jab tak sabka paisa na aa jaye.
+That is wrong: **a booking means "the seat is confirmed"**. In a group, no seat is confirmed until everyone has paid.
 
-To beech ki ek haalat chahiye — seats roki hui hain, kuch paise aa chuke
-hain, faisla abhi baaki hai:
+We need an intermediate state — seats are held, some payments have arrived, but the final decision is pending:
 
 ```
-seats.status = 'group_held'      <- naya status
-group_bookings                    <- faisla yahan hota hai
-group_shares                      <- har seat + uska hissa
+seats.status = 'group_held'      <- new status
+group_bookings                    <- decision happens here
+group_shares                      <- each seat + its share
 ```
 
-Bookings **tabhi** banti hain jab group `confirmed` hota hai — aur tab ek
-saath sabki.
+Bookings are created **only** when the group is `confirmed` — and then, all at once.
 
-### `locked` reuse kyu nahi kiya
+### Why `locked` was not reused
 
-Ye sabse zaroori design detail hai.
+This is the most important design detail.
 
-`locked` aur `payment_pending` seats ko lazy cleanup (`release_expired_locks`)
-chupchaap `available` kar deta hai jab TTL nikal jati hai. Group seats ke
-saath aisa karna **galat** hoga:
+`locked` and `payment_pending` seats are cleaned up by lazy cleanup (`release_expired_locks`) which silently sets them to `available` when the TTL expires. Doing this with group seats would be **wrong**:
 
-> Un seats me se kuch logon ka **paisa kat chuka** hota hai. Unhe chhodne
-> ka matlab sirf "seat free karo" nahi — refund bhi hai.
+> Some of those seats have already been **paid for**. Releasing them doesn't just mean "free the seat" — it also requires a refund.
 
-Aur refund ek faisla hai, ek side-effect nahi. Isliye lazy cleanup
-`group_held` ko chhoota hi nahi.
+A refund is a decision, not a side-effect. Therefore, lazy cleanup ignores `group_held`.
 
 📁 [`backend/models.py`](../../backend/models.py) · [`backend/groups.py`](../../backend/groups.py)
 
 ---
 
-## Faisla 2 — expiry cron se, lazy cleanup se nahi
+## Decision 2 — Expiry via cron, not lazy cleanup
 
-Baaki poore project me hum expired holds ko **lazy** saaf karte hain: jab
-koi seats padhta hai, tab purane locks release ho jaate hain. Wo sasta hai
-aur kaafi hai, kyunki wahan kuch khoya nahi jata.
+In the rest of the project, we clean up expired holds **lazily**: when someone reads the seats, old locks are released. This is cheap and sufficient because nothing is lost there.
 
-Group me nahi chalega:
+This won't work for groups:
 
-> Agar koi is event ka page hi na khole, to lazy cleanup **kabhi chalta hi
-> nahi** — aur log apne paise ka intezaar karte reh jaate hain.
+> If no one opens the event page, lazy cleanup **never runs** — and people are left waiting for their money.
 >
-> **Paisa wapas milna kisi ajnabi ke page kholne par nirbhar nahi ho sakta.**
+> **Getting a refund cannot depend on a stranger opening a page.**
 
-Isliye ARQ me ek cron job hai, har 30 second:
+Therefore, there is a cron job in ARQ, running every 30 seconds:
 
 ```python
 cron_jobs = [
@@ -89,61 +72,53 @@ cron_jobs = [
 ]
 ```
 
-`run_at_startup` isliye ki worker restart hone par jo groups us beech
-expire ho gaye the wo turant nipat jaayein.
+`run_at_startup` is included so that if a worker restarts, groups that expired in the interim are handled immediately.
 
-Job idempotent hai — `break_group` ek atomic conditional UPDATE se chalta
-hai, to do worker ek saath chalein to bhi ek hi todega.
+The job is idempotent — `break_group` runs via an atomic conditional UPDATE, so even if two workers run simultaneously, only one will break the group.
 
 📁 [`backend/worker.py`](../../backend/worker.py)
 
 ---
 
-## ⭐⭐ Faisla 3 — jahan optimistic locking KAAM NAHI AAYI
+## ⭐⭐ Decision 3 — Where optimistic locking FAILED
 
-Ye phase ka sabse dilchasp hissa hai, aur [Phase 15](15-locking-benchmark.md)
-se seedha juda hua hai.
+This is the most interesting part of the phase and is directly linked to [Phase 15](15-locking-benchmark.md).
 
-Wahan maine benchmark karke dikhaya tha ki optimistic aur pessimistic
-locking me farak measurable nahi hai, aur optimistic default rakha. Yahan
-ek jagah aisi mili jahan **pessimistic ke bina correctness hi nahi bachti**.
+There, I benchmarked and showed that the difference between optimistic and pessimistic locking is not measurable, so I kept optimistic as the default. Here, I found a case where **correctness is impossible without pessimistic locking**.
 
-### Race jo test me asal me tooti
+### The race that actually broke in testing
 
 ```
 payment thread                  expiry job
 --------------                  ----------
-group.status padha
+read group.status
   -> 'collecting'
-                                group ko 'expired' kiya
-                                shares padhe
-                                  -> ye share abhi 'unpaid' hai
-                                  -> refund nahi kiya
-share ko 'paid' kiya
+                                set group to 'expired'
+                                read shares
+                                  -> this share is still 'unpaid'
+                                  -> no refund triggered
+set share to 'paid'
 
-Nateeja: expired group me ek 'paid' share.
-Us bande ka paisa kat gaya, seat mili nahi, refund bhi nahi hua.
+Result: An 'expired' group with a 'paid' share.
+The user's money was taken, they didn't get the seat, and no refund was issued.
 ```
 
-Ye classic TOCTOU hai — `if group.status != COLLECTING` ek **padhai** hai,
-atomic guard nahi.
+This is a classic TOCTOU — `if group.status != COLLECTING` is a **read**, not an atomic guard.
 
-### Optimistic pattern yahan kyu fail hota hai
+### Why the optimistic pattern fails here
 
-Poore project me hamara pattern ye hai:
+Throughout the project, our pattern is:
 
 ```sql
 UPDATE x SET ... WHERE id = ? AND status = 'expected'
 ```
 
-Wo tab kaam karta hai jab dono racers **ek hi row** par faisla kar rahe hon.
-Yahan aisa nahi hai:
+This works when both racers are making a decision on the **same row**. Here, that is not the case:
 
-- payment thread `group_shares` ki row badalta hai
-- expiry job `group_bookings` ki row badalta hai
+- The payment thread updates a `group_shares` row.
+- The expiry job updates a `group_bookings` row.
 
-**Ek row ka conditional UPDATE doosri row ki race nahi rok sakta.** Inhe
-serialize karna hi padta hai:
+**A conditional UPDATE on one row cannot stop a race on another row.** These must be serialized:
 
 ```python
 group = db.execute(
@@ -155,42 +130,36 @@ if group.status != GROUP_COLLECTING:
     return
 ```
 
-`FOR UPDATE` ke saath: agar expiry job pehle chal raha hai (group row par
-lock hai), payment thread **rukta** hai jab tak wo commit na kare, phir
-dobara padhta hai aur `expired` dekhta hai → refund. Aur ulta ho to expiry
-job rukta hai aur baad me `paid` share dekh ke refund karta hai.
+With `FOR UPDATE`: if the expiry job is running first (holding a lock on the group row), the payment thread **waits** until it commits, then re-reads and sees `expired` → refund. Conversely, if the payment thread is first, the expiry job waits and then sees the `paid` share and issues a refund.
 
-> Phase 15 ne kaha: "optimistic default, kyunki pessimistic ka kharcha
-> lock hold time ke saath badhta hai."
-> Phase 17 kehta hai: "aur jahan do ALAG rows serialize karni hon, wahan
-> pessimistic ke alawa koi option hai hi nahi."
+> Phase 15 said: "optimistic default, because the cost of pessimistic locking increases with lock hold time."
+> Phase 17 says: "and where two DIFFERENT rows must be serialized, there is no option other than pessimistic."
 >
-> Dono baatein saath chalti hain. Yahan lock ~1ms rehta hai, to Phase 15
-> wala khatra lagta hi nahi.
+> Both statements coexist. Here, the lock is held for ~1ms, so the danger mentioned in Phase 15 does not apply.
 
 ---
 
 ## Flow
 
 ```
-1. CREATE     N seats ek transaction me claim  ->  status 'group_held'
-              share_token milta hai  ->  link
+1. CREATE     Claim N seats in one transaction  ->  status 'group_held'
+              receive share_token  ->  link
                     |
-2. CLAIM      har banda ek khaali share leta hai
+2. CLAIM      each person takes an empty share
               UPDATE ... WHERE claimed_by IS NULL      <- atomic
                     |
-3. PAY        har share ka apna checkout, apna Payment row
-              Payment.group_share_id set hota hai
+3. PAY        each share has its own checkout, its own Payment row
+              Payment.group_share_id is set
                     |
-4. SETTLE     har payment 'paid' karti hai...
-              ...aur SAB paid hone par:
+4. SETTLE     each payment sets status to 'paid'...
+              ...and when ALL are paid:
               UPDATE group_bookings SET 'confirmed' WHERE status='collecting'
                     |                                     ^
-                    |                          rowcount 1 = maine jeeta
-              N bookings ek saath banti hain
+                    |                          rowcount 1 = I won
+              N bookings are created at once
 ```
 
-Aur doosra raasta:
+And the other path:
 
 ```
    DEADLINE   cron -> break_group()
@@ -200,107 +169,100 @@ Aur doosra raasta:
               -> pending payments expired
 ```
 
-### Group creation all-or-nothing hai
+### Group creation is all-or-nothing
 
 ```python
 for seat_id in seat_ids:
     result = db.execute(update(Seat).where(...).values(status=SEAT_GROUP_HELD))
     if result.rowcount == 0:
-        db.rollback()          # jo seats mil chuki thi wo bhi chhoot jaati hain
+        db.rollback()          # seats already acquired are released
         raise GroupError(...)
 ```
 
-Ek bhi seat na mile to poora group reject. Warna user ko 3 seats mil
-jaati aur wo 4th ka intezaar karta rehta — jo kabhi milegi hi nahi.
-**Aadhi hold kisi ke kaam ki nahi.**
+If even one seat is unavailable, the entire group is rejected. Otherwise, the user would get 3 seats and keep waiting for the 4th — which would never come. **A partial hold is useless.**
 
-Test isi ko pakadta hai: fail hui creation ke baad baaki seats
-`available` honi chahiye, `group_held` me atki nahi.
+The test catches this: after a failed creation, the remaining seats must be `available`, not stuck in `group_held`.
 
-### Price group banate waqt freeze hota hai
+### Price is frozen when the group is created
 
-Group me 30 minute lag sakte hain. Us beech surge kaafi badh sakta hai
-([Phase 14](14-dynamic-pricing.md)). `GroupShare.amount` creation ke waqt
-likh diya jata hai — wahi waada hai, aur wahi charge hota hai.
+A group can take 30 minutes to fill. During that time, surge pricing can increase significantly ([Phase 14](14-dynamic-pricing.md)). `GroupShare.amount` is written at the time of creation — that is the promise, and that is what is charged.
 
 ---
 
 ## Security
 
-| Cheez | Kyu |
+| Item | Why |
 |---|---|
-| `share_token` (`secrets.token_urlsafe`), id nahi | Sequential id hoti to koi bhi `/api/groups/1`, `/2` chala ke doosron ke groups dekh leta |
-| API me `id` bheja hi nahi jata | Leak hone ki jagah hi na bache |
-| Response me naam, email nahi | Link kisi ke paas bhi ja sakta hai; usme sab members ke email dikhana privacy leak hai |
-| Ek user ek hi share | Warna ek banda poora group claim kar leta aur "split" ka matlab khatam |
-| Cancel par 404 (403 nahi) | Wahi pattern jo baaki project me hai — existence bhi na pata chale |
-| `pay` par claimer check | Doosre ka hissa nahi bhar sakte |
+| `share_token` (`secrets.token_urlsafe`), not ID | If IDs were sequential, anyone could call `/api/groups/1`, `/2` and view others' groups |
+| `id` is not sent in the API | No chance for it to leak |
+| No name or email in response | The link can be shared; showing all members' emails is a privacy leak |
+| One user, one share | Otherwise, one person could claim the entire group and the "split" concept would be void |
+| 404 on cancel (not 403) | Same pattern as the rest of the project — don't even reveal existence |
+| Claimer check on `pay` | Cannot pay for someone else's share |
 
 ---
 
 ## Proof
 
-### 1. Teen scenarios, asli HTTP se
+### 1. Three scenarios, via real HTTP
 
 ```
-A. Sabne pay kiya -> sab confirm
-   Group bana: 3 shares, seats ['A-4', 'A-5', 'A-6']
+A. Everyone paid -> all confirmed
+   Group created: 3 shares, seats ['A-4', 'A-5', 'A-6']
    Seat statuses: ['group_held', 'group_held', 'group_held']
      paid 1/3 -> group 'collecting'  | seats ['group_held', 'group_held', 'group_held']
      paid 2/3 -> group 'collecting'  | seats ['group_held', 'group_held', 'group_held']
-     aakhri banda pay karta hai...
+     last person pays...
      paid 3/3 -> group 'confirmed'
      seats ['booked', 'booked', 'booked']
-     bookings bani: 3 (teeno alag users ki)
+     bookings created: 3 (one for each user)
 
-B. Deadline nikal gayi
-   1 banda pay karta hai -> paid 1/3, group 'collecting'
+B. Deadline passed
+   1 person pays -> paid 1/3, group 'collecting'
      group -> 'expired'
      share statuses: ['refunded', 'unpaid', 'unpaid']
      seats -> ['available', 'available', 'available']
 
-C. Ek share, do log ek saath
-   do parallel claims -> [200, 409]
-   200 mile: 1
+C. One share, two people simultaneously
+   two parallel claims -> [200, 409]
+   200 received: 1
 ```
 
-Notice: 2/3 paid hone par bhi **koi seat booked nahi** — yahi "sab ya koi
-nahi" ka asli proof hai.
+Note: Even with 2/3 paid, **no seat is booked** — this is the true proof of "all or nothing".
 
 ### 2. ⭐ Confirm vs expiry race — 60 runs
 
-Aakhri payment aur expiry job theek ek lamhe me (barrier se sync, aur
-expiry par thoda jitter taki dono raaste chalein):
+Last payment and expiry job at the exact same moment (synced via barrier, with jitter on expiry so both paths are tested):
 
 ```
-20 runs — confirmed: 15, expired: 5, atke: 0
-Invariant todne wale: 0
+20 runs — confirmed: 15, expired: 5, stuck: 0
+Invariant violations: 0
 
-20 runs — confirmed: 16, expired: 4, atke: 0
+20 runs — confirmed: 16, expired: 4, stuck: 0
 20 runs — confirmed: 17, expired: 3, atke: 0
 ```
 
-Har run me check hota hai:
+Every run checks:
 
 | Group | Invariant |
 |---|---|
-| `confirmed` | saari seats `booked`, har share ki booking bani |
-| `expired` | saari seats `available`, koi booking nahi, paid share refunded |
-| `collecting` | **kabhi nahi** — koi jeeta hi nahi, ye fail hai |
+| `confirmed` | all seats `booked`, booking created for every share |
+| `expired` | all seats `available`, no bookings, paid share refunded |
+| `collecting` | **never** — no one won, this is a failure |
 
-`FOR UPDATE` lagane se **pehle** ye 20 me se 1 baar tootta tha.
+Before adding `FOR UPDATE`, this failed 1 out of 20 times.
 
 ### 3. Tests
 
-**79/79 pass** (69 pehle ke + 10 naye).
+**79/79 pass** (69 previous + 10 new).
 
 ```bash
 docker compose exec backend python -m pytest tests/ -q -k "group or share"
 ```
 
-Naye tests:
+New tests:
 - `test_group_holds_seats_without_booking_them`
-- ⭐ `test_partial_payment_confirms_nobody` — 3 me se 2 pe kuch nahi hota
+- ⭐ `test_partial_payment_confirms_nobody` — nothing happens on 2 out of 3
 - `test_all_paid_confirms_everyone`
 - `test_expired_group_releases_seats_and_refunds`
 - `test_pending_payment_dies_with_the_group`
@@ -315,127 +277,98 @@ Naye tests:
 
 ---
 
-## Kya toota (aur kya seekha)
+## What broke (and what was learned)
 
-### 1. Migration me table order
+### 1. Table order in migration
 
 ```
 psycopg2.errors.UndefinedTable: relation "group_bookings" does not exist
 ```
 
-Autogenerate ne `group_shares` pehle rakha, jabki uska FK `group_bookings`
-par hai. **Alembic dependency order khud nahi samajhta jab dono tables ek
-hi revision me banti hon.** Hand se reorder karna pada.
+Autogenerate placed `group_shares` first, even though its FK is on `group_bookings`. **Alembic does not understand dependency order when both tables are created in the same revision.** Had to reorder manually.
 
-### 2. `ck_seat_status` — teesri baar
+### 2. `ck_seat_status` — third time
 
-Autogenerate ne `group_held` ko check constraint me nahi joda. Wahi
-limitation jo [Phase 11](11-payments.md) me `payment_pending` ke saath thi:
-**autogenerate mojooda check constraint ke ANDAR ka text compare nahi
-karta.** Bina iske app chal jati par pehli group booking par
-`CheckViolation` aata — runtime pe, migrate pe nahi.
+Autogenerate did not add `group_held` to the check constraint. The same limitation as [Phase 11](11-payments.md) with `payment_pending`: **autogenerate does not compare the text INSIDE an existing check constraint.** Without this, the app would run, but the first group booking would trigger a `CheckViolation` — at runtime, not during migration.
 
 ### 3. ⭐ Dangling pending payments
 
-Race test likhte waqt ye mila:
+Found while writing the race test:
 
 ```
 duplicate key value violates unique constraint "uq_one_pending_payment_per_seat"
 ```
 
-Group tootne par uske shares ke **pending** payments latke reh jaate the.
-Do nateeje:
+When a group broke, its shares' **pending** payments remained hanging. Two consequences:
 
-1. Us seat par naya checkout ban hi nahi sakta ([Phase 11](11-payments.md)
-   ka partial unique index rokta hai). **Seat `available` dikhti par
-   khareedi nahi ja sakti** — sabse bura kism ka bug, kyunki UI me sab
-   theek lagta hai.
-2. User purana checkout page complete karke ek **mare hue group** ko paisa
-   de deta.
+1. A new checkout could not be created for that seat (the partial unique index from [Phase 11](11-payments.md) blocks it). **The seat looks `available` but cannot be purchased** — the worst kind of bug, as the UI looks fine.
+2. A user could complete an old checkout page and pay for a **dead group**.
 
-Fix: `break_group` ab un payments ko `expired` kar deta hai.
+Fix: `break_group` now expires those payments.
 
-### 4. ⭐⭐ TOCTOU jo race test ne pakda
+### 4. ⭐⭐ TOCTOU caught by race test
 
-Upar detail me likha hai. Sabak: **conditional UPDATE tabhi kaafi hai jab
-dono racers ek hi row par faisla kar rahe hon.** Do alag rows ho to
-`FOR UPDATE` chahiye.
+Detailed above. Lesson: **conditional UPDATE is only sufficient when both racers are deciding on the same row.** If there are two different rows, `FOR UPDATE` is required.
 
-Aur is bug ko koi normal test nahi pakadta — ye 20 concurrent runs me se
-1 baar dikha tha.
+And no normal test catches this bug — it appeared 1 out of 20 concurrent runs.
 
-### 5. Ek test fix ne behaviour improvement khoji
+### 5. A test fix revealed a behavior improvement
 
-Bug 3 fix karne ke baad `test_payment_after_expiry_is_refunded_not_booked`
-fail hone laga: share `unpaid` nikla, `refunded` nahi.
+After fixing Bug 3, `test_payment_after_expiry_is_refunded_not_booked` started failing: the share was `unpaid`, not `refunded`.
 
-Test galat nahi tha — **behaviour behtar ho gaya tha**. Ab pending payment
-expire ho jata hai, to `/simulate` usse chhoota hi nahi aur user se paisa
-**katta hi nahi**. Refund se behtar hai charge hi na karna.
+The test wasn't wrong — **the behavior had improved**. Now that the pending payment expires, `/simulate` doesn't even reach it, and the user's money **is not taken at all**. Not charging is better than refunding.
 
-Par asli gateway hamare band karne se nahi rukta — webhook der se aa sakta
-hai. Isliye test ko do me toda:
+However, the real gateway doesn't stop just because we close our end — the webhook can arrive late. Therefore, the test was split into two:
 
-- `test_pending_payment_dies_with_the_group` — checkout band ho jata hai
-- `test_late_webhook_after_expiry_is_refunded_not_booked` — der se aaya
-  webhook refund me jata hai
+- `test_pending_payment_dies_with_the_group` — checkout is closed
+- `test_late_webhook_after_expiry_is_refunded_not_booked` — late webhook is refunded
 
-Ek test ko "fix" karke aage badhne se behtar tha ye samajhna ki system ne
-kya kiya.
+Understanding what the system did was better than just "fixing" the test.
 
-### 6. Group tests suite me 429 khane lage
+### 6. Group tests started hitting 429s
 
-Alag se pass, suite me fail — sab `429`. BOOKING limit 5 burst/user hai,
-aur group test ek hi user se kai calls karta hai (create + har share ka
-checkout). Pehle chal chuke booking tests bucket khaali kar chuke hote the.
+Passed individually, failed in the suite — all `429`. BOOKING limit is 5 bursts/user, and the group test makes many calls with one user (create + checkout for each share). Previous booking tests had already emptied the bucket.
 
-Fix: fixture sirf `rl:user:*` saaf karti hai. `rl:login:*` ko haath nahi
-lagate — brute-force wali test usi par tiki hai.
+Fix: The fixture only clears `rl:user:*`. It does not touch `rl:login:*` — the brute-force test relies on that.
 
 ---
 
-## Jo jaan-boojh ke NAHI banaya
+## What was intentionally NOT built
 
-Ye likhna zaroori hai, warna doc jhooth bolti hai:
+This must be written, otherwise the doc is lying:
 
-- **Asli refund API call nahi hai.** Mock provider me `_refund_share` sirf
-  status likhta hai. Asli gateway me refund ki confirmation bhi **webhook
-  se** aati — yaani `refund_pending` naam ka ek aur state chahiye hota,
-  bilkul payment jaisa. Wo state machine nahi banayi.
-- **Email notification nahi hai.** "Tumhare dost ne pay kar diya", "1 ghanta
-  bacha hai" — inke bina asli product adhoora hai. Outbox pattern
-  ([Phase 12](12-background-tickets.md)) already hai, to jodna aasan hoga.
-- **Partial refund / grace period nahi.** Deadline sakht hai. Asli product
-  me shayad "aakhri banda 5 min late hai" par thoda flex hota.
+- **No real refund API call.** In the mock provider, `_refund_share` only writes the status. In a real gateway, refund confirmation also comes **via webhook** — meaning another state like `refund_pending` would be needed, just like payments. I did not build that state machine.
+- **No email notification.** "Your friend has paid", "1 hour left" — the real product is incomplete without these. The outbox pattern ([Phase 12](12-background-tickets.md)) is already there, so integrating it will be easy.
+- **No partial refund / grace period.** The deadline is strict. In a real product, there might be some flexibility if "the last person is 5 minutes late".
 
 ---
 
 ## Files
 
-**Naye:**
-| File | Kya |
+**New:**
+| File | What |
 |---|---|
-| `backend/groups.py` | Poora core — create, claim, confirm, break, expire |
+| `backend/groups.py` | Core logic — create, claim, confirm, break, expire |
 | `backend/routers/group_bookings.py` | HTTP layer |
 | `frontend/src/pages/GroupBooking.jsx` | Share link page |
 
-**Badle:**
-| File | Kya |
+**Modified:**
+| File | What |
 |---|---|
 | `backend/models.py` | `GroupBooking`, `GroupShare`, `SEAT_GROUP_HELD`, `Payment.group_share_id` |
 | `backend/schemas.py` | `GroupCreate`, `GroupOut`, `GroupShareOut` |
-| `backend/routers/payments.py` | Group share ka alag fulfilment raasta |
+| `backend/routers/payments.py` | Fulfillment path for group shares |
 | `backend/worker.py` | `expire_groups` cron |
 | `frontend/src/booking/BookingContext.jsx` | `startGroup()` |
-| `frontend/src/components/{HoldCard,SeatGrid}.jsx` | Entry point + `group_held` rang |
+| `frontend/src/components/{HoldCard,SeatGrid}.jsx` | Entry point + `group_held` color |
 | `frontend/src/App.jsx`, `api.js` | Route + API calls |
 
 ---
 
 ## Related
 
-- [Phase 11 — Payments](11-payments.md) — webhook source of truth, jispe ye tika hai
-- [Phase 14 — Dynamic Pricing](14-dynamic-pricing.md) — price freeze ka wahi asool
-- [Phase 15 — Locking Benchmark](15-locking-benchmark.md) — optimistic vs pessimistic, aur yahan uska apwaad
-- [Phase 12 — Background Tickets](12-background-tickets.md) — ARQ worker jisme cron juda
-- [Interview Prep](../interview-prep.md) — "sab ya koi nahi" ke sawaal
+- [Phase 11 — Payments](11-payments.md) — webhook source of truth, which this relies on
+- [Phase 14 — Dynamic Pricing](14-dynamic-pricing.md) — same principle for price freezing
+- [Phase 15 — Locking Benchmark](15-locking-benchmark.md) — optimistic vs pessimistic, and the exception here
+- [Phase 12 — Background Tickets](12-background-tickets.md) — ARQ worker where the cron is attached
+- [Interview Prep](../interview-prep.md) — "all or nothing" question

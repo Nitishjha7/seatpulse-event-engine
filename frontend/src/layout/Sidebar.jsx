@@ -17,12 +17,11 @@ import {
 /**
  * Left navigation.
  *
- * Sirf wo pages hain jo ACTUALLY bane hue hain. Jo abhi nahi bane
- * (Settings) wo disabled dikhte hain — taki shell ready dikhe par koi
- * tootа hua link na ho.
+ * Only includes implemented pages. Unimplemented features (Settings) are
+ * disabled to maintain shell consistency without broken links.
  *
- * Organizer/Admin sections role ke hisaab se dikhte hain. ⚠️ Ye sirf UX
- * hai — asli gate backend ka `require_role` hai.
+ * Role-based sections are hidden via UI logic. ⚠️ This is for UX only;
+ * security is enforced via `require_role` on the backend.
  */
 const NAV = [
   { to: '/', label: 'Dashboard', Icon: IconHome, end: true },
@@ -49,7 +48,7 @@ export default function Sidebar({ open, onClose }) {
 
   return (
     <>
-      {/* Mobile pe sidebar khulne par background dim */}
+      {/* Dim background when sidebar is open on mobile */}
       {open && (
         <div
           onClick={onClose}
@@ -129,7 +128,7 @@ export default function Sidebar({ open, onClose }) {
           ))}
         </nav>
 
-        {/* Neeche ka card — is project ka asli USP, marketing fluff nahi */}
+        {/* Core project value proposition */}
         <div className="m-3 rounded-xl border border-violet-500/20 bg-violet-600/10 p-4">
           <p className="text-sm font-semibold text-slate-100">Zero overselling</p>
           <p className="mt-1 text-xs leading-relaxed text-slate-400">

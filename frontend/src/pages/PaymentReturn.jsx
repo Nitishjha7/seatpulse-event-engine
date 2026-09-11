@@ -6,19 +6,19 @@ import Confetti from '../components/Confetti'
 import { bookingRef } from '../components/BookingConfirmedModal'
 
 /**
- * Gateway se wapas aane par ye page khulta hai.
+ * This page opens upon returning from the payment gateway.
  *
- * ⚠️ SABSE ZAROORI BAAT: ye page kuch DECIDE nahi karta.
+ * ⚠️ IMPORTANT: This page does not make any decisions.
  *
- * Payment succeed hua ya nahi, wo backend webhook se tay hota hai. Ye page
- * sirf backend se POOCHTA hai ("payment kya hua?") aur jawab dikhata hai.
+ * Payment success is determined by the backend webhook. This page only queries
+ * the backend for the status and displays the result.
  *
- * Agar hum is redirect par bharosa karke booking bana dete, to koi bhi
- * seedha ye URL kholke bina paise ke ticket le leta.
+ * Relying on this redirect to create a booking would allow users to bypass
+ * payment by accessing this URL directly.
  *
- * Aur ulta bhi: user pay karke tab band kar de to ye page kabhi khulta hi
- * nahi — par webhook phir bhi aayega aur booking ban jayegi. Isliye redirect
- * sirf UI hai, source of truth nahi.
+ * Conversely, if a user closes the tab after paying, this page never loads,
+ * but the webhook will still process the booking. Thus, the redirect is
+ * UI only, not the source of truth.
  */
 export default function PaymentReturn() {
   const [params] = useSearchParams()
@@ -47,16 +47,15 @@ export default function PaymentReturn() {
         setPayment(p)
         setAttempts(n)
 
-        // Terminal state? Ruk jao.
+        // Terminal state? Stop.
         if (p.status !== 'pending') return
 
-        // ⚠️ Webhook ko pahunchne me thoda time lagta hai — gateway se
-        // redirect aksar webhook se PEHLE aa jata hai. Isliye poll karte
-        // hain, ek baar poochh ke "failed" nahi bol dete.
+        // ⚠️ Webhooks can take time — the redirect often arrives before the
+        // webhook. We poll rather than assuming failure after one check.
         //
-        // 20 attempts, 1.5s apart = ~30 second. Uske baad user ko bolte
-        // hain ki bookings me check kar le — kyunki webhook baad me bhi
-        // aayega aur booking khud ban jayegi.
+        // 20 attempts, 1.5s apart = ~30 seconds. After that, we advise the
+        // user to check their bookings, as the webhook will eventually
+        // process the booking.
         if (n < 20) {
           timer.current = setTimeout(() => poll(n + 1), 1500)
         }
@@ -84,7 +83,7 @@ export default function PaymentReturn() {
           <Confetti />
           <Tick ok />
           <h1 className="mt-4 text-2xl font-bold text-white">Payment successful</h1>
-          <p className="mt-1 text-sm text-slate-400">Tumhari seat book ho gayi.</p>
+          <p className="mt-1 text-sm text-slate-400">Your seat has been booked.</p>
 
           <dl className="mt-5 grid grid-cols-2 gap-2 text-left">
             <Field label="Amount" value={`₹${payment.amount}`} />
@@ -104,14 +103,14 @@ export default function PaymentReturn() {
       <Shell>
         <Tick ok={false} />
         <h1 className="mt-4 text-2xl font-bold text-white">
-          {cancelled ? 'Payment cancelled' : 'Payment nahi hua'}
+          {cancelled ? 'Payment cancelled' : 'Payment failed'}
         </h1>
         <p className="mt-1 text-sm text-slate-400">
           {payment.failure_reason === 'expired_unpaid' || payment.status === 'expired'
-            ? 'Payment window khatam ho gaya — seat wapas available hai.'
-            : 'Koi paisa nahi kata. Seat wapas available hai.'}
+            ? 'Payment window expired — seat is now available again.'
+            : 'No funds were deducted. Seat is now available again.'}
         </p>
-        <Link to="/" className={primaryBtn}>Dobara try karo</Link>
+        <Link to="/" className={primaryBtn}>Try again</Link>
       </Shell>
     )
   }
@@ -120,18 +119,18 @@ export default function PaymentReturn() {
   return (
     <Shell>
       <div className="mx-auto h-14 w-14 animate-pulse rounded-full bg-amber-500/20" />
-      <h1 className="mt-4 text-xl font-semibold text-white">Payment confirm ho raha hai…</h1>
+      <h1 className="mt-4 text-xl font-semibold text-white">Confirming payment…</h1>
       <p className="mt-1 text-sm text-slate-400">
-        Gateway se confirmation ka intezaar hai. Ye page apne aap update hoga.
+        Waiting for gateway confirmation. This page will update automatically.
       </p>
 
       {attempts >= 20 && (
         <p className="mt-4 rounded-xl bg-amber-500/10 px-4 py-3 text-xs leading-relaxed text-amber-200">
-          Zyada time lag raha hai. Ghabrao mat — confirmation aane par booking
-          apne aap ban jayegi, chahe tum ye page band kar do.
+          This is taking longer than expected. Don't worry — the booking will be
+          created automatically once confirmed, even if you close this page.
           <br />
           <Link to="/bookings" className="mt-2 inline-block underline">
-            My Bookings me check karo
+            Check My Bookings
           </Link>
         </p>
       )}

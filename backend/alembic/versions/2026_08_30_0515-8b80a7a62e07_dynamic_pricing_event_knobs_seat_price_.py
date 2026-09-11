@@ -17,13 +17,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # NOT NULL column ko server_default ke saath add karte hain.
+    # Add NOT NULL columns with server_default to handle existing rows.
     #
-    # Bina default ke Postgres poochta hai: "purani 40 rows me is column me
-    # kya daalun?" -- aur NOT NULL hai to jawab hai NOTHING, migration fail.
+    # Without a default, Postgres fails on existing rows because it cannot
+    # satisfy the NOT NULL constraint.
     #
-    # Default lagate hain, backfill hone dete hain, phir default hata dete
-    # hain -- taki aage se application hi value decide kare, DB nahi.
+    # We apply a default, allow backfilling, then remove the default so the
+    # application manages values moving forward.
     op.add_column(
         'events',
         sa.Column('dynamic_pricing', sa.Boolean(), nullable=False, server_default='false'),
@@ -40,8 +40,8 @@ def upgrade() -> None:
     op.alter_column('events', 'demand_factor', server_default=None)
     op.alter_column('events', 'max_surge', server_default=None)
 
-    # held_price nullable hai -- NULL ka matlab "koi hold nahi, koi price
-    # lock nahi". Isliye yahan default ki zaroorat hi nahi.
+    # held_price is nullable; NULL indicates no active hold or price lock.
+    # No default value is required.
     op.add_column('seats', sa.Column('held_price', sa.Numeric(10, 2), nullable=True))
 
 

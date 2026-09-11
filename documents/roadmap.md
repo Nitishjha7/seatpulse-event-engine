@@ -1,6 +1,6 @@
 # SeatPulse — Development Roadmap
 
-Poora plan, phase wise. Har phase ke end me ek **proof** hai — wo na mile to agle phase pe mat jaana.
+The complete plan, phase by phase. Every phase ends with a **proof** — do not proceed to the next phase until you have it.
 
 **Target (resume bullets):**
 1. Real-time seat grid updates via WebSockets
@@ -10,21 +10,21 @@ Poora plan, phase wise. Har phase ke end me ek **proof** hai — wo na mile to a
 
 ---
 
-> **Kuch bhi test karna ho → [testing.md](reference/testing.md)** — saare commands ek jagah.
-> **Interview ki tayyari → [interview-prep.md](interview-prep.md)** — 50+ sawaal-jawab, asli numbers ke saath.
+> **For testing anything → [testing.md](reference/testing.md)** — all commands in one place.
+> **Interview preparation → [interview-prep.md](interview-prep.md)** — 50+ Q&A with real metrics.
 
-## Frontend kahan-kahan explain hua hai
+## Frontend implementation index
 
-React ka kaam har phase me thoda-thoda hua hai, isliye ye index:
+React work is distributed across phases; use this index:
 
-| Frontend cheez | File | Kahan |
+| Frontend feature | File | Location |
 |---|---|---|
-| Vite + React setup, Docker se | — | [Docker setup](setup/01-docker-setup.md) |
+| Vite + React setup, via Docker | — | [Docker setup](setup/01-docker-setup.md) |
 | Tailwind v4, `vite.config.js`, `usePolling` | `vite.config.js`, `index.css` | [Phase 1](phases/01-frontend-backend-connect.md) Step 5-7 |
-| `api.js` — ek jagah se saare calls | `api.js` | [Phase 1](phases/01-frontend-backend-connect.md) Step 8 |
-| Health card, teen states | `App.jsx` | [Phase 1](phases/01-frontend-backend-connect.md) Step 10 |
+| `api.js` — centralized API calls | `api.js` | [Phase 1](phases/01-frontend-backend-connect.md) Step 8 |
+| Health card, three states | `App.jsx` | [Phase 1](phases/01-frontend-backend-connect.md) Step 10 |
 | Central error handling (`detail`, `error.status`) | `api.js` | [Phase 3](phases/03-api-and-seat-grid.md) Step 5 |
-| **Seat grid** — rows me todna, colors | `SeatGrid.jsx` | [Phase 3](phases/03-api-and-seat-grid.md) Step 6 |
+| **Seat grid** — row splitting, colors | `SeatGrid.jsx` | [Phase 3](phases/03-api-and-seat-grid.md) Step 6 |
 | Booking panel, `Promise.all`, 409 handling | `BookingPanel.jsx`, `App.jsx` | [Phase 3](phases/03-api-and-seat-grid.md) Step 7-8 |
 | **Hold + live countdown**, `beforeunload` release | `App.jsx`, `BookingPanel.jsx` | [Phase 4](phases/04-redis-locking.md) Step 5 |
 | **`useWebSocket` hook** — reconnect, backoff, refs | `hooks/useWebSocket.js` | [Phase 5](phases/05-websockets.md) Step 4 |
@@ -34,9 +34,9 @@ React ka kaam har phase me thoda-thoda hua hai, isliye ye index:
 | Login/signup page, Google button | `auth/AuthPage.jsx` | [Phase 7](phases/07-auth-google-oauth.md) → Frontend |
 | Auth gate, `key={user.id}` | `App.jsx` | [Phase 7](phases/07-auth-google-oauth.md) → Frontend |
 | **Routing + AppShell** (sidebar, topbar) | `layout/*` | [Phase 8](phases/08-dashboard-ui.md) Step 3 |
-| **BookingContext** — shared state, ek WebSocket | `booking/BookingContext.jsx` | [Phase 8](phases/08-dashboard-ui.md) Step 2 |
+| **BookingContext** — shared state, single WebSocket | `booking/BookingContext.jsx` | [Phase 8](phases/08-dashboard-ui.md) Step 2 |
 | Theme tokens, glow, scrollbar | `index.css` | [Phase 8](phases/08-dashboard-ui.md) Step 4 |
-| Hero banner (CSS + SVG, koi image nahi) | `components/EventHero.jsx` | [Phase 8](phases/08-dashboard-ui.md) Step 5 |
+| Hero banner (CSS + SVG, no images) | `components/EventHero.jsx` | [Phase 8](phases/08-dashboard-ui.md) Step 5 |
 | Pages — Dashboard, Events, Bookings, Profile | `pages/*` | [Phase 8](phases/08-dashboard-ui.md) Step 6 |
 | **Booking Confirmed modal** + `bookingRef()` | `components/BookingConfirmedModal.jsx` | [Phase 8](phases/08-dashboard-ui.md) Step 7 |
 | CSS-only confetti (`useMemo`, `--x`/`--r`) | `components/Confetti.jsx` | [Phase 8](phases/08-dashboard-ui.md) Step 7 |
@@ -47,28 +47,28 @@ React ka kaam har phase me thoda-thoda hua hai, isliye ye index:
 | Organizer events + sales bar | `pages/organizer/MyEvents.jsx` | [Phase 10](phases/10-rbac-organizer.md) Step 7 |
 | Admin stats, 10s polling | `pages/admin/AdminStats.jsx` | [Phase 10](phases/10-rbac-organizer.md) Step 6 |
 | **Mock checkout page** (simulated gateway) | `pages/MockCheckout.jsx` | [Phase 11](phases/11-payments.md) Step 7 |
-| **Payment return page** — polls, decide nahi karta | `pages/PaymentReturn.jsx` | [Phase 11](phases/11-payments.md) Step 7 |
+| **Payment return page** — polling, no decision logic | `pages/PaymentReturn.jsx` | [Phase 11](phases/11-payments.md) Step 7 |
 | `payForSeat()` — redirect to gateway | `booking/BookingContext.jsx` | [Phase 11](phases/11-payments.md) Step 7 |
 | Ticket download via blob (header + navigation) | `api.js`, `components/BookingsList.jsx` | [Phase 12](phases/12-background-tickets.md) Step 8 |
 | **Camera QR scan** — native BarcodeDetector, no library | `pages/gate/GatePortal.jsx` | [Phase 13](phases/13-gate-checkin.md) Step 6 |
 | **Group share page** — polling, countdown, per-share pay | `pages/GroupBooking.jsx` | [Phase 17](phases/17-group-booking.md) |
-| **Layout builder** + live preview (form, drag-drop nahi) | `components/LayoutBuilder.jsx` | [Phase 18](phases/18-seat-layout.md) |
-| **NL search box** — key na ho to render hi nahi hota | `components/SeatSearch.jsx` | [Phase 19](phases/19-nl-seat-search.md) |
-| **AI draft box** + "publish se pehle padh lo" warning | `components/AiDraft.jsx` | [Phase 20](phases/20-ai-event-copy.md) |
-| Interpretation chips — query ka kya matlab nikala | `components/SeatSearch.jsx` | [Phase 19](phases/19-nl-seat-search.md) |
-| Grid me sections + aisles, purane events ka fallback | `components/SeatGrid.jsx` | [Phase 18](phases/18-seat-layout.md) |
-| `startGroup()` — saath wali seats khud chunta hai | `booking/BookingContext.jsx` | [Phase 17](phases/17-group-booking.md) |
+| **Layout builder** + live preview (form, no drag-drop) | `components/LayoutBuilder.jsx` | [Phase 18](phases/18-seat-layout.md) |
+| **NL search box** — renders only if key exists | `components/SeatSearch.jsx` | [Phase 19](phases/19-nl-seat-search.md) |
+| **AI draft box** + "read before publish" warning | `components/AiDraft.jsx` | [Phase 20](phases/20-ai-event-copy.md) |
+| Interpretation chips — query intent display | `components/SeatSearch.jsx` | [Phase 19](phases/19-nl-seat-search.md) |
+| Grid sections + aisles, fallback for old events | `components/SeatGrid.jsx` | [Phase 18](phases/18-seat-layout.md) |
+| `startGroup()` — auto-selects adjacent seats | `booking/BookingContext.jsx` | [Phase 17](phases/17-group-booking.md) |
 | **Live surge banner** + honest "N seats left at this price" | `components/PricingBanner.jsx` | [Phase 14](phases/14-dynamic-pricing.md) |
-| `seatPrice()` — ek hi jagah price ka faisla | `booking/BookingContext.jsx` | [Phase 14](phases/14-dynamic-pricing.md) |
-| Price client-side calculate **nahi** karte (JS vs Python rounding) | `booking/BookingContext.jsx` | [Phase 14](phases/14-dynamic-pricing.md) |
+| `seatPrice()` — centralized pricing logic | `booking/BookingContext.jsx` | [Phase 14](phases/14-dynamic-pricing.md) |
+| Price calculation **not** client-side (JS vs Python rounding) | `booking/BookingContext.jsx` | [Phase 14](phases/14-dynamic-pricing.md) |
 | Surge toggle + slider in create-event | `pages/organizer/CreateEvent.jsx` | [Phase 14](phases/14-dynamic-pricing.md) |
 
-> **Phase 7 ke aage ka plan** — 13 naye features 4 tracks me — [../README.md](../README.md) ke "Roadmap → Planned" section me hai.
-> Wahan har feature ka problem + approach likha hai. Yahan wali table sirf jo **ban chuka** hai wo track karti hai.
+> **Plan beyond Phase 7** — 13 new features across 4 tracks — see "Roadmap → Planned" in [../README.md](../README.md).
+> That section details the problem + approach for every feature. This table only tracks what is **already built**.
 
 ## Progress
 
-| Phase | Kaam | Status |
+| Phase | Task | Status |
 |---|---|---|
 | 0 | Docker + FastAPI + React skeleton | ✅ Done |
 | 0 | Git, ignore files, README | ✅ Done |
@@ -92,17 +92,17 @@ React ka kaam har phase me thoda-thoda hua hai, isliye ye index:
 | 18 | Visual seat layout builder | ✅ Done — [Phase 18 — Seat Layout](phases/18-seat-layout.md) |
 | 19 | Natural-language seat search | ✅ Done — [Phase 19 — NL Seat Search](phases/19-nl-seat-search.md) |
 | 20 | AI event copy | ✅ Done — [Phase 20 — AI Event Copy](phases/20-ai-event-copy.md) |
-| — | **Poster generator NAHI bana** — Gemini free tier me image quota hai hi nahi (saare image models 429). Paid tier chahiye. |
-| — | **Follow-up:** `pricing_state()` har booking me do baar chalta hai (6 faaltu queries). Phase 15 ki query-count ne pakda. |
+| — | **Poster generator NOT built** — Gemini free tier has image quota limits (all image models return 429). Requires paid tier. |
+| — | **Follow-up:** `pricing_state()` runs twice per booking (6 redundant queries). Identified by Phase 15 query-count analysis. |
 
 ---
 
 ## Phase 0 — Setup ✅
 
-Ho chuka. Details: [Docker setup](setup/01-docker-setup.md) aur [Git & GitHub setup](setup/02-git-and-github.md)
+Completed. Details: [Docker setup](setup/01-docker-setup.md) and [Git & GitHub setup](setup/02-git-and-github.md)
 
 - Dockerized FastAPI (`python:3.11-slim`) + Vite React (`node:20-alpine`)
-- `docker-compose.yml` — dono services, volume mounts se live reload
+- `docker-compose.yml` — both services, live reload via volume mounts
 - CORS enabled, `/api/health` endpoint
 - Git repo, `.gitignore`, `.dockerignore`, README
 
@@ -110,40 +110,40 @@ Ho chuka. Details: [Docker setup](setup/01-docker-setup.md) aur [Git & GitHub se
 
 ## Phase 1 — Frontend ↔ Backend Connect
 
-**Kyu pehle:** jab tak dono aapas me baat nahi karte, baaki sab kaam andhere me hai. Ye pehla "sab jud gaya" moment hai.
+**Why first:** Until they communicate, everything else is blind. This is the first "everything connected" moment.
 
-### Kaam
-1. `App.jsx` me `fetch("http://localhost:8000/api/health")` — status screen pe dikhao
-2. Tailwind CSS install karo (`npm install -D tailwindcss @tailwindcss/vite`)
-3. Backend me `.env` support — `pydantic-settings` add karo, hardcoded values abhi se hatao
-4. `.env.example` banao (ye Git me jayega, `.env` nahi)
+### Tasks
+1. `App.jsx` with `fetch("http://localhost:8000/api/health")` — display status on screen
+2. Install Tailwind CSS (`npm install -D tailwindcss @tailwindcss/vite`)
+3. Backend `.env` support — add `pydantic-settings`, remove hardcoded values
+4. Create `.env.example` (commit to Git, not `.env`)
 
 ### Proof
-Browser me "Backend: healthy" dikhe, aur backend band karo to "Backend: offline" dikhe.
+Browser displays "Backend: healthy"; stopping the backend displays "Backend: offline".
 
 ---
 
 ## Phase 2 — PostgreSQL + SQLAlchemy Models
 
-> ⚠️ **Sabse important phase. Jaldi mat karna.** Bullet 2 poora isi ke design pe tikta hai. Yahan galti hui to Redis lagane se bhi nahi bachega.
+> ⚠️ **Most important phase. Do not rush.** Bullet 2 relies entirely on this design. If you fail here, Redis won't save you.
 
-### Kaam
-1. `docker-compose.yml` me `postgres:16` service:
-   - named volume (data persist rahe)
-   - `.env` se credentials
-   - `healthcheck` (taaki backend DB ready hone ka wait kare)
+### Tasks
+1. `docker-compose.yml` with `postgres:16` service:
+   - Named volume (data persistence)
+   - Credentials from `.env`
+   - `healthcheck` (ensure backend waits for DB)
 2. `requirements.txt`: `sqlalchemy`, `psycopg2-binary`, `alembic`, `pydantic-settings`
 3. `app/database.py` — engine, SessionLocal, `get_db()` dependency
 4. **Models** (`app/models.py`):
 
-| Model | Zaroori fields |
+| Model | Required fields |
 |---|---|
 | `User` | id, email (unique), hashed_password, created_at |
 | `Event` | id, name, venue, starts_at, total_seats |
 | `Seat` | id, event_id, row, number, **status**, **version**, locked_by, locked_until |
 | `Booking` | id, user_id, seat_id, status, created_at |
 
-5. **`Seat` model me ye teen cheezein critical hain:**
+5. **Three critical elements in the `Seat` model:**
 
 ```python
 status  = Column(String, default="available")  # available | locked | booked
@@ -151,13 +151,13 @@ version = Column(Integer, default=0, nullable=False)   # optimistic locking
 __table_args__ = (UniqueConstraint("event_id", "row", "number"),)
 ```
 
-| Cheez | Kyu |
+| Element | Why |
 |---|---|
-| `status` | Seat abhi kis haalat me hai |
-| `version` | Har update pe +1. Do log ek saath update karein to ek ka version match nahi karega → wo fail hoga. **Ye hi optimistic locking hai** |
-| `UniqueConstraint` | Aakhri safety net. Application logic fail bhi ho jaye to database khud duplicate rok dega |
+| `status` | Current state of the seat |
+| `version` | Increments on every update. If two users update simultaneously, the version mismatch causes one to fail. **This is optimistic locking.** |
+| `UniqueConstraint` | Final safety net. Even if application logic fails, the database prevents duplicates. |
 
-6. Alembic setup + pehli migration
+6. Alembic setup + first migration
 7. Seed script — 1 dummy event + 100 seats (10×10 grid)
 
 ### Proof
@@ -165,62 +165,62 @@ __table_args__ = (UniqueConstraint("event_id", "row", "number"),)
 docker compose exec backend alembic upgrade head
 docker compose exec db psql -U postgres -d seatpulse -c "SELECT count(*) FROM seats;"
 ```
-100 aana chahiye.
+Should return 100.
 
 ---
 
 ## Phase 3 — Pydantic Schemas + CRUD + Seat Grid UI
 
-**Bullet 3 ka base.** Seat grid ko data kahin se to aana hai.
+**Base for Bullet 3.** The seat grid needs data.
 
 ### Backend
 1. `app/schemas.py` — `EventOut`, `SeatOut`, `BookingCreate`, `BookingOut`
-2. `main.py` ko todo — `app/routers/events.py`, `app/routers/seats.py`, `app/routers/bookings.py`
+2. Refactor `main.py` — `app/routers/events.py`, `app/routers/seats.py`, `app/routers/bookings.py`
 3. Routes:
 
-| Method | Route | Kaam |
+| Method | Route | Purpose |
 |---|---|---|
-| GET | `/api/events` | Saare events |
-| GET | `/api/events/{id}` | Ek event ki detail |
-| GET | `/api/events/{id}/seats` | Us event ki saari seats + status |
-| POST | `/api/bookings` | Booking banao |
-| GET | `/api/bookings/me` | Meri bookings |
+| GET | `/api/events` | All events |
+| GET | `/api/events/{id}` | Event details |
+| GET | `/api/events/{id}/seats` | All seats + status for event |
+| POST | `/api/bookings` | Create booking |
+| GET | `/api/bookings/me` | My bookings |
 
 ### Frontend
-4. `api.js` — axios instance, base URL `.env` se
+4. `api.js` — axios instance, base URL from `.env`
 5. Event list page
-6. **Seat Grid component** — 10×10 grid, status ke hisaab se color:
-   - hara = available, peela = locked, laal = booked
+6. **Seat Grid component** — 10×10 grid, color-coded by status:
+   - green = available, yellow = locked, red = booked
 7. Seat click → selected state
 
 ### Proof
-`/docs` me poora API dikhe. Galat body bhejo to Pydantic **422** de. Browser me seat grid render ho.
+Full API visible in `/docs`. Invalid body returns **422** via Pydantic. Seat grid renders in browser.
 
 ---
 
 ## Phase 4 — Redis + Concurrency Logic
 
-> **Interview me sabse zyada yahi poocha jayega.** Ye samajh ke likhna, copy-paste mat karna.
+> **Most frequently asked in interviews.** Understand this, do not copy-paste.
 
-### Kaam
-1. `docker-compose.yml` me `redis:7-alpine` service
+### Tasks
+1. `docker-compose.yml` with `redis:7-alpine` service
 2. `requirements.txt`: `redis`
 3. `app/redis_client.py` — connection
 
-### Lock lena — ek hi atomic command
+### Acquire lock — single atomic command
 
 ```python
 ok = r.set(f"seat:{seat_id}:lock", user_id, nx=True, ex=300)
 ```
 
-| Flag | Kaam |
+| Flag | Purpose |
 |---|---|
-| `nx=True` | Sirf tab set karo jab key **exist na kare**. Do log ek saath try karein to Redis me sirf ek jeetega — kyunki ye ek hi atomic operation hai, check aur set alag-alag nahi |
-| `ex=300` | 5 minute me apne aap delete. User cart chhod ke chala gaya? Seat khud wapas available ho jayegi — koi cleanup job nahi chahiye |
+| `nx=True` | Set only if key **does not exist**. If two users try simultaneously, only one wins in Redis — because this is a single atomic operation. |
+| `ex=300` | Auto-delete in 5 minutes. User leaves cart? Seat becomes available automatically — no cleanup job needed. |
 
-`ok` False mila → seat kisi aur ke paas hai → **409 Conflict**
+`ok` False received → seat held by someone else → **409 Conflict**
 
-### Lock chhodna — Lua script se
+### Release lock — via Lua script
 
 ```lua
 if redis.call("get", KEYS[1]) == ARGV[1] then
@@ -230,9 +230,9 @@ else
 end
 ```
 
-**Kyu Lua:** seedha `DEL` karoge to risk hai ki tumhara lock expire ho chuka ho, kisi aur ne le liya ho, aur tum **uska** lock delete kar do. Lua script me check+delete ek saath (atomic) chalta hai.
+**Why Lua:** A simple `DEL` risks deleting someone else's lock if yours expired. Lua script performs check+delete atomically.
 
-### Booking confirm — optimistic locking
+### Confirm booking — optimistic locking
 
 ```sql
 UPDATE seats
@@ -240,77 +240,77 @@ SET status = 'booked', version = version + 1
 WHERE id = :seat_id AND version = :expected_version AND status != 'booked'
 ```
 
-`rowcount == 0` → koi aur pehle kar gaya → **409**
+`rowcount == 0` → someone else beat you to it → **409**
 
-### Do layer kyu?
+### Why two layers?
 
-| Layer | Kaam |
+| Layer | Purpose |
 |---|---|
-| Redis lock | **Fast rejection** — 5000 me se 4999 request DB tak pahunchti hi nahi. DB bach jata hai |
-| DB optimistic lock | **Correctness** — Redis restart ho jaye, lock expire ho jaye, ya koi bug ho, DB phir bhi galat booking nahi hone dega |
+| Redis lock | **Fast rejection** — 4999 of 5000 requests never reach the DB. Protects the DB. |
+| DB optimistic lock | **Correctness** — If Redis restarts, locks expire, or bugs occur, the DB prevents invalid bookings. |
 
-Sirf Redis = tez par galat ho sakta hai. Sirf DB = sahi par dheema. **Dono chahiye** — ye interview ka jawab hai.
+Redis only = fast but potentially incorrect. DB only = correct but slow. **You need both** — this is the interview answer.
 
 ### Routes
 - `POST /api/seats/{id}/lock`
 - `DELETE /api/seats/{id}/lock`
-- `POST /api/bookings` (lock verify karke hi book kare)
+- `POST /api/bookings` (verify lock before booking)
 
 ### Proof
-Do terminal se ek hi seat pe ek saath request maaro — ek 200, dusra 409.
+Fire requests for the same seat from two terminals simultaneously — one gets 200, the other 409.
 
 ---
 
 ## Phase 5 — WebSockets + Broadcasting
 
-**Bullet 1.** Ab tak seat status refresh karne pe hi update hota tha — ab live hoga.
+**Bullet 1.** Previously, seat status required a refresh; now it is live.
 
 ### Backend
 1. `app/websocket.py` — `ConnectionManager` class:
-   - `connect(ws, event_id)` — event ke hisaab se rooms
+   - `connect(ws, event_id)` — rooms per event
    - `disconnect(ws)`
    - `broadcast(event_id, message)`
 2. `WS /ws/events/{event_id}` endpoint
-3. Seat lock / unlock / book hone par broadcast:
+3. Broadcast on seat lock / unlock / book:
 ```json
 { "type": "seat_locked", "seat_id": 42, "status": "locked" }
 ```
-4. Disconnect pe cleanup (dead connections list me na pade rahen)
+4. Cleanup on disconnect (prevent dead connections)
 
 ### Frontend
 5. `useWebSocket` hook:
    - connect on mount, close on unmount
-   - message aane pe seat state update
-   - **reconnect with backoff** (connection tootne pe 1s, 2s, 4s... retry)
-6. Seat grid me smooth color transition
+   - update seat state on message
+   - **reconnect with backoff** (1s, 2s, 4s... retry on disconnect)
+6. Smooth color transition in seat grid
 
 ### Proof
-**Do browser tabs kholo.** Ek me seat click karo — dusre me **turant** peela ho jaye, bina refresh ke.
+**Open two browser tabs.** Click a seat in one — it turns yellow in the other **instantly**, without refresh.
 
 ---
 
 ## Phase 6 — Load Testing + Proof
 
-> Bina iske bullet 2 aur 3 sirf daawa hai. Ye phase unhe **sach** banata hai.
+> Without this, bullets 2 and 3 are just claims. This phase makes them **true**.
 
-### Kaam
-1. `locust` add karo, `locustfile.py` likho
-2. **Test: 500 concurrent users, ek hi seat**
+### Tasks
+1. Add `locust`, write `locustfile.py`
+2. **Test: 500 concurrent users, same seat**
    - Expected: exactly **1** booking success, **499** rejected
-   - DB me check: `SELECT count(*) FROM bookings WHERE seat_id = X` → 1
-3. **Response time maapo** — bullet me "sub-50ms" likha hai, wo number tumhare paas hona chahiye
-4. Pytest — concurrency tests (`asyncio.gather` se parallel requests)
+   - DB check: `SELECT count(*) FROM bookings WHERE seat_id = X` → 1
+3. **Measure response time** — bullet says "sub-50ms", you must have this metric.
+4. Pytest — concurrency tests (parallel requests via `asyncio.gather`)
 5. Redis-based rate limiting
-6. **README me load test ka result/screenshot daalo**
+6. **Add load test result/screenshot to README**
 
 ### Proof
-Locust ka report screenshot + DB count query ka output.
+Locust report screenshot + DB count query output.
 
-> ⚠️ Resume pe **"sub-50ms" tab tak mat likhna** jab tak actually maap na lo. Interviewer poochta hai "kaise measure kiya?" — jawab na ho to baaki bullets pe bhi shak jata hai.
+> ⚠️ **Do not write "sub-50ms" on your resume** until you have measured it. Interviewers will ask "how did you measure it?" — if you don't have an answer, your other bullets lose credibility.
 
 ---
 
-## Final Architecture (Phase 6 ke baad)
+## Final Architecture (Post-Phase 6)
 
 ```
 ┌─────────────┐         HTTP + WebSocket        ┌──────────────┐
@@ -330,16 +330,16 @@ Locust ka report screenshot + DB count query ka output.
 
 ---
 
-## Kaam ka Order (short)
+## Task Order (Summary)
 
 ```
 ✅ 0. Docker + React + FastAPI skeleton
    1. Frontend ↔ Backend connect          ~30 min
-   2. PostgreSQL + models                 ← yahan time lagana
+   2. PostgreSQL + models                 ← spend time here
    3. Pydantic + CRUD + Seat Grid UI
-   4. Redis + concurrency logic           ← interview ka core
+   4. Redis + concurrency logic           ← interview core
    5. WebSockets + broadcasting
    6. Load test + proof
 ```
 
-**Sabse badi galti jo log karte hain:** Phase 4-5 (Redis + WebSocket) dikhne me sabse cool hain, isliye log seedha wahan kood jaate hain. Par bina solid Phase 2 (DB design) ke wo sirf dikhawa hai — aur interviewer exactly wahi khodta hai.
+**Biggest mistake:** People jump straight to Phase 4-5 (Redis + WebSocket) because they look cool. Without a solid Phase 2 (DB design), it's just a facade — and interviewers will dig exactly there.

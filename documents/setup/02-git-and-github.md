@@ -1,16 +1,16 @@
 # SeatPulse — Git & GitHub Setup Steps
 
-[Docker setup](01-docker-setup.md) ke **baad** ke steps. Docker setup ho chuka hai, ab code ko Git me daalna hai aur GitHub par push karna hai.
+Steps to follow **after** [Docker setup](01-docker-setup.md). Now that Docker is configured, add the code to Git and push it to GitHub.
 
 **Order:** `.gitignore` → `.dockerignore` → `README.md` → `git init` → GitHub repo → `git push`
 
-> ⚠️ `.gitignore` **sabse pehle** banana zaroori hai. Agar `git add .` pehle chala diya, to `node_modules` ki hazaaron files stage ho jaayengi aur baad me history se hatana dard hai.
+> ⚠️ It is **essential** to create `.gitignore` first. If you run `git add .` before this, thousands of `node_modules` files will be staged, and removing them from history later is difficult.
 
 ---
 
-## Step 1 — `.gitignore` banao (root folder me)
+## Step 1 — Create `.gitignore` (in the root folder)
 
-Ye file Git ko batati hai ki **kaunse folders/files GitHub par nahi jaane**.
+This file tells Git which folders/files should **not** be uploaded to GitHub.
 
 **PowerShell**
 ```powershell
@@ -74,27 +74,27 @@ Thumbs.db
 EOF
 ```
 
-### Ye folders GitHub pe NAHI jaayenge
+### Folders that will NOT go to GitHub
 
-| Folder / File | Kyu nahi jaana chahiye |
+| Folder / File | Reason for exclusion |
 |---|---|
-| `node_modules/` | Hazaaron files, ~200MB+. Iski zaroorat hi nahi — `package.json` se koi bhi `npm install` karke dubara bana sakta hai |
-| `__pycache__/` | Python ki compiled cache files. Auto-generate hoti hain, har machine pe alag |
-| `venv/` `.venv/` | Python virtual environment. Machine-specific hai, doosre PC pe kaam hi nahi karega |
-| `dist/` `build/` | Build ka output. Source code se dubara ban jata hai |
-| **`.env`** | **SABSE ZAROORI** — isme database password, API keys hote hain. Ek baar push ho gaya to public ho gaya |
-| `*.db` `*.sqlite3` | Local database file. Isme test data hota hai, kisi kaam ka nahi |
-| `.vscode/` `.idea/` | Tumhare editor ki settings. Doosre developer ko iski zaroorat nahi |
-| `.DS_Store` `Thumbs.db` | OS ki junk files |
-| `documents/` | Tumhare personal setup notes aur command references. Sirf local reference ke liye, repo public me inki zaroorat nahi |
+| `node_modules/` | Thousands of files, ~200MB+. Unnecessary — can be regenerated via `npm install` using `package.json` |
+| `__pycache__/` | Python compiled cache files. Auto-generated and machine-specific |
+| `venv/` `.venv/` | Python virtual environment. Machine-specific; will not work on other PCs |
+| `dist/` `build/` | Build output. Can be regenerated from source code |
+| **`.env`** | **CRITICAL** — contains database passwords and API keys. Pushing this makes them public |
+| `*.db` `*.sqlite3` | Local database files containing test data |
+| `.vscode/` `.idea/` | Editor settings. Not required by other developers |
+| `.DS_Store` `Thumbs.db` | OS junk files |
+| `documents/` | Personal setup notes and references. Not needed in a public repository |
 
-> `!.env.example` ka matlab: `.env.example` file **jayegi**. Usme dummy values rakhte hain taaki naye developer ko pata chale kaunse variables chahiye.
+> `!.env.example` means: the `.env.example` file **will be included**. It contains dummy values to inform new developers which variables are required.
 
 ---
 
-## Step 2 — `.dockerignore` banao (dono folders me)
+## Step 2 — Create `.dockerignore` (in both folders)
 
-Ye file Docker ko batati hai ki `COPY . .` ke waqt **kya container me copy nahi karna**.
+This file tells Docker which files to exclude during `COPY . .`.
 
 ### 2a. `frontend/.dockerignore`
 
@@ -122,7 +122,7 @@ npm-debug.log*
 "@ | Out-File -Encoding utf8 .dockerignore
 ```
 
-> ⚠️ **`node_modules/` yahan sabse important line hai.** Bina iske tumhara **Windows ka `node_modules` Linux container me copy ho jata hai**. Wo binaries Linux pe chalti hi nahi, aur build bahut slow ho jata hai. Container apna `node_modules` khud `RUN npm install` se banata hai.
+> ⚠️ **`node_modules/` is the most important line here.** Without it, your **Windows `node_modules` are copied into the Linux container**. These binaries are incompatible with Linux, and the build process becomes extremely slow. The container generates its own `node_modules` via `RUN npm install`.
 
 ### 2b. `backend/.dockerignore`
 
@@ -154,27 +154,27 @@ Dockerfile
 "@ | Out-File -Encoding utf8 .dockerignore
 ```
 
-### `.gitignore` vs `.dockerignore` — farak kya hai?
+### `.gitignore` vs `.dockerignore` — What is the difference?
 
 | | `.gitignore` | `.dockerignore` |
 |---|---|---|
-| Kise batata hai | Git ko | Docker ko |
-| Kya rokta hai | Files GitHub par jaane se | Files container me copy hone se |
-| Kitni files | Root me 1 | Har Dockerfile ke folder me 1 (yahan 2) |
+| Target | Git | Docker |
+| Purpose | Prevents files from being pushed to GitHub | Prevents files from being copied into the container |
+| Quantity | 1 in root | 1 per Dockerfile folder (2 here) |
 
-Dono me `node_modules` aur `.env` common hain, par kaam alag hai. Dono chahiye.
+Both share `node_modules` and `.env`, but serve different purposes. Both are required.
 
 ---
 
-## Step 3 — Root folder me wapas jao aur `README.md` banao
+## Step 3 — Return to root folder and create `README.md`
 
 ```bash
 cd ..
 ```
 
-Ye GitHub par project ka **face** hai. Interviewer sabse pehle yahi dekhta hai.
+This is the **face** of your project on GitHub. Recruiters look at this first.
 
-**README ka content**
+**README content**
 
 ````markdown
 # 🎟️ SeatPulse — High-Concurrency Event Booking Engine
@@ -195,38 +195,38 @@ docker compose up --build
 ```
 ````
 
-> Poora README already bana hua hai — [../README.md](../../README.md) dekh lo. Usme Quick Start, folder structure aur roadmap bhi hai.
+> The full README is already created — see [../README.md](../../README.md). It includes the Quick Start, folder structure, and roadmap.
 
 ---
 
-## Step 4 — Git repo initialize karo
+## Step 4 — Initialize Git repository
 
 ```bash
 git init -b main
 ```
 
-| Part | Matlab |
+| Part | Meaning |
 |---|---|
-| `git init` | Is folder ko Git repo banao (ek chhupa hua `.git` folder banega) |
-| `-b main` | Pehli branch ka naam `main` rakho (purana default `master` tha, GitHub ab `main` use karta hai) |
+| `git init` | Initialize this folder as a Git repo (creates a hidden `.git` folder) |
+| `-b main` | Set the initial branch name to `main` (replaces the legacy `master` default) |
 
 ---
 
-## Step 5 — Files stage karo aur CHECK karo
+## Step 5 — Stage files and VERIFY
 
 ```bash
 git add .
 git status
 ```
 
-⚠️ **Yahan ruk ke dekho.** `git status` ke output me ye **nahi** dikhna chahiye:
+⚠️ **Stop and check.** The `git status` output must **not** show:
 
 - ❌ `node_modules/`
 - ❌ `__pycache__/`
 - ❌ `.env`
 - ❌ `venv/`
 
-Dikhe? Matlab `.gitignore` galat jagah hai ya galat likha hai. Fix karke:
+If they appear, your `.gitignore` is either in the wrong place or incorrectly configured. Fix it, then:
 
 ```bash
 git rm -r --cached .
@@ -234,127 +234,127 @@ git add .
 git status
 ```
 
-Sahi lag raha hai to hi aage badho.
+Proceed only if everything looks correct.
 
 ---
 
-## Step 6 — Pehla commit
+## Step 6 — First commit
 
 ```bash
 git commit -m "Initial commit: Dockerized FastAPI + React skeleton"
 ```
 
-Pehli baar Git use kar rahe ho to naam/email set karna padega:
+If using Git for the first time, configure your identity:
 
 ```bash
-git config --global user.name "Tumhara Naam"
-git config --global user.email "tumhara@email.com"
+git config --global user.name "Your Name"
+git config --global user.email "your@email.com"
 ```
 
 ---
 
-## Step 7 — GitHub par repo banao
+## Step 7 — Create repository on GitHub
 
-[github.com/new](https://github.com/new) pe jao:
+Go to [github.com/new](https://github.com/new):
 
 | Field | Value |
 |---|---|
 | **Repository name** | `seatpulse-event-engine` |
 | **Description** | `High-concurrency event ticketing & real-time seat locking engine built with FastAPI, WebSockets, Redis, PostgreSQL, and React.` |
-| **Public / Private** | Public (portfolio ke liye) |
-| **Add README** | ❌ **Nahi** |
-| **Add .gitignore** | ❌ **Nahi** |
-| **Add license** | ❌ Nahi (baad me add kar sakte ho) |
+| **Public / Private** | Public (for portfolio) |
+| **Add README** | ❌ **Do not check** |
+| **Add .gitignore** | ❌ **Do not check** |
+| **Add license** | ❌ Do not check (can be added later) |
 
-> ⚠️ Ye teeno **check mat karna**. Apne paas already hain — GitHub bhi bana dega to conflict aayega aur push reject ho jayega.
+> ⚠️ **Do not check** these three options. We already have these files; if GitHub creates them, it will cause conflicts and reject your push.
 
 ---
 
-## Step 8 — Remote add karo aur push karo
+## Step 8 — Add remote and push
 
 ```bash
 git remote add origin https://github.com/Nitishjha7/seatpulse-event-engine.git
 git push -u origin main
 ```
 
-| Part | Matlab |
+| Part | Meaning |
 |---|---|
-| `remote add origin <url>` | GitHub ka address save karo, uska short naam `origin` |
-| `push` | Local commits GitHub par bhejo |
-| `-u origin main` | Local `main` ko GitHub ke `main` se jod do. **Ek hi baar lagta hai** — agli baar sirf `git push` kaafi hai |
+| `remote add origin <url>` | Save the GitHub address with the short name `origin` |
+| `push` | Send local commits to GitHub |
+| `-u origin main` | Link local `main` to GitHub's `main`. **Required only once** — subsequent pushes only need `git push` |
 
-**Remote check karna ho:**
+**Check remote:**
 ```bash
 git remote -v
 ```
 
-**Galat URL daal diya?**
+**Wrong URL?**
 ```bash
-git remote set-url origin <sahi-url>
+git remote set-url origin <correct-url>
 ```
 
 ---
 
-## Step 9 — GitHub par Topics add karo
+## Step 9 — Add Topics to GitHub
 
-Repo page → dayin taraf **About** ke paas ⚙️ icon → **Topics** me daalo:
+On the repo page → click the ⚙️ icon next to **About** → add **Topics**:
 
 ```
 fastapi  react  redis  websockets  concurrency  postgresql  fullstack  python
 ```
 
-Isse repo GitHub search me aata hai aur recruiter ko turant tech stack dikh jata hai.
+This improves repository discoverability and highlights your tech stack to recruiters.
 
 ---
 
-## Step 10 — Docker dubara build karo
+## Step 10 — Rebuild Docker
 
-`.dockerignore` ab add hui hai, to purani image me abhi bhi `node_modules` pada hai. Ek baar saaf karo:
+Since `.dockerignore` was added, the old image may still contain `node_modules`. Clean it up:
 
 ```bash
 docker compose down
 docker compose up --build
 ```
 
-Build pehle se **kaafi fast** hona chahiye.
+The build should be **significantly faster** now.
 
 ---
 
 ## ✅ Checklist
 
-- [ ] `.gitignore` root me bana
-- [ ] `frontend/.dockerignore` bana (`node_modules/` sabse upar)
-- [ ] `backend/.dockerignore` bana
-- [ ] `README.md` bana, username update kiya
+- [ ] `.gitignore` created in root
+- [ ] `frontend/.dockerignore` created (`node_modules/` at the top)
+- [ ] `backend/.dockerignore` created
+- [ ] `README.md` created and username updated
 - [ ] `git init -b main`
-- [ ] `git status` me `node_modules` / `.env` nahi dikha
-- [ ] Pehla commit ho gaya
-- [ ] GitHub repo bana (README/gitignore ke bina)
-- [ ] `git push -u origin main` ho gaya
-- [ ] Topics add kiye
-- [ ] `docker compose up --build` dubara chalaya
+- [ ] `git status` does not show `node_modules` / `.env`
+- [ ] First commit completed
+- [ ] GitHub repo created (without README/gitignore)
+- [ ] `git push -u origin main` completed
+- [ ] Topics added
+- [ ] `docker compose up --build` re-run
 
 ---
 
-## Aage ke liye — roz ke Git commands
+## Daily Git commands
 
 ```bash
-git status                    # kya-kya badla hai
-git add .                     # sab changes stage karo
-git add backend/main.py       # sirf ek file
+git status                    # check changes
+git add .                     # stage all changes
+git add backend/main.py       # stage specific file
 git commit -m "message"       # commit
-git push                      # GitHub par bhejo (-u ek baar lag chuka hai)
+git push                      # push to GitHub
 git log --oneline             # commit history
-git diff                      # kya badla, line by line
+git diff                      # line-by-line changes
 ```
 
 ## Common Problems
 
 | Problem | Fix |
 |---|---|
-| `git status` me `node_modules` dikh raha | `.gitignore` root me hai? Phir `git rm -r --cached .` → `git add .` |
+| `node_modules` appears in `git status` | Ensure `.gitignore` is in root. Then run `git rm -r --cached .` → `git add .` |
 | `remote origin already exists` | `git remote set-url origin <url>` |
-| `failed to push some refs` / rejected | GitHub pe README bana diya tha. `git pull --rebase origin main` phir `git push` |
-| `src refspec main does not match any` | Abhi commit nahi hua. Pehle `git commit -m "..."` karo |
-| `.env` galti se push ho gaya | Turant password/keys **badlo**, phir `git rm --cached .env` → commit → push |
-| Push pe password maang raha | GitHub password nahi chalta — Settings → Developer settings → **Personal Access Token** banao |
+| `failed to push some refs` / rejected | README was created on GitHub. Run `git pull --rebase origin main` then `git push` |
+| `src refspec main does not match any` | No commit exists. Run `git commit -m "..."` first |
+| `.env` pushed by mistake | Change passwords/keys **immediately**, then `git rm --cached .env` → commit → push |
+| Push asks for password | GitHub passwords are deprecated — go to Settings → Developer settings → **Personal Access Token** |

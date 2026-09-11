@@ -1,17 +1,16 @@
 """
-Un bookings ke tickets dobara queue karo jo ban nahi paaye.
+Re-queue tickets for bookings that failed to process.
 
-Zaroorat kyu: `enqueue_ticket()` jaan-boojh ke exceptions nigal jata hai —
-Redis down ho to booking fail nahi honi chahiye. Par uska matlab ye bhi hai
-ki kabhi-kabhi job queue hi nahi hota.
+Rationale: `enqueue_ticket()` suppresses exceptions to ensure booking flows
+succeed even if Redis is unavailable. Consequently, some jobs may fail to
+enter the queue. Additionally, workers mark jobs as `failed` after exhausting
+retries.
 
-Aur worker apni saari retries ke baad `failed` mark kar deta hai.
-
-Ye script dono uthata hai. Cron se har 10 minute chalao:
+This script recovers both cases. Run via cron every 10 minutes:
     docker compose exec backend python retry_pending_tickets.py
 
-Yahi pattern hai jo `reconcile_payments.py` me hai — background kaam ka
-fast path (queue) aur safety net (ye script). Dono chahiye.
+This follows the pattern used in `reconcile_payments.py` — combining a fast
+path (queue) with a safety net (this script) for background tasks.
 """
 
 import logging
@@ -32,9 +31,8 @@ from models import (
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("retry-tickets")
 
-# Booking banne ke itni der baad bhi ticket pending hai to kuch galat hai.
-# Isse kam rakhte to abhi-abhi bani bookings ko dobara queue kar dete —
-# jabki unka job queue me hi khada hai.
+# Threshold to identify stale tickets. Prevents re-queuing active jobs
+# that are still being processed by the queue.
 STALE_AFTER = timedelta(minutes=2)
 
 
@@ -48,8 +46,8 @@ def retry() -> None:
                 Booking.status == BOOKING_CONFIRMED,
                 or_(
                     Booking.ticket_status == TICKET_FAILED,
-                    # Pending aur purani — matlab job kabhi queue hua hi nahi,
-                    # ya worker uthhane se pehle mar gaya
+                    # Pending and stale — indicates the job was never queued
+                    # or the worker crashed before processing.
                     (Booking.ticket_status == TICKET_PENDING)
                     & (Booking.created_at < cutoff),
                 ),
@@ -57,16 +55,16 @@ def retry() -> None:
         ).all()
 
         if not stuck:
-            logger.info("Sab tickets theek hain — kuch retry nahi karna")
+            logger.info("All tickets are healthy; no retries required.")
             return
 
         for booking in stuck:
             booking.ticket_status = TICKET_PENDING
             enqueue_ticket(booking.id)
-            logger.info("Re-queued booking %s (tha: %s)", booking.id, booking.ticket_status)
+            logger.info("Re-queued booking %s (previous status: %s)", booking.id, booking.ticket_status)
 
         db.commit()
-        logger.info("✅ %d tickets dobara queue kiye", len(stuck))
+        logger.info("✅ %d tickets re-queued successfully.", len(stuck))
 
     finally:
         db.close()

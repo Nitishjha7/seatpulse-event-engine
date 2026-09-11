@@ -1,30 +1,27 @@
 """
-Auth routes — signup, login, refresh, logout, Google OAuth.
+Auth routes: signup, login, refresh, logout, and Google OAuth.
 
-Google OAuth flow (Authorization Code) — kaun kis se baat karta hai:
+Google OAuth flow (Authorization Code):
 
-  1. User "Continue with Google" dabata hai
-     -> browser backend ke /google/login pe jata hai
+  1. User clicks "Continue with Google"
+     -> Browser navigates to backend /google/login
 
-  2. Backend user ko Google pe bhej deta hai (ek random `state` ke saath)
+  2. Backend redirects user to Google with a random `state` parameter.
 
-  3. User Google pe login karta hai aur permission deta hai
+  3. User authenticates with Google and grants permissions.
 
-  4. Google user ko wapas /google/callback pe bhejta hai, ek `code` ke saath
+  4. Google redirects user back to /google/callback with an authorization `code`.
 
-  5. ⭐ BACKEND wo code Google ko wapas bhejta hai (client_secret ke saath)
-     aur badle me user ki info leta hai. Ye step SERVER-TO-SERVER hai —
-     browser is beech me hai hi nahi.
+  5. ⭐ BACKEND exchanges the code for user info using `client_secret`.
+     This is a server-to-server operation; the browser is not involved.
 
-  6. Backend apna refresh cookie set karta hai aur user ko frontend pe
-     redirect kar deta hai
+  6. Backend sets a refresh cookie and redirects the user to the frontend.
 
-Ye "Authorization Code" flow hai. Purana "Implicit" flow token seedha URL me
-deta tha — wo browser history aur server logs me chhap jata tha, isliye ab
-use nahi hota.
+This "Authorization Code" flow is used instead of the legacy "Implicit" flow,
+which exposed tokens in URLs, risking leakage via browser history and server logs.
 
-client_secret sirf backend ke paas rehta hai. Frontend-only OAuth me wo
-secret browser me chala jata, jahan koi bhi use padh sakta hai.
+The `client_secret` remains exclusively on the backend. In frontend-only OAuth,
+the secret would be exposed in the browser, creating a security vulnerability.
 """
 
 import logging
@@ -72,7 +69,7 @@ GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
-# OAuth state 10 min me expire — itna time login ke liye kaafi hai
+# OAuth state expires in 10 minutes.
 STATE_TTL_SECONDS = 600
 
 
@@ -88,7 +85,7 @@ def _to_user_out(user: User) -> UserOut:
 
 
 def _issue_tokens(response: Response, user: User) -> TokenResponse:
-    """Access token JSON me, refresh token httpOnly cookie me."""
+    """Returns access token in JSON and refresh token in an httpOnly cookie."""
     set_refresh_cookie(response, create_refresh_token(user.id))
     return TokenResponse(
         access_token=create_access_token(user.id),
@@ -103,7 +100,7 @@ def _issue_tokens(response: Response, user: User) -> TokenResponse:
 
 @router.get("/config", response_model=AuthConfigOut)
 def auth_config():
-    """Frontend poochta hai: Google button dikhana hai ya nahi?"""
+    """Determines if the Google login button should be displayed."""
     return AuthConfigOut(
         google_enabled=settings.google_enabled,
         ai_search_enabled=settings.ai_search_enabled,
@@ -117,9 +114,8 @@ def register(
     response: Response,
     db: Session = Depends(get_db),
 ):
-    """Naya account. Signup ke baad seedha logged in — dobara login nahi karna padta."""
-    # Ek IP se account farm banane se rokta hai.
-    # Yahan IP hi use karna padta hai — abhi koi identity hai hi nahi.
+    """Registers a new account and logs the user in immediately."""
+    # Prevent account farming by limiting registration attempts per IP.
     enforce(response, f"register:{client_ip(request)}", REGISTER)
 
     user = User(
@@ -132,11 +128,9 @@ def register(
     try:
         db.commit()
     except IntegrityError:
-        # Email pe unique constraint hai. Pehle SELECT karke check karte to
-        # do parallel signups ke beech race reh jati — DB ko decide karne dena
-        # hi sahi hai (wahi pattern jo seat booking me use kiya).
+        # Rely on DB unique constraints to handle race conditions during concurrent signups.
         db.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, "Ye email pehle se registered hai")
+        raise HTTPException(status.HTTP_409_CONFLICT, "Email is already registered")
 
     db.refresh(user)
     return _issue_tokens(response, user)
@@ -147,49 +141,37 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
     email = payload.email.lower()
 
     # ---- Brute force protection ----
-    # ⭐ Limit EMAIL par hai, IP par nahi. Do wajah:
+    # ⭐ Rate limiting is applied to the EMAIL, not the IP:
     #
-    #   1. IP par lagate to office/college ke saare log ek doosre ki wajah
-    #      se block ho jaate (sab ek hi NAT IP share karte hain)
-    #   2. Attacker IP badal sakta hai, par jis account ko todna hai uska
-    #      email nahi badal sakta — isliye email par limit zyada targeted hai
+    #   1. IP-based limits block legitimate users sharing a NAT (e.g., offices).
+    #   2. Email-based limits are more targeted against attackers.
     #
-    # Aur ye budget sirf GALAT password par kharch hota hai (neeche dekho).
-    # Sahi login kabhi rate limit me nahi phasta.
+    # Only failed attempts consume the rate limit budget.
     bucket = f"login:{email}"
-    allowed, _, retry_after = check(bucket, LOGIN_FAIL, cost=0)   # cost=0 = sirf jhaank rahe hain
+    allowed, _, retry_after = check(bucket, LOGIN_FAIL, cost=0)
     if not allowed:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
-            "Bahut zyada galat koshishein — thodi der baad try karo",
+            "Too many failed attempts — please try again later",
             headers={"Retry-After": str(retry_after)},
         )
 
     user = db.scalar(select(User).where(User.email == email))
 
-    # ⚠️ Read ke baad transaction turant band kar do.
+    # ⚠️ Commit immediately after reading to release the DB transaction.
     #
-    # Kyu: SQLAlchemy pehli query pe transaction khol deta hai aur wo
-    # commit/close tak khuli rehti hai. Neeche bcrypt chalta hai jo
-    # jaan-boojh ke ~100ms leta hai — utni der Postgres us connection ko
-    # "idle in transaction" me pakde baitha rehta.
-    #
-    # Load test me exactly yahi dikha tha: 50 me se 50 connections
-    # "idle in transaction", sirf 1 active. Pool khatam, users ko 500.
+    # Bcrypt hashing is CPU-intensive (~100ms). Holding the transaction open
+    # during this time causes "idle in transaction" connection pool exhaustion.
     db.commit()
 
-    # ⚠️ "email nahi mila" aur "password galat" ke liye EK HI message.
-    # Alag message dete to koi bhi email daal ke pata kar leta ki kaun
-    # registered hai (user enumeration).
+    # ⚠️ Use a generic error message to prevent user enumeration.
     if user is None or not verify_password(payload.password, user.hashed_password):
-        # Sirf FAIL hone par token kharch hota hai.
-        # Isliye ek genuine user jo roz login karta hai wo kabhi limit me
-        # nahi phasta — sirf galat guesses count hote hain.
+        # Only increment failure count on incorrect credentials.
         check(bucket, LOGIN_FAIL, cost=1)
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Email ya password galat hai")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
 
     if not user.is_active:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Account disabled hai")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Account is disabled")
 
     return _issue_tokens(response, user)
 
@@ -197,47 +179,39 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
 @router.post("/refresh", response_model=TokenResponse)
 def refresh(request: Request, response: Response, db: Session = Depends(get_db)):
     """
-    Cookie se naya access token lo.
+    Refreshes the access token using the refresh cookie.
 
-    Frontend ise do jagah call karta hai:
-      - page load pe (RAM me token nahi hota, isliye)
-      - access token expire hone se thoda pehle (silent refresh)
-
-    ⭐ ROTATION: purana refresh token turant revoke, naya issue.
-    Isse token chori ka nuksaan kam hota hai — attacker use karega to
-    asli user ka token invalid ho jayega aur uska logout ho jayega,
-    jisse chori pakdi jati hai.
+    ⭐ ROTATION: Revoke the old refresh token and issue a new one.
+    This mitigates token theft; if an attacker uses a stolen token, the
+    legitimate user's session is invalidated, exposing the breach.
     """
     token = read_refresh_cookie(request)
     if not token:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Refresh token nahi mila")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Refresh token missing")
 
     payload = decode_token(token, "refresh")
     user_id, jti = int(payload["sub"]), payload["jti"]
 
-    # Redis whitelist check — logout ke baad token bekaar ho jata hai
-    # bhale hi uski JWT expiry abhi baaki ho.
+    # Redis whitelist check ensures tokens are invalidated upon logout.
     if not refresh_token_is_valid(user_id, jti):
         clear_refresh_cookie(response)
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Refresh token revoke ho chuka hai")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Refresh token has been revoked")
 
     user = db.get(User, user_id)
     if user is None or not user.is_active:
         clear_refresh_cookie(response)
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User nahi mila")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
 
-    revoke_refresh_token(user_id, jti)      # rotation
+    revoke_refresh_token(user_id, jti)
     return _issue_tokens(response, user)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(request: Request, response: Response):
     """
-    Logout — refresh token Redis se hata do aur cookie clear kar do.
+    Logs out the user by revoking the refresh token in Redis and clearing the cookie.
 
-    Access token 30 min tak technically valid rahega (JWT stateless hai).
-    Isiliye use short rakha hai. Har request pe DB check karte to wo
-    stateless ka faayda hi khatam ho jata.
+    Access tokens remain valid until their short-lived expiration.
     """
     token = read_refresh_cookie(request)
     if token:
@@ -245,14 +219,14 @@ def logout(request: Request, response: Response):
             payload = decode_token(token, "refresh")
             revoke_refresh_token(int(payload["sub"]), payload["jti"])
         except HTTPException:
-            pass    # token pehle se invalid tha — logout to phir bhi karna hai
+            pass
 
     clear_refresh_cookie(response)
 
 
 @router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
 def logout_all(response: Response, user: User = Depends(get_current_user)):
-    """Sab devices se logout."""
+    """Revokes all refresh tokens for the user across all devices."""
     revoke_all_refresh_tokens(user.id)
     clear_refresh_cookie(response)
 
@@ -268,16 +242,14 @@ def me(user: User = Depends(get_current_user)):
 
 @router.get("/google/login")
 def google_login():
-    """Step 1-2: user ko Google pe bhejo."""
+    """Step 1-2: Redirect user to Google."""
     if not settings.google_enabled:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Google login configure nahi hai — GOOGLE_CLIENT_ID/.SECRET set karo",
+            "Google login is not configured — set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET",
         )
 
-    # CSRF protection: random string banao, Redis me rakho, Google ko bhejo.
-    # Google wahi string wapas bhejega. Match na kare to matlab request
-    # humne shuru nahi ki thi — reject.
+    # CSRF protection: Store a random state in Redis to verify the callback.
     state = random_state()
     redis_client.setex(f"oauth:state:{state}", STATE_TTL_SECONDS, "1")
 
@@ -287,8 +259,6 @@ def google_login():
         "response_type": "code",
         "scope": "openid email profile",
         "state": state,
-        # Google ko batao ki refresh token chahiye (abhi use nahi kar rahe,
-        # par aage Calendar waqerah integrate karna ho to kaam aayega)
         "access_type": "offline",
         "prompt": "select_account",
     }
@@ -305,31 +275,25 @@ def google_callback(
     db: Session = Depends(get_db),
 ):
     """
-    Step 4-6: Google se code lo, user info lo, login karao.
-
-    Ye endpoint browser me khulta hai (Google redirect karta hai), isliye
-    JSON nahi — frontend pe redirect karte hain.
+    Step 4-6: Exchange code for user info and authenticate.
     """
     frontend = settings.FRONTEND_URL.rstrip("/")
 
     def fail(reason: str):
-        # Frontend URL me reason bhejte hain taki user ko kuch to pata chale
         return RedirectResponse(f"{frontend}/?auth_error={reason}")
 
     if error:
-        # User ne "Cancel" dabaya — ye normal hai, error nahi
         return fail(error)
     if not code or not state:
         return fail("missing_code")
 
-    # State verify — aur turant delete (ek baar hi use ho sakti hai)
+    # Verify and consume the state token.
     if not redis_client.delete(f"oauth:state:{state}"):
         return fail("invalid_state")
 
     try:
         with httpx.Client(timeout=10) as client:
-            # ⭐ Step 5: code ko token se badlo. Server-to-server call —
-            # client_secret yahan use hota hai aur browser tak kabhi nahi jata.
+            # ⭐ Step 5: Exchange code for token. Server-to-server call.
             token_res = client.post(
                 GOOGLE_TOKEN_URL,
                 data={
@@ -359,20 +323,18 @@ def google_callback(
     if not google_id or not email:
         return fail("no_email")
 
-    # ---- User dhoondho ya banao ----
-    # Pehle google_id se — kyunki user Google me apna email badal sakta hai,
-    # par sub kabhi nahi badalta.
+    # ---- Find or create user ----
+    # Use google_id as the primary identifier.
     user = db.scalar(select(User).where(User.google_id == google_id))
 
     if user is None:
-        # Us email se password wala account pehle se hai? To use link kar do,
-        # naya duplicate account mat banao.
+        # Link to existing email account if present.
         user = db.scalar(select(User).where(User.email == email))
 
         if user is None:
             user = User(
                 email=email,
-                hashed_password=None,        # Google user, koi password nahi
+                hashed_password=None,
                 full_name=info.get("name"),
                 google_id=google_id,
                 avatar_url=info.get("picture"),
@@ -389,9 +351,7 @@ def google_callback(
     if not user.is_active:
         return fail("account_disabled")
 
-    # Refresh cookie set karke frontend pe bhej do.
-    # Access token URL me NAHI bhej rahe — wo browser history aur server
-    # logs me chhap jata. Frontend load hote hi /refresh call karke le lega.
+    # Redirect to frontend after setting the refresh cookie.
     response = RedirectResponse(f"{frontend}/?auth=google")
     set_refresh_cookie(response, create_refresh_token(user.id))
     return response

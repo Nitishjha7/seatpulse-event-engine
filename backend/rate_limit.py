@@ -1,40 +1,37 @@
 """
 Rate limiting — Redis token bucket.
 
-⭐ Ye poore project ki kahani complete karta hai. Project ki premise hi ye
-hai ki "flash sale me bots aate hain", par ab tak unhe rokne ka koi
-intezaam nahi tha.
+The project's whole premise is "flash sales attract bots", but until this
+point nothing actually stopped them.
 
----- Algorithm kyu token bucket ----
+---- Why a token bucket ----
 
-  Fixed window (har minute me 60 requests):
-      Simple hai, par boundary pe 2x burst nikal jata hai — 59th second me
-      60 requests, aur 61st second me 60 aur. Ek second me 120.
+  Fixed window (60 requests per minute):
+      Simple, but allows a 2x burst at the boundary — 60 requests in
+      second 59 and 60 more in second 61 is 120 in one second.
 
-  Sliding window log (har request ka timestamp store karo):
-      Bilkul accurate, par har request ka timestamp rakhna padta hai.
-      Memory bahut khaata hai.
+  Sliding window log (store every request timestamp):
+      Exact, but stores a timestamp per request. Memory-hungry.
 
-  Token bucket (jo humne liya):
-      Bucket me `capacity` tokens hote hain, aur `refill` tokens/second
-      ki speed se bharte rehte hain. Har request ek token khaati hai.
+  Token bucket (chosen):
+      A bucket holds `capacity` tokens and refills at `refill` tokens per
+      second. Each request costs one token.
 
-      Faayda: user ka natural behaviour allow hota hai — 4-5 seats jaldi
-      jaldi click karna theek hai (burst) — par ek script jo 100 req/s
-      maar raha hai wo refill rate pe aake atak jata hai.
+      This permits natural user behaviour — clicking through 4-5 seats
+      quickly is fine — while a script running at 100 req/s is throttled
+      down to the refill rate.
 
----- Limit kis cheez par ----
+---- What the limit is keyed on ----
 
-  Per USER (ya email), per IP nahi.
+  Per USER (or email), never per IP.
 
-  Wajah: production me app load balancer/proxy ke peeche hoti hai, to
-  usse har request ek hi IP se aati dikhti hai (jab tak X-Forwarded-For
-  sahi se configure na ho — aur wo header spoof bhi ho sakta hai).
-  Aur NAT ke peeche poora office ek IP share karta hai — ek bot ki wajah
-  se sabko block karna galat hai.
+  In production the app sits behind a load balancer or proxy, so every
+  request appears to come from one IP unless X-Forwarded-For is configured
+  correctly — and that header can be spoofed. Behind NAT, an entire office
+  shares one IP, so blocking it for one bot punishes everyone.
 
-  Per-IP limiting **edge par** honi chahiye (nginx, Cloudflare), app me
-  nahi. App identity par limit lagata hai — wo zyada targeted hai.
+  Per-IP limiting belongs at the edge (nginx, Cloudflare). The application
+  limits on identity, which is far more targeted.
 """
 
 import time
@@ -48,13 +45,13 @@ from models import User
 from redis_client import redis_client
 
 # ---------------------------------------------------------------------------
-# Token bucket — Lua me, kyunki atomic hona zaroori hai
+# Token bucket in Lua, because the update must be atomic
 # ---------------------------------------------------------------------------
-# Python me karte to: GET tokens -> calculate -> SET tokens.
-# Un teen steps ke beech dusra request bhi wahi purane tokens padh leta,
-# aur dono ko permission mil jaati. Classic read-modify-write race.
+# In Python this would be GET tokens -> calculate -> SET tokens. Between
+# those three steps a second request reads the same stale token count and
+# both are allowed — a classic read-modify-write race.
 #
-# Lua script Redis ke andar ek unit me chalti hai — beech me kuch nahi ghus sakta.
+# A Lua script runs inside Redis as a single unit; nothing interleaves.
 _BUCKET_SCRIPT = """
 local key      = KEYS[1]
 local capacity = tonumber(ARGV[1])
@@ -66,19 +63,19 @@ local bucket = redis.call("HMGET", key, "tokens", "ts")
 local tokens = tonumber(bucket[1])
 local ts     = tonumber(bucket[2])
 
--- Pehli baar: bucket poora bhara hua milta hai
+-- First request for this key: start with a full bucket
 if tokens == nil then
     tokens = capacity
     ts = now
 end
 
--- Pichhli baar se ab tak jitna time beeta, utne tokens bhar do (capacity tak)
+-- Refill for the time elapsed since the last call, capped at capacity
 local elapsed = math.max(0, now - ts)
 tokens = math.min(capacity, tokens + elapsed * refill)
 
--- cost = 0 matlab "peek" — sirf poochh rahe hain ki bucket khali to nahi.
--- Us case me bhi kam se kam 1 token hona chahiye, warna 0 >= 0 hamesha
--- true hota aur khali bucket bhi allow ho jata. (Ye bug test me pakda gaya.)
+-- cost = 0 means "peek" — only asking whether the bucket is empty.
+-- Even then at least 1 token must be available, otherwise `0 >= 0` is
+-- always true and an empty bucket would be allowed. (Caught by a test.)
 local needed = cost
 if cost == 0 then
     needed = 1
@@ -86,17 +83,17 @@ end
 
 local allowed = 0
 if tokens >= needed then
-    tokens = tokens - cost      -- peek me cost 0 hai, to kuch ghata nahi
+    tokens = tokens - cost      -- a peek has cost 0, so nothing is spent
     allowed = 1
 end
 
 redis.call("HMSET", key, "tokens", tokens, "ts", now)
--- Bucket poora bharne me jitna time lagega, utni TTL. Uske baad key ka
--- koi matlab nahi (wo waise bhi full bucket hi hoti). Isse Redis khud
--- purani keys saaf karta rehta hai.
+-- Expire after the time it takes to refill completely. Past that point the
+-- key carries no information (it would be a full bucket anyway), so Redis
+-- cleans up idle keys on its own.
 redis.call("EXPIRE", key, math.ceil(capacity / refill) + 60)
 
--- Agla token kitni der me milega
+-- How long until the next token becomes available
 local retry_after = 0
 if allowed == 0 then
     retry_after = math.ceil((needed - tokens) / refill)
@@ -110,7 +107,7 @@ _bucket = redis_client.register_script(_BUCKET_SCRIPT)
 
 @dataclass(frozen=True)
 class Limit:
-    """capacity = ek saath kitne allowed; refill = kitne tokens/second wapas."""
+    """capacity = burst allowance; refill = tokens returned per second."""
 
     capacity: int
     refill: float
@@ -120,15 +117,15 @@ class Limit:
         return f"{self.capacity} burst, {self.refill}/s"
 
 
-# Har endpoint ka apna budget. Numbers ka logic:
+# Per-endpoint budgets. The reasoning behind each number:
 #
-#   SEAT_LOCK  — user 4-5 seats jaldi try kar sakta hai (burst 15), par
-#                sustained 5/s se zyada matlab script hai
-#   BOOKING    — booking soch ke hoti hai, itni tez nahi
-#   LOGIN_FAIL — sirf GALAT password pe consume hota hai. 5 galtiyan
-#                allowed, phir har minute me ek chance. Credential
-#                stuffing yahin mar jaati hai
-#   REGISTER   — ek IP se account farm banane se rokta hai
+#   SEAT_LOCK  — a user may try 4-5 seats quickly (burst 15), but a
+#                sustained rate above 5/s means a script
+#   BOOKING    — booking is a deliberate action, never rapid-fire
+#   LOGIN_FAIL — consumed only on a WRONG password. Five mistakes are
+#                allowed, then one attempt per minute. Credential stuffing
+#                dies here
+#   REGISTER   — stops one client farming accounts
 SEAT_LOCK = Limit(capacity=15, refill=5)
 BOOKING = Limit(capacity=5, refill=1)
 LOGIN_FAIL = Limit(capacity=5, refill=1 / 60)
@@ -137,14 +134,14 @@ REGISTER = Limit(capacity=5, refill=1 / 120)
 
 def check(bucket_key: str, limit: Limit, cost: int = 1) -> tuple[bool, int, int]:
     """
-    Ek token lene ki koshish.
+    Try to spend a token.
 
-    Returns: (allowed, tokens_bache, retry_after_seconds)
+    Returns: (allowed, tokens_remaining, retry_after_seconds)
 
-    ⚠️ Redis down ho to hum ALLOW karte hain (fail-open).
-    Fail-closed karte to Redis girte hi poori site band ho jaati.
-    Rate limiting ek protection hai, correctness nahi — aur booking ki
-    correctness ki teen alag layers pehle se hain.
+    ⚠️ If Redis is down the request is ALLOWED (fail-open). Failing closed
+    would take the whole site down with Redis. Rate limiting is a
+    protection, not a correctness guarantee — and booking correctness
+    already has three independent layers.
     """
     if not settings.RATE_LIMIT_ENABLED:
         return True, limit.capacity, 0
@@ -160,20 +157,20 @@ def check(bucket_key: str, limit: Limit, cost: int = 1) -> tuple[bool, int, int]
 
 
 def enforce(response: Response, bucket_key: str, limit: Limit) -> None:
-    """Limit check karo aur headers set karo. Limit paar ho to 429."""
+    """Check the limit and set headers. Raises 429 when exceeded."""
     allowed, remaining, retry_after = check(bucket_key, limit)
 
-    # Ye headers hamesha bhejte hain (sirf 429 pe nahi) — client dekh sakta
-    # hai ki wo limit ke kitna paas hai aur khud slow ho sakta hai.
+    # Sent on every response, not just on 429, so a client can see how
+    # close it is to the limit and slow itself down.
     response.headers["X-RateLimit-Limit"] = str(limit.capacity)
     response.headers["X-RateLimit-Remaining"] = str(remaining)
 
     if not allowed:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
-            "Bahut zyada requests — thoda ruk ke try karo",
-            # Retry-After standard header hai. Achhe clients ise padh ke
-            # itni der wait karte hain.
+            "Too many requests — please slow down and try again",
+            # Retry-After is a standard header; well-behaved clients read
+            # it and wait accordingly.
             headers={
                 "Retry-After": str(retry_after),
                 "X-RateLimit-Limit": str(limit.capacity),
@@ -184,9 +181,9 @@ def enforce(response: Response, bucket_key: str, limit: Limit) -> None:
 
 def limit_user(limit: Limit):
     """
-    Logged-in user par limit lagane wali dependency.
+    Dependency that rate-limits a logged-in user.
 
-    Use:
+    Usage:
         @router.post("/x", dependencies=[Depends(limit_user(SEAT_LOCK))])
     """
 
@@ -201,12 +198,11 @@ def limit_user(limit: Limit):
 
 def client_ip(request: Request) -> str:
     """
-    Client ka IP.
+    Best-effort client IP.
 
-    ⚠️ X-Forwarded-For **spoof ho sakta hai** jab tak koi trusted proxy
-    use set na kare. Isliye ise sirf unauthenticated endpoints par
-    best-effort ki tarah use kar rahe hain, kisi security decision ke
-    liye nahi.
+    ⚠️ X-Forwarded-For **can be spoofed** unless a trusted proxy sets it.
+    It is therefore used only as a best-effort key on unauthenticated
+    endpoints, never for a security decision.
     """
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:

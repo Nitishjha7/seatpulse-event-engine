@@ -1,33 +1,27 @@
 """
-Seat layout — venue ka naksha, aur usse seats banane ka kaam.
+Seat layout — defines venue structure and seat generation logic.
 
----- Ab tak kya tha ----
+---- Background ----
 
-Phase 10 se organizer `price_tiers` se event banata hai: "2 rows @ ₹2500,
-3 rows @ ₹1200", aur har row me utni hi seats. Simple hai, aur zyadatar
-events ke liye kaafi bhi.
+Since Phase 10, organizers have used `price_tiers` to define events: "2 rows @ ₹2500, 3 rows @ ₹1200", with uniform seats per row. This is simple and sufficient for most events.
 
-Par asli venue aisa nahi hota:
-  - beech me AISLE hoti hai (chalne ka raasta)
-  - alag SECTIONS hote hain (Ground, Balcony) — alag pricing, alag naam
-  - har row me barabar seats nahi hoti (aage kam, peeche zyada)
+However, real venues are more complex:
+  - They have AISLEs (walkways).
+  - They have distinct SECTIONS (e.g., Ground, Balcony) with unique pricing and names.
+  - Row capacities vary (fewer seats in front, more in back).
 
-Ye file wo layout describe karne aur usse seats banane ka kaam karti hai.
+This file handles the description of these layouts and the generation of seat entities.
 
----- Purana tarika HATAYA nahi ----
+---- Legacy Support ----
 
-`price_tiers` abhi bhi chalta hai. Wajah:
+`price_tiers` remains supported because:
 
-  1. 17 phases ka data usi se bana hai. Usse todna matlab purane events
-     ka seed, tests, aur demo sab todna.
-  2. Zyadatar events ko sach me layout builder ki zaroorat nahi. "5 rows,
-     10 seats, ek price" ke liye naksha banwana user ko sataana hai.
+  1. Data from 17 phases relies on it. Breaking this would invalidate existing event seeds, tests, and demos.
+  2. Most events do not require a complex layout builder. For simple "5 rows, 10 seats, one price" events, a full layout definition is unnecessary overhead.
 
-Isliye dono raaste hain, aur dono ke aakhir me WAHI seats banti hain.
-Layout wale events me bas `Event.layout` bhi bhara hota hai, taki grid
-aisles aur sections dikha sake.
+Both methods result in the same seat entities. Events using the layout builder simply populate `Event.layout` to enable grid visualization of aisles and sections.
 
----- Layout ka shape ----
+---- Layout Schema ----
 
     {
       "sections": [
@@ -42,15 +36,12 @@ aisles aur sections dikha sake.
       ]
     }
 
-`aisles_after: [4]` matlab seat 4 ke BAAD ek gap. Ye gap sirf DIKHNE ka
-hai — koi seat nahi banti, koi number skip nahi hota. Purely presentation,
-isliye layout JSON me hai, seats table me nahi.
+`aisles_after: [4]` indicates a visual gap after seat 4. This is purely for presentation; no seat is created, and no seat number is skipped. It is stored in the layout JSON, not the database.
 """
 
 from dataclasses import dataclass
 
-# Wahi limits jo price_tiers wale raaste me hain — dono ka behaviour
-# alag nahi hona chahiye.
+# Limits must match `price_tiers` to ensure consistent behavior across both methods.
 MAX_SEATS_PER_EVENT = 2000
 MAX_SECTIONS = 10
 MAX_ROWS_PER_SECTION = 40
@@ -59,7 +50,7 @@ MAX_LABEL_LEN = 4
 
 
 class LayoutError(ValueError):
-    """Layout galat hai — route ise 422 me badalta hai."""
+    """Raised when a layout is invalid; mapped to 422 by the router."""
 
 
 @dataclass(frozen=True)
@@ -72,19 +63,18 @@ class PlannedSeat:
 
 def validate(layout: dict) -> None:
     """
-    Layout theek hai ya nahi — seats banane se PEHLE.
+    Validates the layout structure before seat generation.
 
-    ⚠️ Ye server par chalta hai, chahe frontend ne kitna bhi check kiya ho.
-    Layout builder ek UI convenience hai; koi bhi seedha API ko kachra
-    bhej sakta hai.
+    ⚠️ This runs server-side regardless of frontend validation. The layout
+    builder is a UI convenience; the API must remain protected against
+    malformed input.
 
-    Alag function isliye ki ise test kar sakein bina DB ke, aur taki
-    "kya galat hai" ka jawab expansion se pehle mile — aadhi seats ban
-    jaane ke baad nahi.
+    Validation is decoupled to allow testing without a database and to
+    identify errors before partial seat expansion occurs.
     """
     sections = layout.get("sections")
     if not isinstance(sections, list) or not sections:
-        raise LayoutError("Kam se kam ek section chahiye")
+        raise LayoutError("At least one section is required")
 
     if len(sections) > MAX_SECTIONS:
         raise LayoutError(f"Max {MAX_SECTIONS} sections")
@@ -96,77 +86,72 @@ def validate(layout: dict) -> None:
     for i, section in enumerate(sections):
         name = str(section.get("name", "")).strip()
         if not name:
-            raise LayoutError(f"Section {i + 1} ka naam khali hai")
+            raise LayoutError(f"Section {i + 1} has an empty name")
         if len(name) > 40:
-            raise LayoutError(f"Section ka naam bahut lamba: {name[:20]}…")
+            raise LayoutError(f"Section name is too long: {name[:20]}…")
         if name in seen_sections:
-            raise LayoutError(f"Do sections ka naam ek hi hai: {name}")
+            raise LayoutError(f"Two sections share the same name: {name}")
         seen_sections.add(name)
 
         price = section.get("price")
         if not isinstance(price, (int, float)) or price < 0 or price > 1_000_000:
-            raise LayoutError(f"'{name}' ka price theek nahi")
+            raise LayoutError(f"'{name}' has an invalid price")
 
         rows = section.get("rows")
         if not isinstance(rows, list) or not rows:
-            raise LayoutError(f"'{name}' me kam se kam ek row chahiye")
+            raise LayoutError(f"'{name}' needs at least one row")
         if len(rows) > MAX_ROWS_PER_SECTION:
-            raise LayoutError(f"'{name}' me max {MAX_ROWS_PER_SECTION} rows")
+            raise LayoutError(f"'{name}' allows at most {MAX_ROWS_PER_SECTION} rows")
 
         for row in rows:
             label = str(row.get("label", "")).strip().upper()
             if not label:
-                raise LayoutError(f"'{name}' me ek row ka label khali hai")
+                raise LayoutError(f"'{name}' has a row with an empty label")
             if len(label) > MAX_LABEL_LEN:
-                raise LayoutError(f"Row label bahut lamba: {label}")
+                raise LayoutError(f"Row label is too long: {label}")
 
-            # ⭐ Ye sabse zaroori check hai.
+            # ⭐ Critical uniqueness check.
             #
-            # `seats` table par UNIQUE(event_id, row_label, seat_number) hai.
-            # Do sections me same row label ho to expansion IntegrityError
-            # se marega — aur wo error tab aayega jab hum 500 seats insert
-            # kar chuke honge. Yahan pakadna kahin behtar hai.
+            # The `seats` table enforces UNIQUE(event_id, row_label, seat_number).
+            # Duplicate row labels across sections would trigger an IntegrityError
+            # after partial insertion. Validating here prevents this.
             #
-            # Note: ye poore EVENT me unique hona chahiye, sirf section me
-            # nahi — kyunki constraint section ko jaanta hi nahi.
+            # Note: Labels must be unique across the entire event, not just
+            # within a section, due to database constraints.
             if label in seen_labels:
                 raise LayoutError(
-                    f"Row '{label}' do jagah hai — har row label poore event me alag hona chahiye"
+                    f"Row '{label}' appears twice — every row label must be unique across the event"
                 )
             seen_labels.add(label)
 
             count = row.get("seats")
             if not isinstance(count, int) or count < 1 or count > MAX_SEATS_PER_ROW:
-                raise LayoutError(f"Row '{label}' me 1-{MAX_SEATS_PER_ROW} seats honi chahiye")
+                raise LayoutError(f"Row '{label}' must have between 1 and {MAX_SEATS_PER_ROW} seats")
 
             aisles = row.get("aisles_after", [])
             if not isinstance(aisles, list):
-                raise LayoutError(f"Row '{label}' ka aisles_after list hona chahiye")
+                raise LayoutError(f"Row '{label}': aisles_after must be a list")
             for a in aisles:
-                # Aakhri seat ke baad aisle ka koi matlab nahi — wo row ka
-                # ant hai. Ise chupchaap ignore karne ke bajaye bata dete
-                # hain, warna organizer ko lagta rehta ki aisle bani hai.
+                # Aisle positions must be within the row range.
                 if not isinstance(a, int) or a < 1 or a >= count:
                     raise LayoutError(
-                        f"Row '{label}': aisle position {a} row ke andar honi chahiye (1-{count - 1})"
+                        f"Row '{label}': aisle position {a} must fall inside the row (1-{count - 1})"
                     )
 
             total += count
 
     if total > MAX_SEATS_PER_EVENT:
-        raise LayoutError(f"Max {MAX_SEATS_PER_EVENT} seats — is layout me {total} hain")
+        raise LayoutError(f"At most {MAX_SEATS_PER_EVENT} seats — this layout has {total}")
 
 
 def expand(layout: dict) -> list[PlannedSeat]:
     """
-    Layout se seats ki poori list banao.
+    Generates a list of seats from the layout.
 
-    ⚠️ Ye seats DB me nahi likhta — sirf list lauta deta hai.
+    ⚠️ This does not write to the database; it returns a list of objects.
 
-    Wajah: caller ise ek transaction ke andar bulk insert karta hai. Agar
-    ye khud likhta, to "aadhi seats ban gayi phir error" wali haalat
-    mumkin ho jati. Ab expansion pure hai aur poori list ek saath insert
-    hoti hai — ya sab, ya kuch nahi.
+    The caller is responsible for bulk insertion within a transaction to
+    ensure atomicity.
     """
     validate(layout)
 
@@ -183,11 +168,9 @@ def expand(layout: dict) -> list[PlannedSeat]:
 
 def summarise(layout: dict) -> dict:
     """
-    Layout ka quick summary — seats banaye bina.
+    Provides a summary of the layout without generating seats.
 
-    Organizer form isse live preview dikhata hai ("3 sections · 240 seats ·
-    ₹800–₹2500"), aur validation error bhi yahin se aata hai. Isse UI ko
-    layout ki structure samajhne ki zaroorat nahi padti.
+    Used for live UI previews and validation feedback.
     """
     try:
         validate(layout)
@@ -211,14 +194,13 @@ def summarise(layout: dict) -> dict:
 
 def from_price_tiers(tiers: list[dict], seats_per_row: int, row_labels: str) -> dict:
     """
-    Purane `price_tiers` ko layout ke shape me badlo.
+    Converts legacy `price_tiers` to the layout schema.
 
-    Isse do faayde hain:
-      - dono raaste ek hi expansion code use karte hain, do nahi
-      - purane style se bana event bhi grid me sections dikha sakta hai
+    Benefits:
+      - Unifies expansion logic.
+      - Allows legacy events to utilize grid visualization.
 
-    Har tier ek section ban jata hai. Naam automatic — organizer ne diya
-    hi nahi tha.
+    Each tier is mapped to a section with auto-generated names.
     """
     sections = []
     row_index = 0

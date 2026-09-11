@@ -6,38 +6,31 @@ const AuthContext = createContext(null)
 
 export function useAuth() {
   const ctx = useContext(AuthContext)
-  if (!ctx) throw new Error('useAuth ko AuthProvider ke andar hi use karo')
+  if (!ctx) throw new Error('useAuth must be used within an AuthProvider')
   return ctx
 }
 
 /**
- * Login state ek jagah.
+ * Centralized authentication state.
  *
- * Access token RAM me hai (api.js me), isliye page reload pe chala jata hai.
- * Isliye mount hote hi ek `refresh()` maarte hain — refresh cookie valid ho
- * to user turant wapas logged in ho jata hai, use pata bhi nahi chalta.
- *
- * Yahi mechanism Google login ke baad bhi kaam aata hai: backend cookie set
- * karke frontend pe redirect karta hai, aur ye mount-refresh session bana
- * deta hai. Token URL me bhejne ki zaroorat hi nahi padti.
+ * Access tokens are stored in memory (api.js) and cleared on page reload.
+ * We trigger a refresh on mount to restore the session via HTTP-only cookies.
+ * This also handles post-Google login redirects where the backend sets the
+ * cookie and redirects the user back to the app.
  */
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
   const [googleEnabled, setGoogleEnabled] = useState(false)
-  // AI search box dikhana hai ya nahi — server batata hai (key hai ya nahi).
-  // Frontend khud nahi jaan sakta, aur jaanna bhi nahi chahiye.
+  // Determines if the AI search feature is enabled based on server configuration.
   const [aiSearchEnabled, setAiSearchEnabled] = useState(false)
 
-  // Silent refresh ka timer
   const refreshTimer = useRef(null)
 
   /**
-   * Access token expire hone se 1 min pehle chupchap naya le lo.
+   * Silently refreshes the access token 1 minute before expiration.
    *
-   * Bina iske user 30 min baad beech kaam me 401 khata — booking karte
-   * waqt. api.js ka retry usse bacha leta hai, par ye usse pehle hi
-   * problem khatam kar deta hai.
+   * Prevents 401 errors during active sessions (e.g., while booking).
    */
   const scheduleRefresh = useCallback((expiresIn) => {
     clearTimeout(refreshTimer.current)
@@ -49,7 +42,7 @@ export function AuthProvider({ children }) {
         setUser(data.user)
         scheduleRefresh(data.expires_in)
       } else {
-        setUser(null)      // refresh token bhi mar gaya -> login page
+        setUser(null)
       }
     }, delay)
   }, [])
@@ -63,7 +56,7 @@ export function AuthProvider({ children }) {
     [scheduleRefresh],
   )
 
-  // Mount pe: Google config lo aur session restore karne ki koshish karo
+  // On mount: Fetch auth config and attempt to restore session.
   useEffect(() => {
     let cancelled = false
 
@@ -75,14 +68,14 @@ export function AuthProvider({ children }) {
           setAiSearchEnabled(config.ai_search_enabled)
         }
       } catch {
-        /* backend down hai — health card error dikha dega */
+        /* Backend unavailable; health check will handle error display */
       }
 
       try {
         const data = await api.refreshSession()
         if (data && !cancelled) applySession(data)
       } catch {
-        /* koi valid cookie nahi — normal hai, login page dikhega */
+        /* No valid session cookie; user remains unauthenticated */
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -95,7 +88,7 @@ export function AuthProvider({ children }) {
     }
   }, [applySession])
 
-  // Google callback ke baad URL saaf kar do (?auth=google / ?auth_error=...)
+  // Clean up URL parameters after Google authentication callback.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     if (params.has('auth') || params.has('auth_error')) {
@@ -122,7 +115,7 @@ export function AuthProvider({ children }) {
       try {
         await api.logout()
       } catch {
-        /* server pe fail bhi ho jaye to client side logout to karna hi hai */
+        /* Proceed with client-side logout even if server request fails */
       }
       clearTimeout(refreshTimer.current)
       api.setAccessToken(null)
@@ -130,7 +123,7 @@ export function AuthProvider({ children }) {
     },
 
     googleLogin() {
-      // Full page redirect — SPA navigation nahi. Backend Google pe bhejega.
+      // Full page redirect to initiate OAuth flow.
       window.location.href = api.googleLoginUrl()
     },
   }

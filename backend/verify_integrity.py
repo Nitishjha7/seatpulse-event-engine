@@ -1,10 +1,10 @@
 """
-Load test ke baad database ki sachai check karta hai.
+Verifies database integrity post-load testing.
 
-Locust batata hai "kitni requests, kitna time". Ye batata hai
-"data sahi raha ya nahi" — aur asli proof yahi hai.
+While Locust measures throughput and latency, this script validates data
+consistency, which is the ultimate proof of correctness.
 
-Chalao:
+Usage:
     docker compose exec backend python verify_integrity.py
 """
 
@@ -31,8 +31,8 @@ def main() -> int:
         print("INTEGRITY CHECK")
         print("=" * 62)
 
-        # ---- 1. Sabse important: ek seat, ek confirmed booking ----
-        # Agar overselling hui hoti, to yahan koi seat 2+ ke saath dikhti.
+        # ---- 1. Critical: Ensure no seat has multiple confirmed bookings ----
+        # Detects overselling by identifying seats associated with >1 confirmed booking.
         oversold = db.execute(
             select(Booking.seat_id, func.count(Booking.id).label("n"))
             .where(Booking.status == BOOKING_CONFIRMED)
@@ -41,12 +41,12 @@ def main() -> int:
         ).all()
 
         passed &= check(
-            "Koi seat do baar nahi biki",
+            "No seat has multiple confirmed bookings",
             not oversold,
             "" if not oversold else f"OVERSOLD: {[(s, n) for s, n in oversold]}",
         )
 
-        # ---- 2. booked seats == confirmed bookings ----
+        # ---- 2. Verify count of booked seats matches confirmed bookings ----
         booked_seats = db.scalar(
             select(func.count(Seat.id)).where(Seat.status == SEAT_BOOKED)
         )
@@ -54,12 +54,12 @@ def main() -> int:
             select(func.count(Booking.id)).where(Booking.status == BOOKING_CONFIRMED)
         )
         passed &= check(
-            "Seat status aur bookings match karte hain",
+            "Seat status matches confirmed booking count",
             booked_seats == confirmed,
             f"{booked_seats} booked seats, {confirmed} confirmed bookings",
         )
 
-        # ---- 3. Har booked seat ki booking honi chahiye ----
+        # ---- 3. Ensure every booked seat has a corresponding confirmed booking ----
         orphan_seats = db.scalar(
             select(func.count(Seat.id))
             .outerjoin(
@@ -69,24 +69,24 @@ def main() -> int:
             .where(Seat.status == SEAT_BOOKED, Booking.id.is_(None))
         )
         passed &= check(
-            "Koi booked seat bina booking ke nahi",
+            "No booked seat exists without a confirmed booking",
             orphan_seats == 0,
             f"{orphan_seats} orphan seats",
         )
 
-        # ---- 4. Har confirmed booking ki seat booked honi chahiye ----
+        # ---- 4. Ensure every confirmed booking maps to a booked seat ----
         bad_bookings = db.scalar(
             select(func.count(Booking.id))
             .join(Seat, Seat.id == Booking.seat_id)
             .where(Booking.status == BOOKING_CONFIRMED, Seat.status != SEAT_BOOKED)
         )
         passed &= check(
-            "Koi booking bina booked seat ke nahi",
+            "No confirmed booking exists without a booked seat",
             bad_bookings == 0,
             f"{bad_bookings} mismatched bookings",
         )
 
-        # ---- Numbers ----
+        # ---- Statistics ----
         print("-" * 62)
         rows = db.execute(
             select(Seat.status, func.count(Seat.id)).group_by(Seat.status)
@@ -96,11 +96,11 @@ def main() -> int:
         rows = db.execute(
             select(Booking.status, func.count(Booking.id)).group_by(Booking.status)
         ).all()
-        print("  Bookings: " + (", ".join(f"{s}={n}" for s, n in rows) or "koi nahi"))
+        print("  Bookings: " + (", ".join(f"{s}={n}" for s, n in rows) or "none"))
 
         print("=" * 62)
-        print("  " + ("✅ SAB PASS — koi overselling nahi hui" if passed
-                      else "❌ FAIL — upar dekho"))
+        print("  " + ("✅ PASSED — no overselling detected" if passed
+                      else "❌ FAILED — check details above"))
         print("=" * 62 + "\n")
 
         return 0 if passed else 1

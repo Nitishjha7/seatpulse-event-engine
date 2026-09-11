@@ -1,13 +1,13 @@
 """
 Database models.
 
-Ye file poore project ki neev hai. "Overselling nahi hoga" wala claim
-aakhir me in constraints par tikta hai — application code par nahi.
+This file is the foundation of the project. The "no overselling" claim relies on these
+constraints, not on application logic.
 
-Teen layer ki safety (sabse upar sabse tez, sabse neeche sabse pakka):
-  1. Redis lock          -> Phase 4 me. Fast rejection, DB tak load hi nahi aata
-  2. version column      -> optimistic locking. Do parallel update me ek fail hoga
-  3. UNIQUE constraint   -> database ka apna niyam. Code me bug ho to bhi ye nahi tootega
+Three-layer safety (fastest at the top, most robust at the bottom):
+  1. Redis lock          -> Phase 4. Fast rejection; prevents load on the DB.
+  2. version column      -> Optimistic locking. Ensures one of two parallel updates fails.
+  3. UNIQUE constraint   -> Database-level enforcement. Guaranteed integrity even if code has bugs.
 """
 
 from datetime import datetime, timezone
@@ -33,47 +33,46 @@ from database import Base
 
 
 def utcnow() -> datetime:
-    """Hamesha timezone-aware UTC. Naive datetime aage compare me dard deta hai."""
+    """Always returns timezone-aware UTC to avoid comparison issues with naive datetimes."""
     return datetime.now(timezone.utc)
 
 
-# Seat ki possible haalat
+# Seat states
 SEAT_AVAILABLE = "available"
-SEAT_LOCKED = "locked"      # kisi ne select kiya hai, abhi pay nahi kiya (Phase 4)
+SEAT_LOCKED = "locked"      # Selected by a user, pending payment (Phase 4)
 SEAT_BOOKED = "booked"
-# Payment chal raha hai — seat hold me hai par abhi bik nahi hai.
-# Alag status isliye ki dusre users ko grid me "purchase ho rahi hai" dikhe,
-# aur cleanup logic ise locked se alag treat kar sake.
+# Payment in progress — seat is held but not yet sold.
+# Separate status allows the UI to show "purchase in progress" and enables
+# specific cleanup logic distinct from standard locks.
 SEAT_PAYMENT_PENDING = "payment_pending"
-# Ek group booking ne hold kiya hai (Phase 17).
+# Held by a group booking (Phase 17).
 #
-# ⚠️ Ye `locked` se ALAG hona zaroori hai, sirf rang badalne ke liye nahi.
+# ⚠️ Must be distinct from `locked`.
 #
-# `locked` aur `payment_pending` seats ko lazy cleanup (`release_expired_locks`)
-# TTL nikalne par chupchaap `available` kar deta hai. Group seats ke saath
-# aisa karna GALAT hoga: unme se kuch logon ka **paisa kat chuka** hota hai.
-# Unhe chhodne ka matlab refund bhi hai, aur wo faisla ek background job
-# leta hai — koi read request nahi.
+# `locked` and `payment_pending` seats are cleaned up by `release_expired_locks`
+# via TTL. Group seats cannot be released this way because some users may have
+# already paid. Releasing them requires a refund, which is handled by a
+# background job, not a read request.
 #
-# Isliye lazy cleanup is status ko chhoota hi nahi.
+# Lazy cleanup ignores this status.
 SEAT_GROUP_HELD = "group_held"
 
-# Booking ki possible haalat
+# Booking states
 BOOKING_PENDING = "pending"
 BOOKING_CONFIRMED = "confirmed"
 BOOKING_CANCELLED = "cancelled"
 
-# Payment ki possible haalat
-PAYMENT_PENDING = "pending"       # session bana, user gateway pe hai
-PAYMENT_SUCCEEDED = "succeeded"   # webhook ne confirm kiya
-PAYMENT_FAILED = "failed"         # gateway ne fail bola
-PAYMENT_EXPIRED = "expired"       # window nikal gayi, koi jawab nahi aaya
+# Payment states
+PAYMENT_PENDING = "pending"       # Session created, user at gateway
+PAYMENT_SUCCEEDED = "succeeded"   # Confirmed via webhook
+PAYMENT_FAILED = "failed"         # Gateway rejection
+PAYMENT_EXPIRED = "expired"       # Window closed, no response
 PAYMENT_REFUNDED = "refunded"
 
-# Ticket generation ki haalat
-TICKET_PENDING = "pending"     # queue me hai ya ban raha hai
-TICKET_READY = "ready"         # QR + PDF ban gaye
-TICKET_FAILED = "failed"       # worker fail hua, retry ho sakta hai
+# Ticket generation states
+TICKET_PENDING = "pending"     # Queued or in progress
+TICKET_READY = "ready"         # QR + PDF generated
+TICKET_FAILED = "failed"       # Worker failure, eligible for retry
 
 ALL_TICKET_STATUSES = (TICKET_PENDING, TICKET_READY, TICKET_FAILED)
 
@@ -87,28 +86,26 @@ ALL_PAYMENT_STATUSES = (
 
 # User roles.
 #
-# Sirf teen hain aur jaan-boojh ke flat hain — koi permission matrix nahi.
-# Ek chhote system me granular permissions (event.create, event.delete...)
-# over-engineering hoti hai. Zaroorat padne par flat role se granular pe
-# jaana aasan hai; ulta bahut mushkil.
-ROLE_ATTENDEE = "attendee"     # seats dekho aur book karo
-ROLE_ORGANIZER = "organizer"   # apne events banao aur manage karo
-ROLE_ADMIN = "admin"           # poore platform ka access
+# Flat structure; granular permissions (e.g., event.create) are over-engineering
+# for this scale. It is easier to move from flat to granular later than vice versa.
+ROLE_ATTENDEE = "attendee"     # View and book seats
+ROLE_ORGANIZER = "organizer"   # Create and manage events
+ROLE_ADMIN = "admin"           # Full platform access
 
 ALL_ROLES = (ROLE_ATTENDEE, ROLE_ORGANIZER, ROLE_ADMIN)
 
 # ---- Group booking (Phase 17) ----
 
-GROUP_COLLECTING = "collecting"   # link share ho chuka, paise aa rahe hain
-GROUP_CONFIRMED = "confirmed"     # sabne pay kiya, seats pakki
-GROUP_EXPIRED = "expired"         # deadline nikal gayi, sab seats chhoot gayi
-GROUP_CANCELLED = "cancelled"     # banane wale ne khud cancel kiya
+GROUP_COLLECTING = "collecting"   # Link shared, payments in progress
+GROUP_CONFIRMED = "confirmed"     # All payments received, seats secured
+GROUP_EXPIRED = "expired"         # Deadline passed, seats released
+GROUP_CANCELLED = "cancelled"     # Cancelled by the creator
 
 ALL_GROUP_STATUSES = (GROUP_COLLECTING, GROUP_CONFIRMED, GROUP_EXPIRED, GROUP_CANCELLED)
 
 SHARE_UNPAID = "unpaid"
 SHARE_PAID = "paid"
-SHARE_REFUNDED = "refunded"       # group toota, paisa wapas
+SHARE_REFUNDED = "refunded"       # Group dissolved, payment refunded
 
 ALL_SHARE_STATUSES = (SHARE_UNPAID, SHARE_PAID, SHARE_REFUNDED)
 
@@ -128,14 +125,13 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
 
-    # nullable=True kyunki Google se aane wale users ka koi password hota hi nahi.
-    # Unke liye ye NULL rehta hai aur login sirf Google se hota hai.
+    # Nullable for Google-authenticated users who do not have a local password.
     hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     full_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
-    # Google ka "sub" claim — permanent unique id.
-    # Email par match nahi karte kyunki user Google me email badal sakta hai.
+    # Google "sub" claim — permanent unique ID.
+    # Email is not used as a primary key as it can change in Google accounts.
     google_id: Mapped[str | None] = mapped_column(
         String(64), unique=True, index=True, nullable=True
     )
@@ -149,21 +145,19 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    # ⚠️ foreign_keys explicitly dena ZAROORI hai.
+    # ⚠️ Explicit foreign_keys are required.
     #
-    # Booking me ab DO foreign keys users ko point karte hain:
-    #   user_id       -> kisne book kiya
-    #   checked_in_by -> kis staff ne gate pe scan kiya
+    # Booking has two foreign keys to User:
+    #   user_id       -> The purchaser
+    #   checked_in_by -> The staff member who scanned the ticket
     #
-    # SQLAlchemy khud tay nahi kar sakta ki "user ki bookings" kaunse
-    # column se joduon. Bina iske app start hote hi ye error deta hai:
-    #   "there are multiple foreign key paths linking the tables"
+    # SQLAlchemy requires explicit paths to resolve ambiguity.
     bookings: Mapped[list["Booking"]] = relationship(
         back_populates="user", passive_deletes=True, foreign_keys="Booking.user_id"
     )
 
     __table_args__ = (
-        # Typo se koi "Organizer" ya "orgnizer" na ban jaye — DB hi rok dega
+        # Enforce valid roles at the database level.
         CheckConstraint(
             f"role IN ({', '.join(repr(r) for r in ALL_ROLES)})",
             name="ck_user_role",
@@ -183,59 +177,44 @@ class Event(Base):
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     total_seats: Mapped[int] = mapped_column(Integer, default=0)
 
-    # Event detail page ke liye. Text (String nahi) kyunki description
-    # lambi ho sakti hai aur uspe koi length limit lagane ka matlab nahi.
+    # Text type used for descriptions to avoid length limits.
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # "Music", "Comedy", "Sports" — UI me tag ki tarah dikhta hai
+    # UI tags (e.g., "Music", "Comedy").
     category: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     # ---- Seat layout (Phase 18) ----
     #
-    # Venue ka naksha — sections, rows, aur aisles kahan hain.
+    # Venue map (sections, rows, aisles).
     #
-    # NULLABLE hai, aur ye jaan-boojh ke hai: 17 phases ke purane events
-    # me ye hai hi nahi, aur unhe todna nahi hai. NULL matlab "simple
-    # uniform grid" — frontend usi tarah render karta hai jaise pehle
-    # karta tha.
+    # Nullable to maintain compatibility with legacy events. NULL implies a
+    # simple uniform grid.
     #
-    # Ye seats ka SOURCE OF TRUTH nahi hai. Asli seats `seats` table me
-    # hain; ye sirf naksha hai jisse wo bani thi, aur jisse grid aisles
-    # aur section headings dikha sake. Dono me farak aa jaye to seats
-    # sach hain — kyunki bookings unhi se judi hain.
+    # This is not the source of truth for seats; the `seats` table is. This
+    # JSON is used for rendering the grid and aisles.
     layout: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # ---- Dynamic pricing (Phase 14) ----
-    # Off by default — purane events ka behaviour na badle.
+    # Off by default to preserve legacy event behavior.
     dynamic_pricing: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    # 0.5 = 100% bikne par price 1.5x. Linear beech me.
+    # 0.5 = 1.5x price at 100% capacity.
     demand_factor: Mapped[float] = mapped_column(Numeric(4, 2), default=0.5, nullable=False)
-    # Chahe kitna bhi demand ho, isse upar nahi jayega. Bina cap ke
-    # pricing bekaboo lagti hai aur user ka bharosa uth jata hai.
+    # Price cap to maintain user trust.
     max_surge: Mapped[float] = mapped_column(Numeric(4, 2), default=2.0, nullable=False)
 
-    # Kis organizer ka event hai.
+    # Organizer association.
     #
-    # nullable=True do wajah se:
-    #   1. Purane events (migration se pehle wale) ka koi owner nahi tha
-    #   2. Admin bina organizer ke bhi event bana sakta hai
-    #
-    # ondelete="SET NULL" — organizer ka account delete ho to event aur
-    # uski bookings nahi udni chahiye. Log ne paise diye hain.
+    # Nullable for legacy events and admin-created events.
+    # ondelete="SET NULL" ensures events persist if an organizer account is deleted.
     organizer_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    # cascade: event delete hua to uski seats bhi jaayengi.
+    # ⚠️ passive_deletes=True is required.
     #
-    # ⚠️ passive_deletes=True zaroori hai. Bina iske SQLAlchemy khud
-    # "helpful" banne ki koshish karta hai: children ko memory me load
-    # karke unke foreign keys NULL kar deta hai — jabki DB me pehle se
-    # ON DELETE CASCADE laga hua hai.
-    #
-    # Nateeja tha: `NotNullViolation: null value in column "seat_id"`.
-    # passive_deletes DB ko uska kaam karne deta hai.
+    # Without it, SQLAlchemy attempts to load children and set foreign keys to NULL,
+    # which conflicts with the database-level ON DELETE CASCADE.
     seats: Mapped[list["Seat"]] = relationship(
         back_populates="event", cascade="all, delete-orphan", passive_deletes=True
     )
@@ -246,7 +225,7 @@ class Event(Base):
 
 class Seat(Base):
     """
-    Sabse important table. Har column ki wajah neeche likhi hai.
+    Core table for seat management.
     """
 
     __tablename__ = "seats"
@@ -256,17 +235,13 @@ class Seat(Base):
         ForeignKey("events.id", ondelete="CASCADE"), index=True
     )
 
-    # Seat ka pata: "A" row, seat 12
+    # Seat coordinates
     row_label: Mapped[str] = mapped_column(String(4))
     seat_number: Mapped[int] = mapped_column(Integer)
 
-    # Kis section ki seat hai — "Ground", "Balcony" (Phase 18).
+    # Section (e.g., "Ground", "Balcony") (Phase 18).
     #
-    # Nullable: purane events me sections the hi nahi.
-    #
-    # Ye layout JSON se DUPLICATE lagta hai, par yahan hona zaroori hai —
-    # ticket PDF aur gate check-in ko section chahiye, aur unhe layout
-    # parse karwana galat hoga. Seat khud bata sake ki wo kahan hai.
+    # Nullable for legacy compatibility. Stored here for ticket/check-in access.
     section: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     price: Mapped[float] = mapped_column(Numeric(10, 2), default=0)
@@ -275,34 +250,20 @@ class Seat(Base):
     status: Mapped[str] = mapped_column(String(24), default=SEAT_AVAILABLE, index=True)
 
     # ---- OPTIMISTIC LOCKING ----
-    # Har successful update pe +1 hota hai.
+    # Incremented on every successful update.
     #
-    # Do log ek saath seat book karein:
-    #   dono version=3 padhte hain
-    #   dono UPDATE ... WHERE id=? AND version=3 chalate hain
-    #   pehla jeetta hai, version 4 ho jata hai
-    #   dusre ka WHERE ab match nahi karta -> rowcount 0 -> usko 409 milta hai
-    #
-    # Ye "optimistic" isliye hai kyunki hum row lock nahi karte (jo dheema hota
-    # hai) — bas maan ke chalte hain ki clash kam hoga, aur clash hone par
-    # detect kar lete hain.
+    # Prevents race conditions without row-level locking. If the version
+    # mismatch occurs, the update fails (rowcount 0), resulting in a 409 error.
     version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     # ---- Price lock (Phase 14) ----
     #
-    # ⚠️ Seat hold karte waqt uska price YAHIN lock ho jata hai.
-    #
-    # Bina iske: user ko ₹800 dikhta hai, wo checkout pe jata hai, beech
-    # me 5 aur seats bik jaati hain, aur usse ₹920 kat jata. Wo seedha
-    # dhokha hai.
-    #
-    # Hold chhutte hi ye NULL ho jata hai — agli baar naya (shayad zyada)
-    # price lagega.
+    # ⚠️ Locks the price at the time of hold to prevent price fluctuations
+    # during the checkout process. Cleared when the hold is released.
     held_price: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
 
-    # ---- Phase 4 (Redis) ke liye ----
-    # Asli lock Redis me hoga (fast). Ye columns sirf "kiske paas hai aur kab tak"
-    # ka record rakhte hain, taaki Redis down ho to bhi history rahe.
+    # ---- Phase 4 (Redis) integration ----
+    # Redis handles the primary lock. These columns provide a persistent record.
     locked_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
@@ -311,25 +272,21 @@ class Seat(Base):
     )
 
     event: Mapped["Event"] = relationship(back_populates="seats")
-    # passive_deletes — DB ka ON DELETE CASCADE hi sambhalega
     bookings: Mapped[list["Booking"]] = relationship(
         back_populates="seat", passive_deletes=True
     )
 
     __table_args__ = (
-        # Ek event me ek hi "A-12" ho sakti hai.
-        # Ye database ka niyam hai — seed script me bug ho ya API me,
-        # duplicate seat ban hi nahi sakti.
+        # Enforce unique seat position per event.
         UniqueConstraint("event_id", "row_label", "seat_number", name="uq_seat_position"),
 
-        # status me sirf teen value hi ja sakti hain. Typo ("Booked", "bookd")
-        # database hi reject kar dega.
+        # Enforce valid status values.
         CheckConstraint(
             f"status IN ({SEAT_STATUS_SQL})",
             name="ck_seat_status",
         ),
 
-        # Seat grid load karte waqt sabse common query: "is event ki saari seats"
+        # Index for common seat grid queries.
         Index("ix_seat_event_status", "event_id", "status"),
     )
 
@@ -350,16 +307,11 @@ class Booking(Base):
 
     # ---- Ticket (Phase 12) ----
     #
-    # Booking par columns rakhe hain, alag Ticket table nahi — ticket aur
-    # booking 1:1 hain aur ticket ki apni koi zindagi nahi hai. Agar aage
-    # re-issue history chahiye hui to tab alag table banega.
-    #
-    # QR me yahi token jata hai. Booking id NAHI — wo sequential hai, koi
-    # bhi 1,2,3 try karke doosre ka ticket bana leta. Ye random aur unique hai.
+    # Booking and Ticket are 1:1.
+    # qr_token is random and unique to prevent sequential ID guessing.
     qr_token: Mapped[str | None] = mapped_column(
         String(64), unique=True, index=True, nullable=True
     )
-    # pending -> ready | failed. Worker isse update karta hai.
     ticket_status: Mapped[str] = mapped_column(
         String(16), default=TICKET_PENDING, nullable=False
     )
@@ -369,16 +321,10 @@ class Booking(Base):
 
     # ---- Check-in (Phase 13) ----
     #
-    # NULL = abhi tak andar nahi aaya. Ye NULL-ness hi hamara guard hai:
-    # check-in ka UPDATE `WHERE checked_in_at IS NULL` se hota hai, to do
-    # gates ek saath scan karein to sirf ek jeetega.
-    #
-    # Alag boolean `is_checked_in` rakhte to "kab" wali jaankari kho jaati,
-    # aur wo dispute me sabse zaroori hoti hai.
+    # checked_in_at acts as a guard; updates only succeed if NULL.
     checked_in_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    # Kis staff member ne scan kiya — audit ke liye
     checked_in_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
@@ -393,14 +339,10 @@ class Booking(Base):
             name="ck_booking_status",
         ),
 
-        # ---- OVERSELLING KA AAKHRI TAALA ----
-        # Partial unique index: ek seat ki sirf EK confirmed booking ho sakti hai.
-        # Cancelled bookings pe ye lagu nahi hota, isliye seat cancel hone ke baad
-        # dubara bik sakti hai.
-        #
-        # Ye sabse strong guarantee hai. Redis down ho, version check me bug ho,
-        # do server ek saath chalein — Postgres phir bhi dusri confirmed booking
-        # insert nahi hone dega. IntegrityError aayega, jise hum 409 me badal denge.
+        # ---- FINAL OVERSALE PROTECTION ----
+        # Partial unique index: only one confirmed booking per seat.
+        # Cancelled bookings are ignored, allowing the seat to be re-sold.
+        # This is the ultimate guarantee against race conditions.
         Index(
             "uq_one_confirmed_booking_per_seat",
             "seat_id",
@@ -415,15 +357,10 @@ class Booking(Base):
 
 class Payment(Base):
     """
-    Ek checkout attempt.
+    Represents a checkout attempt.
 
-    Booking se ALAG table hai, kyunki dono ki zindagi alag hai:
-      - ek user do baar try kar sakta hai (pehli fail, dusri succeed)
-      - failed payment ka bhi record rehna chahiye
-      - booking tabhi banti hai jab payment succeed ho
-
-    Booking ke saath merge kar dete to "failed booking" jaisi ajeeb cheez
-    banti, aur refund/retry ka history kahin nahi bachta.
+    Separate from Booking to maintain history of failed attempts and
+    to handle retry logic correctly.
     """
 
     __tablename__ = "payments"
@@ -433,7 +370,6 @@ class Payment(Base):
     seat_id: Mapped[int] = mapped_column(ForeignKey("seats.id", ondelete="CASCADE"), index=True)
     event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), index=True)
 
-    # Payment succeed hone par bani booking. Pending/failed me NULL rehti hai.
     booking_id: Mapped[int | None] = mapped_column(
         ForeignKey("bookings.id", ondelete="SET NULL"), nullable=True
     )
@@ -444,34 +380,23 @@ class Payment(Base):
     amount: Mapped[float] = mapped_column(Numeric(10, 2))
     currency: Mapped[str] = mapped_column(String(3), default="INR")
 
-    # "stripe" | "mock" — kis provider se bani
     provider: Mapped[str] = mapped_column(String(20))
 
-    # Gateway ka apna id (Stripe ka checkout session id).
-    #
-    # UNIQUE hai — yahi webhook ko idempotent banata hai. Gateway same event
-    # do baar bhej de (aur wo at-least-once hote hain) to dusri baar insert
-    # nahi, lookup hota hai.
+    # Unique provider reference ensures webhook idempotency.
     provider_ref: Mapped[str | None] = mapped_column(
         String(255), unique=True, index=True, nullable=True
     )
 
-    # Gateway ne fail hone par kya kaha — debugging aur user ko dikhane ke liye
     failure_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # ---- Group booking (Phase 17) ----
     #
-    # Set ho to ye payment ek GROUP SHARE ka hai, akeli seat ka nahi.
-    #
-    # Farak bada hai: normal payment succeed hote hi booking ban jati hai.
-    # Group payment succeed hone par sirf "ek hissa aa gaya" hota hai —
-    # booking tabhi banti hai jab SAB hisse aa jaayein. Isliye `_fulfil()`
-    # is field ko dekh kar do bilkul alag raaste leta hai.
+    # If set, this payment is part of a group share.
+    # Booking is only created once all shares are fulfilled.
     group_share_id: Mapped[int | None] = mapped_column(
         ForeignKey("group_shares.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
-    # Is waqt tak payment complete hona chahiye. Nikal gaya to seat wapas.
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -487,13 +412,8 @@ class Payment(Base):
             f"status IN ({', '.join(repr(s) for s in ALL_PAYMENT_STATUSES)})",
             name="ck_payment_status",
         ),
-        # ⭐ Ek seat ka ek hi PENDING payment ho sakta hai.
-        #
-        # Partial unique index — wahi pattern jo bookings pe hai. Isse do
-        # log ek saath usi seat ka checkout shuru nahi kar sakte, aur ek
-        # hi user do tab me do session nahi bana sakta.
-        # Succeeded/failed/expired par ye lagu nahi hota, isliye retry
-        # aur dobara bikna dono chalte hain.
+        # ⭐ Partial unique index: one pending payment per seat.
+        # Prevents multiple checkout sessions for the same seat.
         Index(
             "uq_one_pending_payment_per_seat",
             "seat_id",
@@ -509,20 +429,10 @@ class Payment(Base):
 
 class GroupBooking(Base):
     """
-    Ek "sab saath baithenge" wali booking — N seats, N alag payments.
+    Represents a group booking (N seats, N payments).
 
-    ---- Ye alag table kyu hai ----
-
-    Seedha rasta ye lagta hai ki N normal bookings bana do aur unhe ek
-    `group_id` se jod do. Wo galat hai, kyunki booking ka matlab hi hai
-    "seat pakki ho gayi". Group me seat kisi ki bhi pakki nahi hoti jab
-    tak SABKA paisa na aa jaye.
-
-    To beech ki ek haalat chahiye: seats roki hui hain, kuch paise aa
-    chuke hain, faisla abhi baaki hai. Wahi ye table hai.
-
-    Bookings tabhi banti hain jab group `confirmed` hota hai — aur tab ek
-    saath sabki.
+    Seats are held until all payments are received. Bookings are created
+    atomically once the group is confirmed.
     """
 
     __tablename__ = "group_bookings"
@@ -539,20 +449,10 @@ class GroupBooking(Base):
         String(16), default=GROUP_COLLECTING, nullable=False, index=True
     )
 
-    # Link me jaane wala secret.
-    #
-    # Group id (1, 2, 3...) NAHI bhej sakte — koi bhi id badal ke doosre
-    # logon ke group me ghus jata. Wahi galti Phase 12 me ticket QR ke
-    # saath ho sakti thi; wahi hal yahan bhi hai.
+    # Secret token for group access.
     share_token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
 
-    # Iske baad group toot jata hai aur seats chhoot jaati hain.
-    #
-    # Ye Redis TTL se NAHI aata (jaise single seat hold aata hai). 30 minute
-    # ka hold Redis key pe rakhna galat hai: expire hone par Redis chupchaap
-    # key uda deta hai aur kisi ko refund karne ka mauka hi nahi milta.
-    # Yahan expiry ek FAISLA hai, isliye database me hai aur ek job ise
-    # uthata hai.
+    # Expiry is a business decision, managed by a background job rather than Redis TTL.
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
     created_at: Mapped[datetime] = mapped_column(
@@ -578,9 +478,7 @@ class GroupBooking(Base):
 
 class GroupShare(Base):
     """
-    Group ki ek seat + uska hissa.
-
-    Har share ek banda claim karta hai aur apna paisa khud deta hai.
+    Represents a single seat share within a group.
     """
 
     __tablename__ = "group_shares"
@@ -593,10 +491,7 @@ class GroupShare(Base):
         ForeignKey("seats.id", ondelete="CASCADE"), index=True
     )
 
-    # Kisne ye seat li. NULL = abhi khaali hai, koi bhi le sakta hai.
-    #
-    # Nullable isliye ki link banate waqt hume pata hi nahi hota kaun-kaun
-    # aayega. Banane wala pehla share khud le leta hai.
+    # Nullable: seat is unassigned until claimed.
     claimed_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -604,7 +499,6 @@ class GroupShare(Base):
     payment_id: Mapped[int | None] = mapped_column(
         ForeignKey("payments.id", ondelete="SET NULL"), nullable=True
     )
-    # Group confirm hone par bani booking
     booking_id: Mapped[int | None] = mapped_column(
         ForeignKey("bookings.id", ondelete="SET NULL"), nullable=True
     )
@@ -612,16 +506,14 @@ class GroupShare(Base):
     status: Mapped[str] = mapped_column(
         String(16), default=SHARE_UNPAID, nullable=False, index=True
     )
-    # Amount yahan FREEZE hota hai, seat se har baar padha nahi jata.
-    # Wahi wajah jo Phase 14 me thi: quote ek waada hai. Aur group me to
-    # 30 minute lag sakte hain, jisme surge kaafi badh sakta hai.
+    # Amount is frozen here to protect against price surges during the group collection window.
     amount: Mapped[float] = mapped_column(Numeric(10, 2))
 
     group: Mapped["GroupBooking"] = relationship(back_populates="shares")
     seat: Mapped["Seat"] = relationship()
 
     __table_args__ = (
-        # Ek seat ek group me sirf ek baar
+        # Ensure one seat per group.
         UniqueConstraint("group_id", "seat_id", name="uq_group_seat"),
         CheckConstraint(
             "status IN (" + ", ".join(repr(x) for x in ALL_SHARE_STATUSES) + ")",

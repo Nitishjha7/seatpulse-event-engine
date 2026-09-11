@@ -1,15 +1,14 @@
 """
-Bookings ke routes.
+Booking routes.
 
-⭐ Teeno defence layers yahan ek saath chal rahi hain:
+⭐ Three-layer defense strategy:
 
-  layer 1 — Redis lock         (fast rejection, DB tak load hi nahi aata)
-  layer 2 — optimistic locking (version column)
-  layer 3 — database constraint (partial unique index)
+  layer 1 — Redis lock         (fast rejection, prevents DB load)
+  layer 2 — Optimistic locking (version column)
+  layer 3 — Database constraint (partial unique index)
 
-Notice karna: Phase 3 ka code layer 2 aur 3 ke saath bhi SAHI tha.
-Redis ne correctness nahi badli — usne sirf speed di. Isi baat par
-interview me sabse zyada baat hoti hai.
+Note: Phase 3 logic was correct even without layer 1. Redis improves
+performance, not correctness. This is a key architectural discussion point.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -60,24 +59,24 @@ def create_booking(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
     # ---- Benchmark-only knobs (Phase 15) ----
-    # BENCHMARK_MODE off ho to ye dono chupchaap ignore ho jaate hain.
-    # include_in_schema=False -> public API docs me dikhte bhi nahi.
+    # Ignored unless BENCHMARK_MODE is enabled.
+    # include_in_schema=False hides these from public API documentation.
     strategy: str | None = Query(None, include_in_schema=False),
     redis_lock: str | None = Query(None, include_in_schema=False),
 ):
     """
-    Seat book karo.
+    Book a seat.
 
-    409 Conflict tab milta hai jab koi aur pehle book kar chuka ho.
-    Ye error normal hai — flash sale me yahi sabse zyada return hoga.
+    Returns 409 Conflict if the seat is already taken. This is expected
+    behavior during high-traffic flash sales.
 
-    User token se aata hai. Pehle body me `user_id` jata tha — koi bhi
-    kisi aur ke naam booking kar sakta tha.
+    User identity is derived from the token. Previously, user_id was
+    accepted in the body, which posed a security risk.
 
     ---- Idempotency ----
-    Client `Idempotency-Key` header bhej sakta hai. Wahi key dubara aayi
-    to naya kaam nahi hota — pehla jawab wapas milta hai. Double-click
-    aur network retry dono isse safe ho jaate hain.
+    Clients can provide an `Idempotency-Key` header. Subsequent requests
+    with the same key return the cached response, preventing issues
+    from double-clicks or network retries.
     """
     knobs = _benchmark_knobs(strategy, redis_lock)
 
@@ -89,8 +88,7 @@ def create_booking(
     try:
         booking = _perform_booking(payload, db, user, **knobs)
     except Exception:
-        # Fail hua to idempotency claim chhod do — warna user usi key se
-        # 60 second tak retry hi nahi kar payega
+        # Release idempotency claim on failure to allow immediate retries.
         idem.abort()
         raise
 
@@ -101,12 +99,10 @@ def create_booking(
 
 def _benchmark_knobs(strategy: str | None, redis_lock: str | None) -> dict:
     """
-    Benchmark ke query params padho — sirf tab jab BENCHMARK_MODE on ho.
+    Parses benchmark query parameters.
 
-    Off hone par params CHUPCHAP ignore ho jaate hain, error nahi milta.
-    Wajah: ye internal measurement knobs hain, public API ka hissa nahi.
-    Inke liye 400 dena API surface me ek aisi cheez ka zikr kar dega jo
-    honi hi nahi chahiye.
+    These are silently ignored if BENCHMARK_MODE is disabled to avoid
+    exposing internal measurement tools in the public API surface.
     """
     if not settings.BENCHMARK_MODE:
         return {}
@@ -125,92 +121,77 @@ def _perform_booking(
     use_redis_lock: bool = True,
 ) -> Booking:
     """
-    Asli booking logic — teeno defence layers.
+    Core booking logic implementing the three-layer defense.
 
-    Alag function isliye taki upar idempotency ka wrapper saaf dikhe aur
-    ye logic bilkul waisa ka waisa rahe jaisa Phase 4 me tha.
+    Separated to maintain a clean idempotency wrapper and preserve
+    the logic structure established in Phase 4.
 
-    `strategy` aur `use_redis_lock` sirf benchmark ke liye hain (Phase 15)
-    aur default production wali values par hain. ZAROORI: benchmark isi
-    function ko chalata hai, koi alag copy nahi — warna hum us cheez ko
-    maap rahe hote jo asal me deploy hoti hi nahi.
+    `strategy` and `use_redis_lock` are for benchmarking (Phase 15).
+    Benchmarks must execute this function directly to ensure production
+    parity.
     """
     seat = db.get(Seat, payload.seat_id)
     if seat is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Seat nahi mili")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Seat not found")
 
     if seat.status == SEAT_BOOKED:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Seat pehle se booked hai")
+        raise HTTPException(status.HTTP_409_CONFLICT, "Seat already booked")
 
     # ---- LAYER 1: REDIS LOCK ----
-    # Do raaste yahan aate hain:
-    #   a) User ne pehle seat select ki thi -> lock uske paas hai (normal UI flow)
-    #   b) Koi seedha POST /api/bookings maar raha hai -> yahin lock lete hain
+    # Handles two scenarios:
+    #   a) User previously selected the seat (lock already held).
+    #   b) Direct POST request (lock acquired here).
     #
-    # Dono case me booking Redis lock ke bina aage nahi badhti. Isliye
-    # 5000 parallel requests me se 4999 yahin ruk jaati hain — unka
-    # database se koi wasta hi nahi padta.
+    # Redis prevents database contention by rejecting unauthorized
+    # requests before they reach the DB.
     lock_owner = get_lock_owner(payload.seat_id) if use_redis_lock else None
     lock_taken_here = False
 
     if not use_redis_lock:
-        # Benchmark: Redis layer hata di gayi hai, taki neeche wali DB
-        # strategy pe POORA load pade. Redis lagi ho to 499 requests
-        # wahin ruk jaati hain aur DB ko contention dikhta hi nahi —
-        # matlab dono strategies ek jaisi lagti hain.
+        # Benchmark: Redis layer disabled to stress-test DB locking strategies.
         pass
     elif lock_owner is None:
         if not acquire_seat_lock(payload.seat_id, user.id):
             raise HTTPException(
-                status.HTTP_409_CONFLICT, "Seat abhi kisi aur ne hold kar li"
+                status.HTTP_409_CONFLICT, "Seat currently held by another user"
             )
         lock_taken_here = True
     elif lock_owner != user.id:
         raise HTTPException(
-            status.HTTP_409_CONFLICT, "Ye seat kisi aur ke paas hold hai"
+            status.HTTP_409_CONFLICT, "Seat is held by another user"
         )
 
-    # Seat locked hai par lock kisi aur ka — upar handle ho chuka.
-    # Yahan tak aaye matlab seat available hai ya HAMARE lock me hai.
     if seat.status not in (SEAT_AVAILABLE, SEAT_LOCKED):
         if lock_taken_here:
             release_seat_lock(payload.seat_id, user.id)
         raise HTTPException(
-            status.HTTP_409_CONFLICT, f"Seat available nahi hai (status: {seat.status})"
+            status.HTTP_409_CONFLICT, f"Seat not available (status: {seat.status})"
         )
 
     expected_version = seat.version
-    # Booking ka amount = jo user ko QUOTE kiya gaya tha.
-    #
-    # `price_now` hold ka locked price lautata hai agar hold hai, warna
-    # abhi ka dynamic price. Kabhi bhi seedha `seat.price` mat lo — wo BASE
-    # hai, aur dynamic pricing on ho to user ne wo price kabhi dekha hi
-    # nahi tha.
+    # Use `price_now` to retrieve the locked price or current dynamic price.
+    # Never use `seat.price` directly as it is the base price.
     amount = price_now(db, seat)
     event_id = seat.event_id
 
     # ---- LAYER 2: DATABASE-LEVEL CLAIM ----
     #
-    # Production me hamesha OPTIMISTIC. Pessimistic sirf benchmark me
-    # (Phase 15) — dono ka code `locking_strategies.py` me hai, saath me
-    # yeh bhi ki farak kya padta hai.
+    # Optimistic locking is default for production. Pessimistic is
+    # reserved for benchmarks (Phase 15).
     #
-    # Optimistic kyu default hai: haarne wala TURANT nikal jata hai.
-    # Pessimistic me wo qataar me lagta hai aur apna DB connection pakde
-    # rakhta hai — 500 users ek seat pe hon to 40 connections ka pool
-    # minton me khatam ho jata hai.
+    # Optimistic is preferred because it avoids holding DB connections
+    # during contention, preventing connection pool exhaustion.
     if strategy == PESSIMISTIC:
         claim = claim_pessimistic(db, payload.seat_id)
     else:
         claim = claim_optimistic(db, payload.seat_id, expected_version)
 
     if not claim.won:
-        # Koi aur jeet gaya.
         db.rollback()
         if lock_taken_here:
             release_seat_lock(payload.seat_id, user.id)
         raise HTTPException(
-            status.HTTP_409_CONFLICT, "Seat abhi abhi kisi aur ne book kar li"
+            status.HTTP_409_CONFLICT, "Seat was just booked by another user"
         )
 
     booking = Booking(
@@ -223,9 +204,8 @@ def _perform_booking(
     db.add(booking)
 
     # ---- LAYER 3: DATABASE CONSTRAINT ----
-    # Upar wala UPDATE 99.9% case pakad leta hai. Ye aakhri jaal hai —
-    # partial unique index ek seat ki dusri confirmed booking insert hone hi
-    # nahi dega, chahe upar ka logic kisi bug ki wajah se fail ho jaye.
+    # Final safety net: the partial unique index prevents duplicate
+    # confirmed bookings even if application logic fails.
     try:
         db.commit()
     except IntegrityError:
@@ -233,18 +213,15 @@ def _perform_booking(
         if lock_taken_here:
             release_seat_lock(payload.seat_id, user.id)
         raise HTTPException(
-            status.HTTP_409_CONFLICT, "Is seat ki booking pehle se maujood hai"
+            status.HTTP_409_CONFLICT, "Booking for this seat already exists"
         )
 
-    # Booking ho gayi — ab lock ki zaroorat nahi. Seat permanently 'booked' hai,
-    # Redis me key pade rehne ka koi faayda nahi.
     release_seat_lock(payload.seat_id, user.id)
 
-    # Sab clients ko batao — unke grid me seat turant laal ho jayegi
+    # Notify clients to update UI grid.
     broadcast_seat_update(db, payload.seat_id, "booked")
 
-    # Ticket background me banega — QR + PDF + email mila ke 2-3 second
-    # lagta hai, aur user ko utna wait karana galat hai
+    # Offload ticket generation to background worker.
     enqueue_ticket(booking.id)
 
     db.refresh(booking)
@@ -257,10 +234,7 @@ def list_bookings(
     user: User = Depends(get_current_user),
 ):
     """
-    MERI bookings, nayi pehle.
-
-    Pehle `?user_id=` query param leta tha — matlab koi bhi kisi ki
-    bookings dekh sakta tha. Ab sirf apni.
+    Retrieve user's bookings, sorted by recency.
     """
     rows = db.execute(
         select(Booking, Seat, Event)
@@ -294,31 +268,25 @@ def cancel_booking(
     user: User = Depends(get_current_user),
 ):
     """
-    Apni booking cancel karo aur seat wapas available karo.
+    Cancel booking and release seat.
 
-    Note: booking row delete nahi kar rahe, sirf status badal rahe hain.
-    Partial unique index sirf 'confirmed' par lagta hai, isliye cancelled
-    hone ke baad wahi seat dubara bik sakti hai — aur record bhi bacha rehta hai.
+    The record is preserved for history; only the status is updated.
     """
     booking = db.get(Booking, booking_id)
     if booking is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking nahi mili")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking not found")
 
-    # ⚠️ Ownership check. Bina iske koi bhi /api/bookings/1, /2, /3 chala ke
-    # dusron ki bookings cancel kar deta (IDOR — sabse common API bug).
-    #
-    # 404 de rahe hain, 403 nahi: 403 se attacker ko pata chal jata ki wo
-    # booking exist karti hai. 404 kuch nahi batata.
+    # ⚠️ Ownership check prevents IDOR vulnerabilities.
+    # Returns 404 instead of 403 to avoid leaking existence of the booking.
     if booking.user_id != user.id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking nahi mili")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking not found")
 
     if booking.status == BOOKING_CANCELLED:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Booking pehle se cancelled hai")
+        raise HTTPException(status.HTTP_409_CONFLICT, "Booking already cancelled")
 
     booking.status = BOOKING_CANCELLED
 
-    # Seat wapas available. Yahan bhi version badhana zaroori hai — koi aur
-    # request jo purana version leke baithi hai, wo ab galat data pe kaam na kare.
+    # Increment version to ensure consistency for concurrent requests.
     db.execute(
         update(Seat)
         .where(Seat.id == booking.seat_id)
@@ -328,7 +296,6 @@ def cancel_booking(
 
     db.commit()
 
-    # Seat wapas available — sab clients ke grid me turant hari ho jayegi
     broadcast_seat_update(db, booking.seat_id, "cancelled")
 
     db.refresh(booking)
@@ -342,39 +309,31 @@ def download_ticket(
     user: User = Depends(get_current_user),
 ):
     """
-    Ticket PDF download.
+    Download ticket PDF.
 
-    ⚠️ Ownership check zaroori hai — bina iske koi bhi /1/ticket, /2/ticket
-    chala ke doosron ki tickets (QR ke saath!) download kar leta. Wo seedha
-    free entry ban jata.
-
-    404 dete hain, 403 nahi — attacker ko ye bhi na pata chale ki booking
-    exist karti hai.
+    ⚠️ Ownership check prevents unauthorized access to tickets.
     """
     booking = db.get(Booking, booking_id)
     if booking is None or booking.user_id != user.id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking nahi mili")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking not found")
 
     if booking.status != BOOKING_CONFIRMED:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Cancelled booking ka ticket nahi hota")
+        raise HTTPException(status.HTTP_409_CONFLICT, "Cannot download ticket for cancelled booking")
 
     if booking.ticket_status != TICKET_READY:
-        # 409 (404 nahi) — booking to hai, bas ticket abhi ban raha hai.
-        # Client isse "thodi der baad try karo" me badal sakta hai.
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            f"Ticket abhi ready nahi hai (status: {booking.ticket_status})",
+            f"Ticket not ready (status: {booking.ticket_status})",
         )
 
     path = ticket_path(booking.id)
     if not path.exists():
-        # DB kehta hai ready, par file gayab — worker ke baad volume saaf
-        # ho gaya hoga. Dobara bana do.
+        # Re-queue if file is missing from storage.
         booking.ticket_status = TICKET_PENDING
         db.commit()
         enqueue_ticket(booking.id)
         raise HTTPException(
-            status.HTTP_409_CONFLICT, "Ticket file nahi mili — dobara bana rahe hain"
+            status.HTTP_409_CONFLICT, "Ticket file missing — regenerating"
         )
 
     return FileResponse(
@@ -390,13 +349,13 @@ def retry_ticket(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Ticket generation fail hui thi — dobara try karo."""
+    """Retry failed ticket generation."""
     booking = db.get(Booking, booking_id)
     if booking is None or booking.user_id != user.id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking nahi mili")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking not found")
 
     if booking.ticket_status == TICKET_READY:
-        return booking      # kuch karne ki zaroorat nahi
+        return booking
 
     booking.ticket_status = TICKET_PENDING
     db.commit()

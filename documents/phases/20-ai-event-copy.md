@@ -1,17 +1,15 @@
 # Phase 20 — AI Event Copy
 
-> Organizer ek line likhta hai — "Arijit Singh concert, DY Patil Mumbai,
-> December" — aur listing ka draft ban jata hai.
+> An organizer writes one line — "Arijit Singh concert, DY Patil Mumbai, December" — and a listing draft is generated.
 >
-> Par is phase ka asli sawaal ye hai: **AI ko kya likhne dena chahiye,
-> aur kya nahi.**
+> But the real question of this phase is: **what should the AI be allowed to write, and what should it not.**
 
 ---
 
-## ⚠️ Pehle: poster generator NAHI bana
+## ⚠️ First: I did NOT build a poster generator
 
-README ka original plan tha "AI event copy **+ poster generator**".
-Poster wala hissa **nahi banaya**, aur wajah likh dena zaroori hai:
+The original README plan included "AI event copy **+ poster generator**".
+I did **not** build the poster part, and it is important to document why:
 
 ```
 gemini-3.1-flash-image        429
@@ -23,40 +21,31 @@ gemini-3-pro-image            429
 "You exceeded your current quota"
 ```
 
-Free tier me image generation ka quota hai hi nahi. Text models usi key
-se bilkul theek chal rahe hain.
+The free tier has no quota for image generation. Text models are working perfectly with the same key.
 
-To do raaste the: feature likh ke "ban gaya" bol dena (jo main verify hi
-nahi kar sakta), ya na banana aur wajah likhna. **Doosra chuna.** Ek
-aisa feature jo maine kabhi chalte hue dekha hi nahi, wo README me jhooth
-hai — aur interview me wahi sabse pehle poocha jata hai.
+There were two paths: claim the feature is "built" (which I cannot verify), or not build it and explain why. **I chose the latter.** A feature I have never seen working is a lie in the README — and that is the first thing asked in an interview.
 
-Paid tier par ye jodna aasan hoga: wahi `httpx` call, response me
-`inlineData` (base64 image) aati hai, aur usse ek volume me store karna
-hota. Par abhi wo **nahi** hai.
+Adding this in a paid tier would be easy: the same `httpx` call, the response contains `inlineData` (base64 image), and it would need to be stored in a volume. But for now, it is **not** there.
 
 ---
 
-## ⭐ Asli design faisla: AI ko publish button tak nahi pahunchne dete
+## ⭐ Key design decision: Do not let AI reach the publish button
 
 ```
-brief  ->  Gemini  ->  DRAFT  ->  form ke fields  ->  organizer edit  ->  publish
+brief  ->  Gemini  ->  DRAFT  ->  form fields  ->  organizer edit  ->  publish
                                                               ^
-                                                    yahan insaan hai
+                                                    human is here
 ```
 
-Endpoint kuch **save nahi karta**. Wo sirf ek suggestion lautata hai jo
-organizer ke form me bhar jati hai.
+The endpoint **saves nothing**. It only returns a suggestion that populates the organizer's form.
 
-**Wajah cosmetic nahi hai:**
+**The reason is not cosmetic:**
 
-> Event ka description ticket kharidne wale ke liye ek **waada** hai.
+> An event description is a **promise** to the ticket buyer.
 >
-> Model "featuring special guests" ya "3-hour show with intermission"
-> gadh de, aur wo bina padhe publish ho jaye — to jhooth attendee tak
-> pahunch jata hai. Aur uska zimmedar organizer hota hai, AI nahi.
+> If the model invents "featuring special guests" or "3-hour show with intermission," and it is published without being read, a lie reaches the attendee. The organizer is responsible for that, not the AI.
 
-Test isi ko pin karta hai:
+The test pins this down:
 
 ```python
 def test_draft_does_not_create_an_event(...):
@@ -68,27 +57,24 @@ def test_draft_does_not_create_an_event(...):
 
 ---
 
-## ⭐⭐ Prompt ka sabse zaroori hissa: facts mat gadho
+## ⭐⭐ The most important part of the prompt: Do not invent facts
 
 ```
-⚠️ SABSE ZAROORI NIYAM: koi bhi fact MAT gadho.
+⚠️ MOST IMPORTANT RULE: Do NOT invent any facts.
 
-Sirf wahi cheezein likho jo user ne batayi hain. Ye sab MANA hai:
+Only write what the user has provided. All of the following are FORBIDDEN:
 - lineup, guest artists, opening acts
-- show ki duration, interval, timing
+- show duration, interval, timing
 - ticket price, offers, discounts
-- ratings, "sold out", "trending", ya koi bhi ginti
+- ratings, "sold out", "trending", or any counts
 - awards, past shows, reviews
 ```
 
-Ye list yun hi nahi banayi — ye **wahi cheezein hain jo ek marketing LLM
-sabse pehle gadhta hai**, kyunki wo "achhi listing" jaisi lagti hain.
+This list was not created randomly — these are **the exact things a marketing LLM invents first**, because they make for a "good listing."
 
-Aur ye poore project ke us stance se judta hai jo shuru se hai: README me
-kabhi "50K+ users" ya "4.8★ 12.5K reviews" nahi likha, kyunki wo sach
-nahi tha. Ab wahi niyam model par bhi lagta hai.
+This aligns with the project's stance from the beginning: the README never claimed "50K+ users" or "4.8★ 12.5K reviews" because it wasn't true. Now, the same rule applies to the model.
 
-### Chal ke dekha
+### Testing it
 
 ```
 BRIEF: Arijit Singh concert, DY Patil Stadium Mumbai, December
@@ -104,84 +90,73 @@ BRIEF: Arijit Singh concert, DY Patil Stadium Mumbai, December
 }
 ```
 
-Koi lineup nahi, koi duration nahi, koi price nahi, koi rating nahi.
-"Soulful melodies" generic marketing hai — wo factual claim nahi hai.
+No lineup, no duration, no price, no rating. "Soulful melodies" is generic marketing — it is not a factual claim.
 
 ---
 
-## `temperature` — yahan 0.8, search me 0
+## `temperature` — 0.8 here, 0 for search
 
-Ye [Phase 19](19-nl-seat-search.md) se ulta hai, aur jaan-boojh ke:
+This is the opposite of [Phase 19](19-nl-seat-search.md), and intentionally so:
 
-| | temperature | Kyu |
+| | temperature | Why |
 |---|---|---|
-| Search parser | **0** | Ek input ka hamesha ek hi jawab aana chahiye. Randomness wahan bug hai. |
-| Copy draft | **0.8** | Do baar chalane par alag options milna **faayda** hai. Organizer ko pasand na aaye to dobara dabaye. |
+| Search parser | **0** | One input must always yield the same answer. Randomness is a bug there. |
+| Copy draft | **0.8** | Getting different options on two runs is a **benefit**. If the organizer doesn't like it, they can try again. |
 
-Ek hi `ai.py` me dono hain, aur unke reasons alag likhe hain — warna kal
-koi "consistency" ke naam par dono ko ek jaisa kar dega.
+Both are in the same `ai.py`, with their reasons documented separately — otherwise, someone might change both to be the same in the name of "consistency."
 
 ---
 
-## Ek chhota bug jo test karke mila
+## A small bug found during testing
 
-Pehla output aisa aaya:
+The first output was:
 
 ```
 "description": "Arijit Singh ke saath ek shaam ka anand lein. Yeh live
   concert sangeet premion ke liye ek vishesh avsar hai..."
 ```
 
-Brief **English** me thi, jawab **Hindi transliteration** me aaya.
+The brief was in **English**, but the response came in **Hindi transliteration**.
 
-Wajah: mera system prompt Hinglish me likha hai, to model ne usi ko match
-kar liya. Ye listing public hai — organizer ne jis bhasha me socha hai,
-uske audience bhi wahi padhte hain.
+Reason: My system prompt was written in Hinglish, so the model matched that. This listing is public — the audience reads the language the organizer thinks in.
 
-Fix prompt me:
+Fix in the prompt:
 
 ```
-- ⚠️ Brief JIS BHASHA me hai, usi bhasha me likho.
+- ⚠️ Write in the SAME LANGUAGE as the brief.
 ```
 
-> Phase 19 ki tarah yahan bhi: LLM feature ka fix aksar **prompt me** hota
-> hai, code me nahi. Aur wo galti sirf asli input chala ke dikhti hai.
+> Like Phase 19: an LLM feature fix is often in the **prompt**, not the code. And that error only appears when running real input.
 
 ---
 
-## Graceful degradation — wahi purana pattern
+## Graceful degradation — the same old pattern
 
 ```jsx
 if (!aiSearchEnabled) return null
 ```
 
-Key na ho to draft box dikhta hi nahi, aur form haath se bharna poori
-tarah chalta hai. Wahi pattern jo Google login
-([Phase 7](07-auth-google-oauth.md)), Stripe ([Phase 11](11-payments.md))
-aur NL search ([Phase 19](19-nl-seat-search.md)) me hai.
+If the key is missing, the draft box does not appear, and filling the form manually works perfectly. This is the same pattern used for Google login ([Phase 7](07-auth-google-oauth.md)), Stripe ([Phase 11](11-payments.md)), and NL search ([Phase 19](19-nl-seat-search.md)).
 
-Server par bhi saaf jawab, `500` nahi:
+Clear responses on the server, not `500`:
 
-| Haalat | Status | Kyu |
+| Status | Code | Why |
 |---|---|---|
-| Key nahi hai | `503` | Server ka intezaam adhoora hai — client ki galti nahi |
-| Model fail hua | `502` | Upstream ki dikkat. Organizer form haath se bhar sakta hai |
-| Brief chhoti/badi | `422` | Client ki galti |
-| Attendee ne maanga | `403` | Wo event bana hi nahi sakta, to draft bhi nahi |
+| Key missing | `503` | Server setup is incomplete — not the client's fault |
+| Model failure | `502` | Upstream issue. Organizer can fill the form manually |
+| Brief too short/long | `422` | Client error |
+| Attendee requested | `403` | They cannot create an event, so they cannot draft one |
 
 ---
 
-## UI me ek line jo zaroori hai
+## A necessary line in the UI
 
-Draft bharne ke baad:
+After filling the draft:
 
-> **Draft neeche bhar diya hai — publish se pehle padh lo.**
-> Jo likha hai wo tumhare naam se attendees tak jayega.
+> **Draft has been filled below — read it before publishing.**
+> What is written will go to attendees under your name.
 
-Ye sirf politeness nahi hai. Organizer ko pata hona chahiye ki neeche jo
-bhara hai wo ek **mashin** ne likha hai, aur uski zimmedari uski hai.
-Bina is line ke wo aasani se maan sakta hai ki "app ne bhara hai to
-theek hi hoga".
+This is not just politeness. The organizer must know that what is filled below was written by a **machine**, and they are responsible for it. Without this line, they could easily assume "if the app filled it, it must be correct."
 
 ---
 
@@ -198,7 +173,7 @@ $ POST /api/organizer/events/draft   (organizer token)
       "category":"Comedy"}
 
 $ same request, attendee token
-403  "Is kaam ke liye organizer ya admin role chahiye"
+403  "Organizer or admin role required for this action"
 
 $ same request, no token
 401
@@ -208,7 +183,7 @@ Latency ~2.4s.
 
 ### Tests
 
-**110/110 pass** (105 pehle ke + 5 naye). **Kisi ko API key ki zaroorat nahi.**
+**110/110 pass** (105 previous + 5 new). **No one needs an API key.**
 
 - `test_draft_needs_organizer_role`
 - `test_draft_needs_auth`
@@ -216,46 +191,39 @@ Latency ~2.4s.
 - `test_draft_returns_the_three_form_fields`
 - ⭐ `test_draft_does_not_create_an_event`
 
-**Content test nahi karte** — model har baar alag likhega, aur likhna hi
-chahiye. Contract test hota hai, prose nahi. Aur test AI off hone par bhi
-pass hota hai (`200` ya saaf `502/503` — kabhi `500` nahi).
+**Content is not tested** — the model will write something different every time, and it should. We test the contract, not the prose. The test also passes when AI is off (`200` or clean `502/503` — never `500`).
 
 ---
 
-## Jo jaan-boojh ke NAHI banaya
+## What was intentionally NOT built
 
-- **Poster generator** — upar wajah likhi hai (free tier quota).
-- **Purane event ki copy dobara likhwana.** Draft sirf naye event ke form
-  me hai. Publish ho chuke event ka description badalna attendees se kiya
-  waada badalna hai.
-- **Draft ka koi history nahi.** Dobara dabao to naya draft aata hai,
-  purana gaya. Version history rakhna is chhote feature ke liye zyada hai.
-- **Venue/date AI se nahi bharte.** Wo asli facts hain, aur unhe organizer
-  hi bharega. Model unhe gadh sakta hai — isliye form me wo alag fields
-  hain jinhe draft chhoota hi nahi.
+- **Poster generator** — reason documented above (free tier quota).
+- **Regenerating copy for old events.** Draft is only in the new event form. Changing the description of a published event is changing a promise made to attendees.
+- **Draft history.** Pressing it again provides a new draft; the old one is gone. Version history is overkill for this small feature.
+- **Venue/date AI population.** These are real facts, and the organizer must fill them. The model could invent them — which is why they are separate fields in the form that the draft does not touch.
 
 ---
 
 ## Files
 
-**Naye:**
-| File | Kya |
+**New:**
+| File | Purpose |
 |---|---|
-| `frontend/src/components/AiDraft.jsx` | Brief box + "publish se pehle padh lo" warning |
+| `frontend/src/components/AiDraft.jsx` | Brief box + "read before publishing" warning |
 
-**Badle:**
-| File | Kya |
+**Modified:**
+| File | Purpose |
 |---|---|
-| `backend/ai.py` | `draft_event_copy()`, `COPY_PROMPT` (facts mat gadho) |
+| `backend/ai.py` | `draft_event_copy()`, `COPY_PROMPT` (do not invent facts) |
 | `backend/schemas.py` | `EventDraftRequest`, `EventDraftOut` |
-| `backend/routers/organizer.py` | `POST /events/draft` — save kuch nahi karta |
+| `backend/routers/organizer.py` | `POST /events/draft` — saves nothing |
 | `frontend/src/api.js`, `pages/organizer/CreateEvent.jsx` | Wiring |
 
 ---
 
 ## Related
 
-- [Phase 19 — NL Seat Search](19-nl-seat-search.md) — AI ki boundary, model choice, key handling
-- [Phase 07 — Auth + Google OAuth](07-auth-google-oauth.md) — graceful degradation ka pattern
-- [Phase 10 — RBAC + Organizer](10-rbac-organizer.md) — role check jo yahan bhi lagta hai
-- [Interview Prep](../interview-prep.md) — "AI ko kitna kaam dena chahiye"
+- [Phase 19 — NL Seat Search](19-nl-seat-search.md) — AI boundaries, model choice, key handling
+- [Phase 07 — Auth + Google OAuth](07-auth-google-oauth.md) — graceful degradation pattern
+- [Phase 10 — RBAC + Organizer](10-rbac-organizer.md) — role check applied here as well
+- [Interview Prep](../interview-prep.md) — "How much work should be delegated to AI"

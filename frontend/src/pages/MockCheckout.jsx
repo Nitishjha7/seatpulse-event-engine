@@ -5,15 +5,15 @@ import { getPayment, simulatePayment } from '../api'
 import { IconLock } from '../layout/icons'
 
 /**
- * Mock gateway ka checkout page.
+ * Checkout page for the mock gateway.
  *
- * ⚠️ Ye ASLI Stripe page ki jagah hai — sirf tab dikhta hai jab
- * STRIPE_SECRET_KEY set nahi hai. Isse koi bhi (interviewer bhi) poora
- * payment flow chala sakta hai bina Stripe account ke.
+ * ⚠️ This replaces the real Stripe page — it only appears when
+ * STRIPE_SECRET_KEY is not set. This allows anyone (including interviewers)
+ * to test the full payment flow without a Stripe account.
  *
- * Ye page kuch decide NAHI karta — sirf backend ka `simulate` endpoint
- * call karta hai, jo wahi `_fulfil`/`_fail` chalata hai jo asli webhook
- * chalata hai. Isliye mock aur real ka logic bilkul same rehta hai.
+ * This page makes no decisions — it simply calls the backend `simulate` endpoint,
+ * which triggers the same `_fulfil`/`_fail` logic as the real webhook.
+ * This ensures the mock and real logic remain identical.
  */
 export default function MockCheckout() {
   const { paymentId } = useParams()
@@ -35,7 +35,7 @@ export default function MockCheckout() {
       .catch((err) => setError(err.message))
   }, [paymentId])
 
-  // Countdown — payment window bhi TTL wala hai, seat hold ki tarah
+  // Countdown — the payment window has a TTL, similar to a seat hold.
   useEffect(() => {
     if (secondsLeft <= 0) return
     const id = setInterval(() => setSecondsLeft((s) => Math.max(0, s - 1)), 1000)
@@ -65,12 +65,12 @@ export default function MockCheckout() {
   if (payment.status !== 'pending') {
     return (
       <Centered>
-        <p className="text-slate-300">Ye payment already {payment.status} hai.</p>
+        <p className="text-slate-300">This payment is already {payment.status}.</p>
         <button
           onClick={() => navigate(`/payment/return?payment_id=${paymentId}`)}
           className="mt-4 rounded-xl bg-violet-600 px-4 py-2 text-sm font-medium"
         >
-          Status dekho
+          View status
         </button>
       </Centered>
     )
@@ -82,13 +82,13 @@ export default function MockCheckout() {
   return (
     <Centered>
       <div className="w-full max-w-sm">
-        {/* Ye banner har waqt dikhna chahiye — koi galatfehmi na ho ki
-            ye asli payment page hai */}
+        {/* This banner must always be visible to avoid confusion
+            that this is the real payment page */}
         <div className="mb-4 rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-center">
           <p className="text-sm font-semibold text-amber-300">🧪 Simulated Checkout</p>
           <p className="mt-1 text-xs text-amber-200/70">
-            Stripe keys configure nahi hain, isliye ye mock gateway chal raha
-            hai. Koi asli paisa nahi katega.
+            Stripe keys are not configured, so this mock gateway is active.
+            No real money will be charged.
           </p>
         </div>
 
@@ -136,7 +136,7 @@ export default function MockCheckout() {
 
           {secondsLeft === 0 && (
             <p className="mt-3 text-center text-xs text-rose-300">
-              Payment window khatam — seat wapas available ho gayi
+              Payment window expired — seat is now available again
             </p>
           )}
         </div>

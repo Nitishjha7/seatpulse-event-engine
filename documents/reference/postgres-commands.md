@@ -1,40 +1,40 @@
 # PostgreSQL Commands — Full Reference
 
-Database dekhne, users banane, aur queries chalane ka cheatsheet.
+Cheatsheet for viewing databases, creating users, and running queries.
 
-**Is project ki DB details:**
+**Project DB details:**
 
 | Field | Value |
 |---|---|
-| Host (host machine se) | `localhost` |
-| **Port (host machine se)** | **`5433`** — 5432 nahi! (wajah [neeche](#-port-5433-kyu-5432-nahi)) |
-| Host (container se) | `db` |
-| Port (container se) | `5432` |
+| Host (from host machine) | `localhost` |
+| **Port (from host machine)** | **`5433`** — not 5432! (reason [below](#-why-port-5433-and-not-5432)) |
+| Host (from container) | `db` |
+| Port (from container) | `5432` |
 | Database | `seatpulse` |
 | Username | `seatpulse` |
 | Password | `seatpulse_dev_password` |
 
 ---
 
-## 1. DB me ghusne ke 3 tarike
+## 1. 3 ways to access the DB
 
-### A. psql — container ke andar (kuch install nahi karna)
+### A. psql — inside the container (no installation required)
 
 ```bash
 docker compose exec db psql -U seatpulse -d seatpulse
 ```
 
-Prompt aisa dikhega: `seatpulse=#`
+The prompt will appear as: `seatpulse=#`
 
-> Ye sabse aasan hai — psql pehle se container me hota hai.
+> This is the easiest method — psql is pre-installed in the container.
 
-### B. Ek hi command, andar gaye bina
+### B. Single command, without entering the shell
 
 ```bash
 docker compose exec db psql -U seatpulse -d seatpulse -c "SELECT count(*) FROM seats;"
 ```
 
-`-c` = "ye command chalao aur bahar aa jao". Script me ya quick check me kaam aata hai.
+`-c` = "run this command and exit". Useful for scripts or quick checks.
 
 ### C. pgAdmin / DBeaver (GUI)
 
@@ -46,96 +46,96 @@ docker compose exec db psql -U seatpulse -d seatpulse -c "SELECT count(*) FROM s
 | Username | `seatpulse` |
 | Password | `seatpulse_dev_password` |
 
-**pgAdmin steps:** Servers pe right-click → *Register* → *Server* → **General** tab me naam `SeatPulse (Docker)` → **Connection** tab me upar wali details → Save.
+**pgAdmin steps:** Right-click *Servers* → *Register* → *Server* → **General** tab, name it `SeatPulse (Docker)` → **Connection** tab, enter the details above → Save.
 
-Tables yahan milenge:
+Tables are located here:
 ```
 Servers → SeatPulse (Docker) → Databases → seatpulse → Schemas → public → Tables
 ```
 
-> Naam me "(Docker)" zaroor likhna — warna tumhare local PostgreSQL se confuse ho jaoge.
+> Ensure you include "(Docker)" in the name to avoid confusion with your local PostgreSQL instance.
 
 ---
 
-## 2. psql ke Meta-Commands (backslash wale)
+## 2. psql Meta-Commands (backslash commands)
 
-Ye SQL nahi hain — psql ke apne shortcuts hain. **Inme semicolon nahi lagta.**
+These are not SQL — they are psql shortcuts. **Do not use a semicolon.**
 
-| Command | Kaam |
+| Command | Description |
 |---|---|
-| `\l` | Saare databases |
-| `\c dbname` | Dusre database me switch karo |
-| `\dt` | Saari tables |
-| `\dt+` | Tables + size bhi |
-| `\d tablename` | Table ka poora structure — columns, indexes, constraints |
-| `\d+ tablename` | Aur zyada detail |
-| `\du` | Saare users/roles |
-| `\di` | Saare indexes |
-| `\dn` | Saare schemas |
-| `\df` | Saare functions |
-| `\x` | Expanded view on/off (chaudi tables padhne ke liye) |
-| `\timing` | Har query ka time dikhao |
-| `\?` | Saare meta-commands ki list |
-| `\h CREATE TABLE` | Kisi SQL command ki help |
-| `\q` | Bahar |
+| `\l` | List all databases |
+| `\c dbname` | Switch to another database |
+| `\dt` | List all tables |
+| `\dt+` | List tables + size |
+| `\d tablename` | Full table structure — columns, indexes, constraints |
+| `\d+ tablename` | Detailed structure |
+| `\du` | List all users/roles |
+| `\di` | List all indexes |
+| `\dn` | List all schemas |
+| `\df` | List all functions |
+| `\x` | Toggle expanded view (for wide tables) |
+| `\timing` | Show execution time for each query |
+| `\?` | List all meta-commands |
+| `\h CREATE TABLE` | Help for a specific SQL command |
+| `\q` | Exit |
 
-> ⚠️ **SQL queries me `;` zaroori hai**, meta-commands me nahi. `SELECT * FROM seats` bina semicolon ke chalegi hi nahi — psql agli line ka wait karta rahega.
+> ⚠️ **Semicolons `;` are required for SQL queries**, but not for meta-commands. `SELECT * FROM seats` will not execute without a semicolon; psql will simply wait for the next line.
 
 ---
 
-## 3. User aur Database banana (terminal se)
+## 3. Creating Users and Databases (via terminal)
 
-### Superuser ke taur pe ghuso
+### Log in as superuser
 
 ```bash
 docker compose exec db psql -U seatpulse -d postgres
 ```
 
-> Local (non-Docker) Postgres me `psql -U postgres` karo.
+> For local (non-Docker) Postgres, use `psql -U postgres`.
 
-### Naya user banao
+### Create a new user
 
 ```sql
 -- Simple user
 CREATE USER analyst WITH PASSWORD 'strong_password_here';
 
--- Database bana sakne wala user
+-- User with database creation rights
 CREATE USER dev_user WITH PASSWORD 'pass123' CREATEDB;
 
--- Superuser (sab kuch kar sakta hai — soch ke dena)
+-- Superuser (full access — grant with caution)
 CREATE USER admin_user WITH PASSWORD 'pass123' SUPERUSER CREATEDB CREATEROLE;
 ```
 
-> `CREATE USER` aur `CREATE ROLE` almost same hain. Farak: `CREATE USER` ko login permission default milti hai, `CREATE ROLE` ko nahi.
+> `CREATE USER` and `CREATE ROLE` are nearly identical. The difference: `CREATE USER` has login permissions by default, `CREATE ROLE` does not.
 
-### Naya database banao
+### Create a new database
 
 ```sql
 CREATE DATABASE myapp;
 CREATE DATABASE myapp OWNER dev_user;
 ```
 
-### Permissions do (grant)
+### Grant permissions
 
 ```sql
--- Poore database pe
+-- On the entire database
 GRANT ALL PRIVILEGES ON DATABASE seatpulse TO analyst;
 
--- Sirf padhne ki permission (reporting user ke liye)
+-- Read-only access (for reporting users)
 \c seatpulse
 GRANT USAGE ON SCHEMA public TO analyst;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO analyst;
 
--- Aage banne wali tables pe bhi apne aap mile
+-- Automatically grant access to future tables
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO analyst;
 ```
 
-> ⚠️ Aakhri line important hai. Bina iske, naya table banane par `analyst` ko uspe permission **nahi** milegi aur "permission denied" aayega.
+> ⚠️ The last line is critical. Without it, the `analyst` will not have access to newly created tables, resulting in "permission denied" errors.
 
-### User badlo / hatao
+### Modify / Remove users
 
 ```sql
-ALTER USER analyst WITH PASSWORD 'naya_password';
+ALTER USER analyst WITH PASSWORD 'new_password';
 ALTER USER analyst WITH SUPERUSER;
 ALTER USER analyst WITH NOSUPERUSER;
 
@@ -143,17 +143,17 @@ REVOKE ALL PRIVILEGES ON DATABASE seatpulse FROM analyst;
 DROP USER analyst;
 ```
 
-> `DROP USER` fail hoga agar us user ke paas kuch objects hain. Pehle `REASSIGN OWNED BY analyst TO seatpulse;` phir `DROP OWNED BY analyst;` karo.
+> `DROP USER` will fail if the user owns objects. First run `REASSIGN OWNED BY analyst TO seatpulse;` then `DROP OWNED BY analyst;`.
 
-### Sab dekho
+### View status
 
 ```sql
-\du                                    -- saare users + unke roles
+\du                                    -- all users + roles
 SELECT current_user, current_database();
 SELECT usename FROM pg_user;
 ```
 
-### Shell se seedha (psql ke andar gaye bina)
+### Via shell (without entering psql)
 
 ```bash
 docker compose exec db createuser -U seatpulse --pwprompt analyst
@@ -163,57 +163,57 @@ docker compose exec db dropdb -U seatpulse myapp
 
 ---
 
-## 4. Is project ki common queries
+## 4. Common project queries
 
 ```sql
--- Saari tables
+-- List all tables
 \dt
 
--- Seats ka structure (constraints yahan dikhenge)
+-- Structure of seats (constraints visible here)
 \d seats
 
--- Kitni seats kis status me
+-- Count seats by status
 SELECT status, count(*) FROM seats GROUP BY status;
 
--- Pehli 10 seats
+-- First 10 seats
 SELECT id, row_label, seat_number, price, status, version
 FROM seats ORDER BY id LIMIT 10;
 
--- Ek row ki saari seats
+-- All seats in a specific row
 SELECT * FROM seats WHERE row_label = 'A' ORDER BY seat_number;
 
 -- Events
 SELECT id, name, venue, starts_at, total_seats FROM events;
 
--- Bookings (user aur seat ke naam ke saath)
+-- Bookings (with user email and seat label)
 SELECT b.id, u.email, s.row_label || '-' || s.seat_number AS seat, b.status, b.amount
 FROM bookings b
 JOIN users u ON u.id = b.user_id
 JOIN seats s ON s.id = b.seat_id;
 
--- Locked seats jinka time nikal gaya (Phase 4 me kaam aayegi)
+-- Locked seats that have expired (Phase 4)
 SELECT id, row_label, seat_number, locked_by, locked_until
 FROM seats
 WHERE status = 'locked' AND locked_until < now();
 
--- Sab seats wapas available (testing ke liye reset)
+-- Reset all seats to available (for testing)
 UPDATE seats SET status = 'available', locked_by = NULL, locked_until = NULL, version = version + 1;
 
--- Saari bookings hatao (testing reset)
+-- Remove all bookings (for testing)
 DELETE FROM bookings;
 ```
 
 ---
 
-## 5. Constraints verify karna
+## 5. Verifying Constraints
 
-Phase 2 ka asli proof — ye chala ke dekho:
+Proof of Phase 2 — run these:
 
 ```sql
 \d seats
 ```
 
-Neeche ye dikhna chahiye:
+You should see:
 ```
 Indexes:
     "uq_seat_position" UNIQUE CONSTRAINT, btree (event_id, row_label, seat_number)
@@ -230,10 +230,10 @@ Indexes:
     "uq_one_confirmed_booking_per_seat" UNIQUE, btree (seat_id) WHERE status = 'confirmed'
 ```
 
-### Constraint ko tod ke dekho (asli test)
+### Test constraint violations
 
 ```sql
--- Duplicate seat — fail hona chahiye
+-- Duplicate seat — should fail
 INSERT INTO seats (event_id, row_label, seat_number, price, status, version)
 VALUES (1, 'A', 1, 100, 'available', 0);
 ```
@@ -243,7 +243,7 @@ ERROR:  duplicate key value violates unique constraint "uq_seat_position"
 ```
 
 ```sql
--- Galat status — fail hona chahiye
+-- Invalid status — should fail
 UPDATE seats SET status = 'Booked' WHERE id = 1;
 ```
 Expected:
@@ -251,47 +251,47 @@ Expected:
 ERROR:  new row for relation "seats" violates check constraint "ck_seat_status"
 ```
 
-**Ye errors aana achhi baat hai** — matlab database khud galat data rok raha hai, application code par bharosa nahi karna pad raha.
+**These errors are desirable** — they confirm the database is enforcing data integrity independently of the application code.
 
 ---
 
-## 6. Backup aur Restore
+## 6. Backup and Restore
 
 ```bash
-# Poora database ek file me
+# Full database backup
 docker compose exec -T db pg_dump -U seatpulse seatpulse > backup.sql
 
-# Sirf schema (data ke bina)
+# Schema only (no data)
 docker compose exec -T db pg_dump -U seatpulse --schema-only seatpulse > schema.sql
 
-# Sirf data
+# Data only
 docker compose exec -T db pg_dump -U seatpulse --data-only seatpulse > data.sql
 
-# Wapas restore
+# Restore
 docker compose exec -T db psql -U seatpulse -d seatpulse < backup.sql
 ```
 
-> `-T` flag zaroori hai — bina iske Docker TTY attach karta hai aur file me kachra aa jata hai.
+> The `-T` flag is required to prevent Docker from attaching a TTY, which would corrupt the output file.
 
-### `down -v` ke baad recovery
+### Recovery after `down -v`
 
-Docker DB ka data `postgres_data` named volume me hai. `docker compose down -v` use delete kar deta hai.
+Docker DB data is stored in the `postgres_data` volume. `docker compose down -v` deletes this volume.
 
-**Wapas laane ke 3 command:**
+**3 commands to restore:**
 ```bash
 docker compose up -d
 docker compose exec backend alembic upgrade head
 docker compose exec backend python seed.py
 ```
 
-> **Local PostgreSQL par koi asar nahi padta.** Wo system pe installed hai, Docker uske paas ja hi nahi sakta. Sirf Docker wala DB (port 5433) delete hota hai.
+> **Local PostgreSQL is unaffected.** It is installed on the system; Docker cannot access it. Only the Docker DB (port 5433) is deleted.
 
-**Volume gaya ya nahi:**
+**Check if volume exists:**
 ```bash
-docker volume ls -q | grep postgres     # kuch nahi mila = delete ho chuka
+docker volume ls -q | grep postgres     # no output = deleted
 ```
 
-**Frontend ka `node_modules` volume reset karo bina DB udaye:**
+**Reset frontend `node_modules` without deleting DB:**
 ```bash
 docker compose up -d --build --force-recreate --renew-anon-volumes frontend
 ```
@@ -300,33 +300,33 @@ docker compose up -d --build --force-recreate --renew-anon-volumes frontend
 
 ## 7. Alembic (migrations)
 
-Schema kabhi haath se mat badalna — hamesha migration se.
+Never modify the schema manually — always use migrations.
 
 ```bash
 docker compose exec backend alembic revision --autogenerate -m "add column X"
 docker compose exec backend alembic upgrade head      # apply
-docker compose exec backend alembic downgrade -1      # ek step peeche
-docker compose exec backend alembic current           # abhi kaunsi lagi hai
-docker compose exec backend alembic history           # saari migrations
+docker compose exec backend alembic downgrade -1      # revert one step
+docker compose exec backend alembic current           # check current version
+docker compose exec backend alembic history           # view migration history
 ```
 
-> Migration file banne ke baad **kholo aur padho**. Autogenerate kabhi-kabhi galat cheez banata hai.
+> Always **review the generated migration file**. Autogenerate can occasionally produce incorrect code.
 
 ---
 
-## ⚠️ Port 5433 kyu, 5432 nahi?
+## ⚠️ Why port 5433 and not 5432?
 
-Is system pe **PostgreSQL already installed hai** (Windows service ki tarah chalta hai) aur wo 5432 le chuka hai.
+**PostgreSQL is already installed** on this system (as a Windows service) and occupies port 5432.
 
-Docker bhi 5432 maangta to compose me mapping dikh jati thi, par asli port local Postgres ke paas rehta. Nateeja — pgAdmin `localhost:5432` pe **local** Postgres se connect hota, jisme `seatpulse` user hai hi nahi:
+If Docker also requested 5432, the mapping would conflict, and the local Postgres instance would take precedence. Consequently, pgAdmin would connect to the **local** Postgres on `localhost:5432`, which lacks the `seatpulse` user:
 
 ```
 FATAL: password authentication failed for user "seatpulse"
 ```
 
-Isliye root `.env` me `POSTGRES_PORT=5433` set hai.
+Therefore, `POSTGRES_PORT=5433` is set in the root `.env`.
 
-**Kaun sa process port le raha hai, ye check karo (PowerShell):**
+**Check which process is using the port (PowerShell):**
 
 ```powershell
 Get-NetTCPConnection -LocalPort 5432 -State Listen |
@@ -337,9 +337,9 @@ Get-NetTCPConnection -LocalPort 5432 -State Listen |
   }
 ```
 
-Output me `postgres` dikha = local Postgres hai, `com.docker.backend` dikha = Docker.
+If the output shows `postgres`, it is the local instance; `com.docker.backend` indicates Docker.
 
-> **Yaad rakho:** ye badlav sirf **host se dekhne** ke liye hai. Backend `db:5432` use karta hai — container network ke andar port hamesha 5432 hi rehta hai. Isliye `POSTGRES_PORT` badalne se backend pe koi asar nahi padta, restart bhi nahi karna padta.
+> **Note:** This change only affects **host-to-container** connections. The backend uses `db:5432` — the port inside the container network is always 5432. Changing `POSTGRES_PORT` does not affect the backend and does not require a restart.
 
 ---
 
@@ -347,20 +347,20 @@ Output me `postgres` dikha = local Postgres hai, `com.docker.backend` dikha = Do
 
 | Problem | Fix |
 |---|---|
-| `FATAL: password authentication failed for user "seatpulse"` | Galat port pe connect ho rahe ho — pgAdmin me **5433** daalo, 5432 nahi |
-| `could not connect to server` / `connection refused` | DB chal raha hai? `docker compose ps` me `db` **healthy** dikhna chahiye |
-| `port is already allocated` (compose start pe) | Root `.env` me `POSTGRES_PORT` badal do (5434, 5435...) |
-| `relation "seats" does not exist` | Migration nahi chali — `docker compose exec backend alembic upgrade head` |
-| `permission denied for table X` | Grant nahi diya — section 3 dekho, aur `ALTER DEFAULT PRIVILEGES` bhi |
-| Query chal hi nahi rahi, cursor atka hai | Semicolon `;` bhool gaye. Lagao aur Enter |
-| Purana password kaam kar raha hai `.env` badalne ke baad bhi | Volume me purana data hai. `docker compose down -v` (⚠️ **data delete hoga**) |
-| Table chaudi hai, padha nahi ja raha | `\x` chala ke expanded mode on karo |
-| `psql: command not found` (host pe) | Host pe psql install nahi hai — `docker compose exec db psql ...` use karo |
+| `FATAL: password authentication failed for user "seatpulse"` | Wrong port — use **5433** in pgAdmin, not 5432 |
+| `could not connect to server` / `connection refused` | Is the DB running? `docker compose ps` should show `db` as **healthy** |
+| `port is already allocated` (on compose start) | Change `POSTGRES_PORT` in root `.env` (e.g., 5434, 5435...) |
+| `relation "seats" does not exist` | Migrations not applied — run `docker compose exec backend alembic upgrade head` |
+| `permission denied for table X` | Missing grant — see section 3, and `ALTER DEFAULT PRIVILEGES` |
+| Query hangs / no output | Missing semicolon `;`. Add it and press Enter |
+| Old password persists after `.env` change | Volume contains old data. Run `docker compose down -v` (⚠️ **data will be deleted**) |
+| Table is too wide to read | Run `\x` to toggle expanded mode |
+| `psql: command not found` (on host) | psql is not installed on host — use `docker compose exec db psql ...` |
 
 ---
 
 ## Related
 
-- [Phase 2 — Postgres + Models](../phases/02-postgres-models.md) — tables ka design aur kyu
+- [Phase 2 — Postgres + Models](../phases/02-postgres-models.md) — table design and rationale
 - [docker-commands.md](docker-commands.md) — container commands
-- [roadmap.md](../roadmap.md) — aage kya banana hai
+- [roadmap.md](../roadmap.md) — future development roadmap

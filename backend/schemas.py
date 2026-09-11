@@ -1,13 +1,13 @@
 """
-Pydantic schemas — API ka contract.
+Pydantic schemas — API contract.
 
-Models (models.py) = database ka shape
-Schemas (ye file)  = API ka shape
+Models (models.py) = Database schema
+Schemas (this file) = API schema
 
-Alag kyu rakhte hain:
-  - `hashed_password` DB me hai par API me kabhi nahi jana chahiye
-  - Client jo bhejta hai (BookingCreate) aur jo wapas milta hai (BookingOut) alag hain
-  - FastAPI inhi se /docs banata hai aur incoming data validate karta hai
+Separation rationale:
+  - `hashed_password` exists in the DB but must never be exposed via API.
+  - Client input (BookingCreate) and output (BookingOut) structures differ.
+  - FastAPI uses these for /docs generation and incoming data validation.
 """
 
 from datetime import datetime
@@ -17,8 +17,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
-# from_attributes=True -> SQLAlchemy object ko seedha schema me badal sakte hain.
-# Iske bina har field haath se copy karni padti.
+# from_attributes=True allows direct conversion from SQLAlchemy objects.
+# This avoids manual field-by-field copying.
 class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -37,7 +37,7 @@ class EventOut(ORMModel):
 
 class GroupCreate(BaseModel):
     seat_ids: list[int] = Field(..., min_length=1, max_length=10)
-    # None = default (30 min). Server apni limits khud lagata hai.
+    # None = default (30 min). Server enforces its own limits.
     deadline_minutes: int | None = Field(None, ge=5, le=120)
 
 
@@ -48,15 +48,14 @@ class GroupShareOut(BaseModel):
     amount: float
     status: str
     claimed_by: int | None = None
-    # Naam dikhate hain, email nahi — link kisi ke paas bhi ja sakta hai
-    # aur usme sab members ke email dikhana privacy leak hai.
+    # Display name only, not email — links are shareable; exposing emails
+    # of all members would be a privacy leak.
     claimed_by_name: str | None = None
 
 
 class GroupOut(BaseModel):
-    # ⚠️ `id` yahan JAAN-BOOJH ke nahi hai. Group hamesha share_token se
-    # address hota hai. Sequential id bahar bhejne ka matlab hai ki koi
-    # bhi 1, 2, 3 chala ke doosron ke groups dhoondh le.
+    # ⚠️ `id` is intentionally omitted. Groups are addressed via share_token.
+    # Exposing sequential IDs would allow enumeration of other groups.
     share_token: str
     event_id: int
     status: str
@@ -68,27 +67,27 @@ class GroupOut(BaseModel):
 
 
 class PricingOut(BaseModel):
-    """Event ki abhi ki pricing state — UI ke surge badge ke liye."""
+    """Current event pricing state — for UI surge badges."""
     enabled: bool
     multiplier: float
     surge_percent: int
     sold: int
     total: int
-    # Agli price badhne se pehle kitni seats. None = pricing off ya max pe
+    # Seats remaining before next price increase. None = pricing off or at max.
     seats_until_increase: int | None = None
 
 
 class EventDetail(EventOut):
-    """Event + seats ka summary. Grid load karne se pehle overview ke liye."""
+    """Event + seat summary for overview before loading the grid."""
     available_seats: int
     booked_seats: int
     locked_seats: int
-    # Detail page pe "₹800 – ₹2500" dikhane ke liye. None jab koi seat na ho.
+    # For displaying price ranges like "₹800 – ₹2500". None if no seats exist.
     min_price: float | None = None
     max_price: float | None = None
     pricing: PricingOut | None = None
-    # Grid isse aisles aur section headings dikhata hai.
-    # None = purana uniform event, grid pehle jaisa hi render karega.
+    # Used by the grid to render aisles and section headings.
+    # None = legacy uniform event, render grid as before.
     layout: dict | None = None
 
 
@@ -96,21 +95,21 @@ class EventDetail(EventOut):
 
 class PriceTier(BaseModel):
     """
-    "Agli N rows is price par."
+    Defines pricing for specific row ranges.
 
-    Tiers upar se neeche lagte hain: pehla tier row A se shuru hota hai.
-    Isse organizer VIP/normal/balcony ka pricing set kar sakta hai bina
-    poora layout builder banaye (wo aage aayega).
+    Tiers are applied sequentially: the first tier starts at row A.
+    Allows organizers to set VIP/normal/balcony pricing without a full
+    layout builder.
     """
-    rows: int = Field(..., gt=0, le=26, description="Kitni rows is tier me")
+    rows: int = Field(..., gt=0, le=26, description="Number of rows in this tier")
     price: float = Field(..., ge=0, le=1_000_000)
 
 
 class LayoutRow(BaseModel):
     label: str = Field(..., min_length=1, max_length=4)
     seats: int = Field(..., ge=1, le=60)
-    # Kis seat ke BAAD gap dikhani hai. Sirf dikhne ke liye — koi seat
-    # nahi banti, koi number skip nahi hota.
+    # Indices after which to render a gap. Visual only — does not affect
+    # seat count or numbering.
     aisles_after: list[int] = Field(default_factory=list, max_length=10)
 
 
@@ -122,16 +121,14 @@ class LayoutSection(BaseModel):
 
 class SeatLayout(BaseModel):
     """
-    Venue ka naksha.
+    Venue map.
 
-    Pydantic yahan shape check karta hai (types, lengths). BUSINESS rules
-    — duplicate row labels, total seat cap, aisle position row ke andar —
-    `layout.py` me hain.
+    Pydantic validates shape (types, lengths). BUSINESS rules — duplicate
+    row labels, seat caps, aisle positions — are handled in `layout.py`.
 
-    Ye bantwara jaan-boojh ke hai: shape rules schema me likhna aasan hai,
-    par "do sections me same row label nahi ho sakta" jaise rules ko poore
-    layout ka context chahiye, aur unhe test karna bina HTTP ke aasan hona
-    chahiye.
+    This separation is intentional: shape rules are easy to define in
+    schemas, but cross-field rules (e.g., unique row labels per section)
+    require full layout context and should be testable without HTTP.
     """
     sections: list[LayoutSection] = Field(..., min_length=1, max_length=10)
 
@@ -143,14 +140,13 @@ class EventCreate(BaseModel):
     description: str | None = Field(None, max_length=5000)
     category: str | None = Field(None, max_length=40)
 
-    # ---- Seats kaise banengi: do me se ek raasta ----
+    # ---- Seat generation strategy ----
     #
-    # `layout` diya ho to wahi chalta hai aur neeche wale do ignore ho
-    # jaate hain. Warna purana `price_tiers` wala raasta.
+    # If `layout` is provided, it takes precedence. Otherwise, `price_tiers`
+    # is used.
     #
-    # Dono ko REQUIRED banana galat hota: simple event ke liye naksha
-    # banwana user ko sataana hai, aur layout wale ke liye seats_per_row
-    # ka koi matlab hi nahi.
+    # Making both required is impractical: simple events shouldn't require
+    # a full map, and layout-based events don't use `seats_per_row`.
     layout: SeatLayout | None = None
 
     seats_per_row: int = Field(10, gt=0, le=50)
@@ -160,25 +156,23 @@ class EventCreate(BaseModel):
     )
 
     # ---- Dynamic pricing (Phase 14) ----
-    # Default OFF. Surge pricing har event ke liye theek nahi hai — free
-    # community meetup pe ye ulta lagta hai. Organizer khud on kare.
+    # Default OFF. Surge pricing is not suitable for all events (e.g., free
+    # community meetups). Organizers must enable it explicitly.
     dynamic_pricing: bool = False
-    # 0 = koi surge nahi, 1.0 = sab bikne par price double.
-    # Upper bound 2.0 rakha hai — usse zyada kisi bhi normal event ke liye
-    # bakwaas hai, aur galti se 50 type ho jaana bahut mehnga padta.
+    # 0 = no surge, 1.0 = price doubles at capacity.
+    # Capped at 2.0 to prevent extreme pricing errors.
     demand_factor: float = Field(0.5, ge=0, le=2.0)
-    # Hard ceiling. Chahe formula kuch bhi kahe, isse upar nahi jayega.
+    # Hard ceiling for surge pricing.
     max_surge: float = Field(2.0, ge=1.0, le=3.0)
 
 
 class EventUpdate(BaseModel):
     """
-    Sirf ye fields badal sakte hain.
+    Mutable fields for existing events.
 
-    ⚠️ Seat layout ya pricing yahan nahi hai — jab log tickets khareed
-    chuke hon, tab seats badalna ya price badalna galat hai. Uske liye
-    event delete karke naya banana padega (aur delete tabhi hoga jab
-    koi confirmed booking na ho).
+    ⚠️ Seat layout and pricing are excluded — modifying these after tickets
+    are sold is prohibited. Events must be deleted and recreated (only
+    possible if no confirmed bookings exist).
     """
     name: str | None = Field(None, min_length=3, max_length=200)
     venue: str | None = Field(None, min_length=3, max_length=200)
@@ -186,19 +180,18 @@ class EventUpdate(BaseModel):
     description: str | None = Field(None, max_length=5000)
     category: str | None = Field(None, max_length=40)
 
-    # Pricing KNOBS badle ja sakte hain, base price nahi.
+    # Pricing knobs are adjustable, but base price is not.
     #
-    # Faraq ye hai: base price badalna purani bookings ko jhootha bana deta
-    # ("₹800 ka ticket kaha tha, ab ₹1200 likha hai"). Surge band karna ya
-    # halka karna sirf AAGE ki bookings pe asar daalta hai — jo har event
-    # organizer ko karne ka haq hona chahiye agar sales slow ho rahi hain.
+    # Changing base price invalidates existing bookings. Adjusting surge
+    # settings only affects future bookings, which is acceptable for
+    # managing slow sales.
     dynamic_pricing: bool | None = None
     demand_factor: float | None = Field(None, ge=0, le=2.0)
     max_surge: float | None = Field(None, ge=1.0, le=3.0)
 
 
 class OrganizerEventOut(EventOut):
-    """Organizer ke apne event — sales ke saath."""
+    """Organizer view with sales metrics."""
     available_seats: int
     locked_seats: int
     booked_seats: int
@@ -225,23 +218,22 @@ class SeatOut(ORMModel):
     event_id: int
     row_label: str
     seat_number: int
-    # "Ground" / "Balcony" — layout wale events me. Purane events me None.
+    # "Ground" / "Balcony" — for layout-based events. None for legacy.
     section: str | None = None
     price: float
     status: str
-    # version client ko bhi bhejte hain — isse UI me dikhta hai ki optimistic
-    # locking actually kaam kar rahi hai (har change pe number badhta hai).
+    # Version is sent to client to verify optimistic locking (increments
+    # on every change).
     version: int
-    # Lock kiske paas hai. Frontend isse decide karta hai ki seat "meri hold"
-    # (neeli) dikhani hai ya "kisi aur ki hold" (peeli).
+    # Lock owner. Frontend uses this to distinguish between "my hold"
+    # (blue) and "someone else's hold" (yellow).
     locked_by: int | None = None
     locked_until: datetime | None = None
 
     # ---- Pricing (Phase 14) ----
-    # `price` BASE hai (kabhi nahi badalta). `current_price` abhi ka hai.
-    # Dynamic pricing off ho to dono barabar rehte hain.
+    # `price` is the immutable base price. `current_price` is the dynamic price.
     current_price: float | None = None
-    # Hold ke waqt lock hua price — checkout me yahi lagega
+    # Price locked at the time of hold — applied during checkout.
     held_price: float | None = None
 
 
@@ -250,14 +242,13 @@ class SeatOut(ORMModel):
 class SeatLockOut(BaseModel):
     seat_id: int
     locked_by: int | None
-    # Kitne second me lock apne aap chhut jayega. Frontend isse countdown chalata hai.
+    # Seconds until lock expires. Used for frontend countdown.
     expires_in: int
-    # True = lock pehle se isi user ke paas tha (double-click waqerah)
+    # True = lock already held by this user (e.g., double-click).
     already_owned: bool = False
-    # unlock call ke liye — False matlab lock TTL pe pehle hi expire ho chuka tha
+    # For unlock calls — False means the lock already expired via TTL.
     released: bool | None = None
-    # Is hold ke liye LOCKED price. Checkout pe exactly yahi lagega —
-    # frontend seedha yahi dikhata hai, dobara calculate nahi karta.
+    # Price locked for this hold. Applied at checkout.
     price: float | None = None
 
 
@@ -265,13 +256,13 @@ class SeatLockOut(BaseModel):
 
 class BookingCreate(BaseModel):
     """
-    Client jo bhejta hai.
+    Client input.
 
-    ⭐ Note: `user_id` yahan NAHI hai. Pehle tha, aur wo ek security hole tha —
-    koi bhi {"user_id": 7} bhej ke kisi aur ke naam booking kar sakta tha.
-    Ab user JWT token se aata hai.
+    ⭐ Note: `user_id` is excluded. Previously, this was a security hole
+    allowing users to book on behalf of others. User identity is now
+    derived from the JWT token.
     """
-    seat_id: int = Field(..., gt=0, description="Kaunsi seat book karni hai")
+    seat_id: int = Field(..., gt=0, description="Seat to book")
 
 
 class BookingOut(ORMModel):
@@ -285,33 +276,33 @@ class BookingOut(ORMModel):
 
 
 class BookingDetail(BookingOut):
-    """Booking + seat ka pata, list dikhane ke liye."""
+    """Booking + seat details for list views."""
     seat_label: str
     event_name: str
-    # pending | ready | failed — UI isse download button dikhata hai
+    # pending | ready | failed — determines download button visibility.
     ticket_status: str = "pending"
 
 
 # ---------- User ----------
 
 class UserOut(ORMModel):
-    """Note: hashed_password yahan NAHI hai — wo kabhi API se bahar nahi jana chahiye."""
+    """Note: hashed_password is excluded — never expose via API."""
     id: int
     email: str
     full_name: str | None
     avatar_url: str | None = None
-    # attendee | organizer | admin — frontend isse nav gate karta hai
+    # attendee | organizer | admin — used for navigation gating.
     role: str = "attendee"
-    # Frontend isse decide karta hai ki "password badlo" option dikhana hai ya nahi
+    # Used to determine if "change password" option should be shown.
     is_google_user: bool = False
 
 
 # ---------- Auth ----------
 
 class RegisterRequest(BaseModel):
-    # EmailStr galat format wala email pehle hi reject kar deta hai
+    # EmailStr validates format automatically.
     email: EmailStr
-    # min_length=8 — Pydantic validation, route me check likhne ki zaroorat nahi
+    # min_length=8 — Pydantic validation replaces manual route checks.
     password: str = Field(..., min_length=8, max_length=128)
     full_name: str | None = Field(None, max_length=120)
 
@@ -323,22 +314,20 @@ class LoginRequest(BaseModel):
 
 class TokenResponse(BaseModel):
     """
-    Sirf ACCESS token JSON me jata hai.
+    Only the ACCESS token is returned in JSON.
 
-    Refresh token response body me kabhi nahi bhejte — wo httpOnly cookie
-    me jata hai, jise JavaScript padh hi nahi sakti.
+    Refresh tokens are sent via httpOnly cookies to prevent JS access.
     """
     access_token: str
     token_type: str = "bearer"
-    expires_in: int          # seconds — frontend isse silent refresh schedule karta hai
+    expires_in: int          # seconds — used for silent refresh scheduling.
     user: UserOut
 
 
 class AuthConfigOut(BaseModel):
-    """Frontend poochta hai: kaunse optional features on hain?"""
+    """Frontend configuration for optional features."""
     google_enabled: bool
-    # AI search box dikhana hai ya nahi. Key na ho to frontend wo box
-    # render hi nahi karta — normal filters phir bhi chalte hain.
+    # AI search box visibility. If missing, frontend does not render the box.
     ai_search_enabled: bool = False
 
 
@@ -346,18 +335,14 @@ class AuthConfigOut(BaseModel):
 
 class SeatFilters(BaseModel):
     """
-    Search ke filters.
+    Search filters.
 
-    ⚠️ Ye LLM aur search ke BEECH ka contract hai, aur yahi is feature ki
-    security boundary bhi hai.
+    ⚠️ This is the contract between the LLM and the search engine, serving
+    as the security boundary.
 
-    Model jo bhi bake, wo pehle YAHAN se guzarta hai. Ranges clamp hoti
-    hain, unknown fields gir jaate hain, aur galat types reject ho jaate
-    hain. Uske baad hi wo `seat_search.find()` tak pahunchta hai — jahan
-    se ek parameterised query banti hai.
-
-    Isliye prompt injection zyada se zyada ajeeb FILTERS bana sakti hai
-    (jo user ko turant dikh jaate hain), SQL nahi.
+    All LLM output is validated here: ranges are clamped, unknown fields
+    are dropped, and types are enforced before reaching `seat_search.find()`.
+    This prevents prompt injection from executing arbitrary SQL.
     """
     quantity: int = Field(1, ge=1, le=10)
     together: bool = True
@@ -368,19 +353,19 @@ class SeatFilters(BaseModel):
 
 
 class EventDraftRequest(BaseModel):
-    """Organizer ka chhota brief — "Arijit Singh, DY Patil Mumbai, December"."""
+    """Organizer brief — e.g., "Arijit Singh, DY Patil Mumbai, December"."""
     brief: str = Field(..., min_length=5, max_length=200)
 
 
 class EventDraftOut(BaseModel):
     """
-    AI ka draft.
+    AI-generated draft.
 
-    ⚠️ Ye kabhi seedha save nahi hota. Organizer ke form me bhar jata hai
-    aur wo edit karke hi publish karta hai.
+    ⚠️ Never saved directly. Populates the organizer form for manual review
+    and publication.
 
-    Event ka description ticket kharidne wale ke liye ek WAADA hai —
-    us par ek insaan ka haath hona zaroori hai.
+    Event descriptions are a commitment to ticket buyers; human oversight
+    is mandatory.
     """
     name: str
     description: str
@@ -388,11 +373,10 @@ class EventDraftOut(BaseModel):
 
 
 class SeatSearchRequest(BaseModel):
-    # Natural language. AI off ho to ye ignore hota hai.
+    # Natural language query. Ignored if AI is disabled.
     query: str | None = Field(None, max_length=200)
-    # Seedhe filters — inhe AI ki zaroorat nahi. UI in dono ko saath
-    # bhejta hai: query se filters bante hain, aur user unhe haath se
-    # badal bhi sakta hai.
+    # Explicit filters. UI sends both: query generates filters, which
+    # the user can then manually override.
     filters: SeatFilters | None = None
 
 
@@ -407,11 +391,10 @@ class SeatMatch(BaseModel):
 
 class SeatSearchOut(BaseModel):
     matches: list[SeatMatch]
-    # Jo filters ACTUALLY lage. Ye dikhana zaroori hai — user ko pata
-    # chalna chahiye ki uski baat ka kya matlab nikala gaya, warna khali
-    # result dekh ke wo samajh hi nahi payega ki kya galat hua.
+    # The filters actually applied. Essential for transparency so the user
+    # understands how their query was interpreted.
     filters: SeatFilters
-    # AI ne query samjhi ya nahi. False = filters default hain.
+    # Whether the AI successfully interpreted the query.
     interpreted: bool = False
 
 
@@ -423,15 +406,15 @@ class CheckoutRequest(BaseModel):
 
 class CheckoutOut(BaseModel):
     payment_id: int
-    # User ko yahan bhejo. Mock me hamara apna page, Stripe me unka.
+    # Redirect URL (mock page or Stripe gateway).
     checkout_url: str
-    provider: str          # "stripe" | "mock" — frontend UI adjust karta hai
+    provider: str          # "stripe" | "mock" — adjusts UI behavior.
     amount: float
     expires_at: datetime
 
 
 class SimulateRequest(BaseModel):
-    """Sirf mock provider ke liye — asli gateway me ye webhook se aata hai."""
+    """For mock provider only — real gateways use webhooks."""
     outcome: Literal["success", "fail"] = "success"
 
 
@@ -457,11 +440,10 @@ class CheckInRequest(BaseModel):
 
 class CheckInResult(BaseModel):
     """
-    Gate ka jawab.
+    Gate response.
 
-    ⚠️ `ok` field response body me hai, HTTP status me nahi. Gate pe khada
-    banda status code nahi dekhta — use ek saaf jawab chahiye, aur uske
-    saath wo jaankari jo dispute me kaam aaye (kab, kisne).
+    ⚠️ `ok` is in the body, not the HTTP status. Gate operators need a
+    clear response, along with audit data for dispute resolution.
     """
     ok: bool
     # checked_in | already_checked_in | invalid_ticket | booking_cancelled | ticket_not_issued
@@ -475,5 +457,5 @@ class CheckInResult(BaseModel):
 
     checked_in_at: datetime | None = None
     already_checked_in: bool = False
-    # Kisne scan kiya — duplicate ke case me "pehle kisne kiya tha"
+    # Who scanned the ticket (for duplicate scan audits).
     scanned_by: str | None = None

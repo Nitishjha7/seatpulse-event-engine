@@ -1,76 +1,76 @@
 # Docker Commands — Full Reference
 
-General Docker commands ka cheatsheet. Project-specific setup ke liye [Docker setup](../setup/01-docker-setup.md) dekho.
+General Docker commands cheatsheet. For project-specific setup, see [Docker setup](../setup/01-docker-setup.md).
 
-> **Note:** Jahan bhi `<container>` likha hai, wahan container ka **naam** (`fastapi_backend`) ya **ID** (`a1b2c3d4`) dono chalte hain. ID ke pehle 3-4 characters kaafi hote hain agar unique ho.
+> **Note:** Wherever `<container>` is used, you can use the container **name** (`fastapi_backend`) or **ID** (`a1b2c3d4`). The first 3-4 characters of the ID are sufficient if unique.
 
 ---
 
-## 1. Containers Dekhna
+## 1. Viewing Containers
 
-| Kya karna hai | Command |
+| Action | Command |
 |---|---|
 | Running containers | `docker ps` |
-| Saare containers (stopped bhi) | `docker ps -a` |
-| Sirf container IDs | `docker ps -q` |
-| Saari IDs (stopped bhi) | `docker ps -aq` |
-| Last banaya hua container | `docker ps -l` |
-| Size ke saath | `docker ps -s` |
+| All containers (including stopped) | `docker ps -a` |
+| Container IDs only | `docker ps -q` |
+| All IDs (including stopped) | `docker ps -aq` |
+| Last created container | `docker ps -l` |
+| With size | `docker ps -s` |
 
-**Output kya batata hai:**
+**Output explanation:**
 
 ```
 CONTAINER ID   IMAGE              COMMAND       CREATED       STATUS          PORTS                    NAMES
 a1b2c3d4e5f6   seatpulse-backend  "uvicorn..."  2 hours ago   Up 2 hours      0.0.0.0:8000->8000/tcp   fastapi_backend
 ```
 
-| Column | Matlab |
+| Column | Meaning |
 |---|---|
-| `CONTAINER ID` | Unique ID — commands me use hoti hai |
-| `IMAGE` | Kis image se bana hai |
-| `COMMAND` | Andar kya chal raha hai |
-| `STATUS` | `Up` = chal raha, `Exited (0)` = normally band, `Exited (1)` = crash |
+| `CONTAINER ID` | Unique ID — used in commands |
+| `IMAGE` | Source image |
+| `COMMAND` | Process running inside |
+| `STATUS` | `Up` = running, `Exited (0)` = normal stop, `Exited (1)` = crash |
 | `PORTS` | `host:container` mapping |
-| `NAMES` | Container ka naam |
+| `NAMES` | Container name |
 
-**Clean output** (sirf kaam ki cheezein):
+**Clean output** (essential info only):
 
 ```bash
 docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
 ```
 
-**Filter karke dekho:**
+**Filtering:**
 
 ```bash
 docker ps -f "status=running"
-docker ps -a -f "status=exited"       # sirf band wale
-docker ps -f "name=backend"           # naam me backend ho
-docker ps -f "ancestor=python:3.11-slim"   # is image se bane containers
+docker ps -a -f "status=exited"       # stopped only
+docker ps -f "name=backend"           # name contains backend
+docker ps -f "ancestor=python:3.11-slim"   # containers from this image
 ```
 
 ---
 
 ## 2. Container Start / Stop / Restart
 
-| Kya karna hai | Command |
+| Action | Command |
 |---|---|
-| Container band karo | `docker stop <container>` |
-| Band container chalu karo | `docker start <container>` |
-| Restart karo | `docker restart <container>` |
-| Force kill (turant) | `docker kill <container>` |
+| Stop container | `docker stop <container>` |
+| Start stopped container | `docker start <container>` |
+| Restart | `docker restart <container>` |
+| Force kill (immediate) | `docker kill <container>` |
 | Pause (freeze) | `docker pause <container>` |
 | Unpause | `docker unpause <container>` |
 
 ```bash
 docker stop fastapi_backend
-docker stop fastapi_backend react_frontend     # ek saath multiple
-docker stop $(docker ps -q)                    # SAARE running containers band
+docker stop fastapi_backend react_frontend     # multiple at once
+docker stop $(docker ps -q)                    # stop ALL running containers
 docker restart react_frontend
 ```
 
-> `stop` politely band karta hai (10 sec deta hai), `kill` turant maar deta hai. Normally `stop` hi use karo.
+> `stop` performs a graceful shutdown (10s timeout), `kill` terminates immediately. Use `stop` by default.
 
-**Timeout badhao** (heavy app ko band hone me time lage to):
+**Increase timeout** (if a heavy app takes time to shut down):
 
 ```bash
 docker stop -t 30 fastapi_backend
@@ -78,31 +78,31 @@ docker stop -t 30 fastapi_backend
 
 ---
 
-## 3. Container Delete Karna
+## 3. Deleting Containers
 
 ```bash
-docker rm <container>                # band container delete
-docker rm -f <container>             # chalta hua bhi force delete
-docker rm $(docker ps -aq)           # saare stopped containers delete
-docker container prune               # saare stopped containers delete (safe tarika)
+docker rm <container>                # delete stopped container
+docker rm -f <container>             # force delete running container
+docker rm $(docker ps -aq)           # delete all stopped containers
+docker container prune               # delete all stopped containers (safe method)
 ```
 
-> `rm` sirf container delete karta hai, **image nahi**. Image alag se delete hoti hai (section 4).
+> `rm` deletes the container only, **not the image**. Images are deleted separately (Section 4).
 
 ---
 
 ## 4. Images
 
-| Kya karna hai | Command |
+| Action | Command |
 |---|---|
-| Saari images | `docker images` |
-| IDs ke saath dangling images | `docker images -f "dangling=true"` |
-| Sirf IDs | `docker images -q` |
-| Image download karo | `docker pull node:20-alpine` |
-| Image delete | `docker rmi <image>` |
+| All images | `docker images` |
+| Dangling images with IDs | `docker images -f "dangling=true"` |
+| IDs only | `docker images -q` |
+| Download image | `docker pull node:20-alpine` |
+| Delete image | `docker rmi <image>` |
 | Force delete | `docker rmi -f <image>` |
-| Unused images delete | `docker image prune` |
-| Image ka history (layers) | `docker history <image>` |
+| Delete unused images | `docker image prune` |
+| Image history (layers) | `docker history <image>` |
 
 **Output:**
 
@@ -112,95 +112,95 @@ seatpulse-backend   latest     f1e2d3c4b5a6   2 hours ago    215MB
 python              3.11-slim  9a8b7c6d5e4f   3 weeks ago    130MB
 ```
 
-> `<none>` naam wali images = **dangling** (purane build ke leftovers). `docker image prune` se saaf ho jaati hain.
+> Images named `<none>` are **dangling** (leftovers from old builds). Clean them with `docker image prune`.
 
-**Image build karna:**
+**Building images:**
 
 ```bash
-docker build -t myapp .                      # current folder ke Dockerfile se
-docker build -t myapp:v1 ./backend           # specific folder
-docker build --no-cache -t myapp .           # cache ignore karke
+docker build -t myapp .                      # from Dockerfile in current folder
+docker build -t myapp:v1 ./backend           # from specific folder
+docker build --no-cache -t myapp .           # ignore cache
 ```
 
 ---
 
-## 5. Container ke andar jaana / command chalana
+## 5. Accessing Containers / Running Commands
 
 ```bash
-docker exec -it <container> bash        # shell kholo (debian/ubuntu based)
-docker exec -it <container> sh          # alpine images me
-docker exec <container> ls -la          # ek command chalao, bahar hi raho
-docker exec -it -u root <container> sh  # root banke jao (permission issues)
+docker exec -it <container> bash        # open shell (debian/ubuntu based)
+docker exec -it <container> sh          # for alpine images
+docker exec <container> ls -la          # run command and exit
+docker exec -it -u root <container> sh  # enter as root (for permissions)
 ```
 
-> Alpine images (`node:20-alpine`) me `bash` nahi hota — `sh` use karo.
-> Shell se bahar aane ke liye `exit`.
+> Alpine images (`node:20-alpine`) do not have `bash` — use `sh`.
+> Use `exit` to leave the shell.
 
-**Naya temporary container chalao** (existing ko chhede bina):
+**Run a new temporary container** (without affecting existing ones):
 
 ```bash
-docker run --rm -it python:3.11-slim bash        # kaam khatam, container delete
+docker run --rm -it python:3.11-slim bash        # auto-delete after exit
 docker run --rm -v "${PWD}:/app" -w /app node:20-alpine npm install
 ```
 
-| Flag | Matlab |
+| Flag | Meaning |
 |---|---|
-| `--rm` | Kaam ke baad container auto-delete |
+| `--rm` | Auto-delete container after task |
 | `-it` | Interactive terminal |
-| `-d` | Background me chalao |
-| `-v host:container` | Folder mount karo |
-| `-w /app` | Container ke andar working directory |
+| `-d` | Run in background |
+| `-v host:container` | Mount folder |
+| `-w /app` | Working directory inside container |
 | `-p 8000:8000` | Port mapping (host:container) |
 | `-e KEY=value` | Environment variable |
-| `--name mera-app` | Container ka naam |
+| `--name my-app` | Container name |
 
 ---
 
 ## 6. Logs
 
 ```bash
-docker logs <container>                  # saare logs
-docker logs -f <container>               # live logs (Ctrl+C se bahar)
+docker logs <container>                  # all logs
+docker logs -f <container>               # live logs (Ctrl+C to exit)
 docker logs --tail=50 <container>        # last 50 lines
 docker logs -f --tail=50 <container>     # last 50 + live
-docker logs --since 10m <container>      # last 10 minute ke
-docker logs -t <container>               # timestamp ke saath
+docker logs --since 10m <container>      # logs from last 10 minutes
+docker logs -t <container>               # with timestamps
 ```
 
-> Container crash ho gaya? `docker logs <container>` chalao — error wahin milega.
+> Container crashed? Run `docker logs <container>` — the error will be there.
 
 ---
 
-## 7. Inspect — Details Nikalna
+## 7. Inspect — Extracting Details
 
 ```bash
-docker inspect <container>               # poori details (JSON)
-docker inspect <image>                   # image ki details
-docker stats                             # live CPU/RAM usage (sab containers)
-docker stats <container>                 # ek container ka
-docker top <container>                   # andar chal rahe processes
+docker inspect <container>               # full details (JSON)
+docker inspect <image>                   # image details
+docker stats                             # live CPU/RAM usage (all containers)
+docker stats <container>                 # single container stats
+docker top <container>                   # running processes
 docker port <container>                  # port mappings
-docker diff <container>                  # image se kya files change hui
+docker diff <container>                  # file changes from image
 ```
 
-**Specific value nikalo:**
+**Extract specific values:**
 
 ```bash
 docker inspect -f '{{.State.Status}}' fastapi_backend           # running/exited
-docker inspect -f '{{.State.ExitCode}}' fastapi_backend         # crash ka code
+docker inspect -f '{{.State.ExitCode}}' fastapi_backend         # crash code
 docker inspect -f '{{.NetworkSettings.IPAddress}}' fastapi_backend
-docker inspect -f '{{.Config.Image}}' fastapi_backend           # kaunsi image
+docker inspect -f '{{.Config.Image}}' fastapi_backend           # image used
 docker inspect -f '{{json .Config.Env}}' fastapi_backend        # env variables
 ```
 
 ---
 
-## 8. Files Copy Karna
+## 8. Copying Files
 
 ```bash
-docker cp <container>:/app/main.py ./main.py      # container se host pe
-docker cp ./config.json <container>:/app/         # host se container me
-docker cp <container>:/app/logs ./logs            # poora folder
+docker cp <container>:/app/main.py ./main.py      # container to host
+docker cp ./config.json <container>:/app/         # host to container
+docker cp <container>:/app/logs ./logs            # copy entire folder
 ```
 
 ---
@@ -208,132 +208,130 @@ docker cp <container>:/app/logs ./logs            # poora folder
 ## 9. Volumes (Data)
 
 ```bash
-docker volume ls                    # saare volumes
+docker volume ls                    # all volumes
 docker volume inspect <volume>      # details
-docker volume create mera-data      # naya volume
+docker volume create my-data        # create new volume
 docker volume rm <volume>           # delete
-docker volume prune                 # unused volumes delete
+docker volume prune                 # delete unused volumes
 ```
 
-> Volumes me database ka data rehta hai. Delete karoge to data chala jayega.
+> Volumes store database data. Deleting them results in data loss.
 
 ---
 
 ## 10. Networks
 
 ```bash
-docker network ls                          # saare networks
-docker network inspect <network>           # kaun se containers judey hain
-docker network create mera-network         # naya network
+docker network ls                          # all networks
+docker network inspect <network>           # connected containers
+docker network create my-network           # create new network
 docker network connect <network> <container>
 docker network disconnect <network> <container>
-docker network prune                       # unused networks delete
+docker network prune                       # delete unused networks
 ```
 
-> Compose apna network khud banata hai. Isi wajah se `backend` service ko frontend se `http://backend:8000` naam se call kar sakte ho.
+> Compose creates its own network. This allows the `backend` service to call the frontend via `http://backend:8000`.
 
 ---
 
-## 11. Cleanup — Space Khali Karna
+## 11. Cleanup — Freeing Space
 
 ```bash
-docker system df              # kitni jagah kis cheez ne li hai
+docker system df              # disk usage by Docker
 docker container prune        # stopped containers
 docker image prune            # dangling images
-docker image prune -a         # saari unused images
+docker image prune -a         # all unused images
 docker volume prune           # unused volumes
 docker network prune          # unused networks
-docker system prune           # sab kuch (volumes chhod ke)
-docker system prune -a        # sab kuch + unused images
-docker system prune -a --volumes    # NUCLEAR — volumes bhi
+docker system prune           # everything (except volumes)
+docker system prune -a        # everything + unused images
+docker system prune -a --volumes    # NUCLEAR — includes volumes
 ```
 
-> ⚠️ `prune` commands **saare projects** pe asar karti hain, sirf is project pe nahi.
-> `--volumes` wali sabse khatarnaak hai — databases ka data delete ho jayega.
+> ⚠️ `prune` commands affect **all projects**, not just the current one.
+> The `--volumes` flag is destructive — database data will be deleted.
 
 ---
 
-## ⚠️ Data Safety — kaunsi command data udati hai
+## ⚠️ Data Safety — Destructive Commands
 
 ### Safe vs Destructive
 
-| Kaam | Command | Data |
+| Action | Command | Data |
 |---|---|---|
-| Roz band karna | `docker compose down` | ✅ Safe |
+| Daily stop | `docker compose down` | ✅ Safe |
 | Restart | `docker compose restart` | ✅ Safe |
 | Backend rebuild | `docker compose up -d --build backend` | ✅ Safe |
-| Frontend ka `node_modules` reset | `--renew-anon-volumes` (neeche) | ✅ Safe |
-| **Sab fresh chahiye** | `docker compose down -v` | ❌ **DB ka data delete** |
-| **Sab fresh chahiye** | `docker volume prune` | ❌ Unused volumes delete |
-| **Sab fresh chahiye** | `docker system prune -a --volumes` | ❌ Sab kuch, har project ka |
+| Reset frontend `node_modules` | `--renew-anon-volumes` (below) | ✅ Safe |
+| **Fresh start** | `docker compose down -v` | ❌ **DB data deleted** |
+| **Fresh start** | `docker volume prune` | ❌ Unused volumes deleted |
+| **Fresh start** | `docker system prune -a --volumes` | ❌ Everything, all projects |
 
-### Local database Docker se alag hai
+### Local database vs Docker
 
-Confuse mat hona — do alag database ho sakte hain:
-
-| | Kahan rehta hai | `down -v` ka asar |
+| | Location | `down -v` effect |
 |---|---|---|
-| **Local PostgreSQL** (system pe installed) | Windows service, `C:\Program Files\PostgreSQL\...` | ❌ **Kuch nahi hota.** Docker uske paas ja hi nahi sakta |
-| **Docker PostgreSQL** | Named volume (`postgres_data`) | ✅ **Poora delete** |
+| **Local PostgreSQL** (system installed) | Windows service, `C:\Program Files\PostgreSQL\...` | ❌ **No effect.** Docker cannot access it |
+| **Docker PostgreSQL** | Named volume (`postgres_data`) | ✅ **Fully deleted** |
 
-Docker ke commands sirf Docker ki duniya me chalte hain. Tumhare system pe installed database, uske users aur data ko wo chhoo bhi nahi sakte.
+Docker commands only affect the Docker environment. They cannot touch locally installed databases.
 
-### `node_modules` volume reset karo, DB bachao
+### Reset `node_modules` volume, keep DB
 
-Problem: frontend me naya npm package add kiya, purana anonymous volume chipka hua hai — par `down -v` karoge to DB bhi ud jayega.
+Problem: Added a new npm package, old anonymous volume persists — but `down -v` deletes the DB.
 
-**Sabse aasan (sirf frontend ke anonymous volumes naye banao):**
+**Easiest way (recreate frontend anonymous volumes only):**
 ```bash
 docker compose up -d --build --force-recreate --renew-anon-volumes frontend
 ```
 
-**Ya manually:**
+**Or manually:**
 ```bash
 docker compose down
-docker volume ls                  # lambe hash wale = anonymous volumes
+docker volume ls                  # long hashes = anonymous volumes
 docker volume rm <hash>
 docker compose up -d --build
 ```
 
-> `--renew-anon-volumes` sirf **anonymous** volumes naye banata hai. `postgres_data` ek **named** volume hai, wo bacha rehta hai.
+> `--renew-anon-volumes` only recreates **anonymous** volumes. `postgres_data` is a **named** volume and remains intact.
 
-### Volume gaya ya nahi, check karo
+### Verify volume deletion
 
 ```bash
 docker volume ls
-docker volume ls -q | grep postgres        # kuch nahi mila = delete ho chuka
+docker volume ls -q | grep postgres        # empty = deleted
 ```
 
-### Backup lo (asli data ho to)
+### Backup (for real data)
 
 ```bash
 docker compose exec -T db pg_dump -U seatpulse seatpulse > backup.sql
 docker compose exec -T db psql -U seatpulse -d seatpulse < backup.sql   # restore
 ```
 
-> Is project me seed data hai, isliye `down -v` ke baad recovery bas 3 command hai —
-> `up -d` → `alembic upgrade head` → `python seed.py`. Isiliye seed script likhi thi.
+> This project uses seed data, so recovery after `down -v` is just 3 commands:
+> `up -d` → `alembic upgrade head` → `python seed.py`.
 
 ---
 
 ## 12. Docker Compose
 
-| Kya karna hai | Command |
+| Action | Command |
 |---|---|
-| Start (build karke) | `docker compose up --build` |
-| Background me start | `docker compose up -d` |
+| Start (with build) | `docker compose up --build` |
+| Start in background | `docker compose up -d` |
 | Stop | `docker compose down` |
-| Stop + volumes delete | `docker compose down -v` |
-| Ek service start | `docker compose up -d backend` |
-| Ek service rebuild + start | `docker compose up -d --build backend` |
-| Restart | `docker compose restart backend` |
+| Stop + delete volumes | `docker compose down -v` |
+| Start one service | `docker compose up -d backend` |
+| Rebuild + start one service | `docker compose up -d --build backend` |
+| Restart service | `docker compose restart backend` |
 | Status | `docker compose ps` |
 | Live logs | `docker compose logs -f` |
-| Ek service ke logs | `docker compose logs -f backend` |
-| Andar command chalao | `docker compose exec backend bash` |
-| Temporary container me chalao | `docker compose run --rm backend python --version` |
-| Scratch se build | `docker compose build --no-cache` |
-| Final config dekho (debug) | `docker compose config` |
+| Logs for one service | `docker compose logs -f backend` |
+| Run command inside | `docker compose exec backend bash` |
+| Run in temp container | `docker compose run --rm backend python --version` |
+| Build from scratch | `docker compose build --no-cache` |
+| View final config (debug) | `docker compose config` |
 
 ---
 
@@ -341,9 +339,9 @@ docker compose exec -T db psql -U seatpulse -d seatpulse < backup.sql   # restor
 
 ```bash
 docker version         # client + server version
-docker info            # system info, kitne containers/images hain
+docker info            # system info, container/image counts
 docker --help
-docker <command> --help    # jaise: docker run --help
+docker <command> --help    # e.g., docker run --help
 ```
 
 ---
@@ -351,109 +349,109 @@ docker <command> --help    # jaise: docker run --help
 ## Common Cheat Combos
 
 ```bash
-# Saare running containers band karo
+# Stop all running containers
 docker stop $(docker ps -q)
 
-# Saare containers delete (stopped + running)
+# Delete all containers (stopped + running)
 docker rm -f $(docker ps -aq)
 
-# Saari images delete
+# Delete all images
 docker rmi -f $(docker images -q)
 
-# Ek container ki image ka naam pata karo
+# Get image name for a container
 docker inspect -f '{{.Config.Image}}' fastapi_backend
 
-# Kaunsa container port 8000 use kar raha hai
+# Which container uses port 8000
 docker ps --format "{{.Names}} {{.Ports}}" | grep 8000
 
-# Crash hua container kis wajah se? (exit code + logs)
+# Why did a container crash? (exit code + logs)
 docker ps -a -f "status=exited"
 docker logs --tail=50 <container>
 ```
 
 ---
 
-## 🔍 "Site khul hi nahi rahi" — debug ka sahi tarika
+## 🔍 Debugging "Site not loading"
 
-Har baar yahi 3 command, isi order me. Guess mat karo, logs padho.
+Follow these 3 commands in order. Do not guess, read the logs.
 
 ```bash
-# 1. Container chal raha hai ya nahi?
+# 1. Is the container running?
 docker compose ps
 
-# 2. Logs me error kya hai? (ye 90% baar jawab de deta hai)
+# 2. What is the error in the logs? (solves 90% of issues)
 docker compose logs --tail=40 backend
 
-# 3. Live dekhna ho to
+# 3. Watch live
 docker compose logs -f backend
 ```
 
-### ⚠️ "Up" dikhne ka matlab "kaam kar raha hai" nahi hota
+### ⚠️ "Up" does not mean "Working"
 
-`docker compose ps` me `Up` dikh raha ho, phir bhi port dead ho sakta hai:
+`docker compose ps` might show `Up`, but the port could be dead:
 
 ```
 NAME              STATUS         PORTS
-fastapi_backend   Up 2 minutes   0.0.0.0:8000->8000/tcp     <- dikhne me theek
+fastapi_backend   Up 2 minutes   0.0.0.0:8000->8000/tcp     <- looks fine
 ```
 
-Par logs me:
+But logs show:
 ```
 File "/app/main.py", line 5, in <module>
     from sqlalchemy import func, select, text
 ModuleNotFoundError: No module named 'sqlalchemy'
 ```
 
-**Wajah:** `--reload` mode me uvicorn app load karne me fail hota hai par **process zinda rehta hai** (wo file changes ka wait karta rehta hai). Container "Up" hai, app chalu hi nahi hua.
+**Reason:** In `--reload` mode, uvicorn fails to load the app but the **process stays alive** (waiting for file changes). The container is "Up", but the app never started.
 
-**Isliye: `ps` par bharosa mat karo, hamesha `logs` padho.**
+**Conclusion: Do not trust `ps`, always read `logs`.**
 
-### Logs padhne ka tareeka
+### How to read logs
 
-Stack trace **lamba** hota hai. **Sabse aakhri line** padho — asli error wahin hoti hai. Upar ka sab uvicorn ka internal code hai, uska koi matlab nahi.
+Stack traces are **long**. Read the **last line** — that is where the actual error is. Everything above is internal framework code.
 
-| Aakhri line | Matlab | Fix |
+| Last line | Meaning | Fix |
 |---|---|---|
-| `ModuleNotFoundError: No module named 'X'` | Package install nahi hua | `docker compose up -d --build <service>` |
-| `ImportError: cannot import name 'X' from 'Y'` | Code me galat import | Wo file kholo, naam check karo |
-| `connection refused` / `could not connect` | DB/Redis ready nahi | `docker compose ps` me `healthy` dekho |
-| `SyntaxError` / `IndentationError` | Code me typo | File aur line number logs me likha hai |
-| `Address already in use` | Port busy hai | `docker ps` se dekho kaun use kar raha |
+| `ModuleNotFoundError: No module named 'X'` | Package not installed | `docker compose up -d --build <service>` |
+| `ImportError: cannot import name 'X' from 'Y'` | Incorrect import | Check file and name |
+| `connection refused` / `could not connect` | DB/Redis not ready | Check `healthy` status in `docker compose ps` |
+| `SyntaxError` / `IndentationError` | Typo in code | Check file and line number in logs |
+| `Address already in use` | Port busy | Find process with `docker ps` |
 
 ### Golden rule
 
-> **`requirements.txt` ya `package.json` badla = `--build` chahiye.**
-> Frontend me ek qadam aur — `down -v` bhi (anonymous volume ki wajah se).
+> **Changed `requirements.txt` or `package.json` = `--build` required.**
+> For frontend, one extra step — `down -v` (due to anonymous volumes).
 
 ```bash
-docker compose up -d --build backend      # backend ke liye
-docker compose down -v && docker compose up --build   # frontend ke liye
+docker compose up -d --build backend      # for backend
+docker compose down -v && docker compose up --build   # for frontend
 ```
 
 ---
 
 ## Troubleshooting
 
-| Problem | Kya karo |
+| Problem | Action |
 |---|---|
-| **`localhost:<port>` khul hi nahi raha** | `docker compose logs --tail=40 <service>` — stack trace ki **aakhri line** padho |
-| `ModuleNotFoundError` / package "not found" par file me hai | Image rebuild nahi hua — `docker compose up -d --build <service>` |
-| Container "Up" hai par port dead hai | App crash ho chuka hai, process zinda hai. Logs hi batayenge |
-| `port is already allocated` | `docker ps` se dekho kaun use kar raha, phir `docker stop <container>` |
-| `Cannot connect to the Docker daemon` | Docker Desktop start nahi hai — chalu karo |
-| `exec: "bash": not found` | Alpine image hai — `sh` use karo |
-| Container turant `Exited (1)` ho jata hai | `docker logs <container>` me error dekho |
-| `no space left on device` | `docker system df` phir `docker system prune -a` |
-| Code change container me nahi dikh raha | Volume mount check karo, ya `docker compose up -d --build <service>` |
-| `Error response... is not running` | `exec` ki jagah `docker compose run --rm` use karo |
-| Image dubara build hi nahi ho rahi | `docker compose build --no-cache <service>` |
-| Naya npm package `package.json` me hai par container me "not found" | Purana anonymous volume chipka hua hai — `docker compose down -v` phir `up --build`. Sirf `down` kaafi **nahi** |
-| `ERR_MODULE_NOT_FOUND` build successful hone ke baad bhi | Same wajah — volume ne naye image ka `node_modules` dhak diya |
-| Port mapping dikhti hai par connect nahi ho raha | Host pe koi aur process wo port le chuka hai (jaise local PostgreSQL). Compose me host-side port badal do |
+| **`localhost:<port>` not loading** | `docker compose logs --tail=40 <service>` — read the **last line** |
+| `ModuleNotFoundError` but file exists | Image not rebuilt — `docker compose up -d --build <service>` |
+| Container "Up" but port dead | App crashed, process alive. Check logs |
+| `port is already allocated` | Find process with `docker ps`, then `docker stop <container>` |
+| `Cannot connect to the Docker daemon` | Docker Desktop is not running — start it |
+| `exec: "bash": not found` | Alpine image — use `sh` |
+| Container exits immediately `Exited (1)` | Check `docker logs <container>` |
+| `no space left on device` | `docker system df` then `docker system prune -a` |
+| Code changes not visible | Check volume mount, or `docker compose up -d --build <service>` |
+| `Error response... is not running` | Use `docker compose run --rm` instead of `exec` |
+| Image not rebuilding | `docker compose build --no-cache <service>` |
+| New npm package "not found" | Old anonymous volume — `docker compose down -v` then `up --build`. `down` alone is **not enough** |
+| `ERR_MODULE_NOT_FOUND` after build | Same reason — volume masking `node_modules` |
+| Port mapping visible but unreachable | Host process (e.g., local PostgreSQL) is using the port. Change host-side port in Compose |
 
 ---
 
 ## Related
 
 - [postgres-commands.md](postgres-commands.md) — psql, users, queries, backup
-- [roadmap.md](../roadmap.md) — project ka plan
+- [roadmap.md](../roadmap.md) — project plan

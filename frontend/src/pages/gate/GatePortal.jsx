@@ -6,15 +6,11 @@ import { useBooking } from '../../booking/BookingContext'
 /**
  * Gate check-in portal.
  *
- * Camera se QR scan karta hai, aur camera na ho to manual entry.
+ * Scans QR codes via camera, or allows manual entry if no camera is available.
  *
- * ⚠️ QR scanning ke liye koi library NAHI lagayi. Browser ka native
- * `BarcodeDetector` use kar rahe hain — Chrome/Edge/Android me hai.
- * Firefox/Safari me nahi hai, wahan manual entry pe fall back hota hai.
+ * ⚠️ No external library used for QR scanning. We use the native browser `BarcodeDetector` (available in Chrome/Edge/Android). It is not supported in Firefox/Safari, which fall back to manual entry.
  *
- * Library (html5-qrcode / jsQR) ~200KB add karti. Ek gate portal ke liye,
- * jo aksar ek hi tarah ke device pe chalta hai, wo bhaari sauda hai —
- * aur manual entry waise bhi chahiye (phata hua QR, phone ki dead battery).
+ * Libraries like html5-qrcode or jsQR add ~200KB. For a gate portal often running on specific devices, this is too heavy—and manual entry is required anyway (for damaged QRs or dead batteries).
  */
 export default function GatePortal() {
   const { event } = useBooking()
@@ -29,8 +25,8 @@ export default function GatePortal() {
   const videoRef = useRef(null)
   const streamRef = useRef(null)
   const loopRef = useRef(null)
-  // Ek hi QR camera me kai frames tak dikhta hai — bina is guard ke
-  // ek scan pe 20 requests chali jaatin
+  // A QR code remains visible for multiple frames; this guard prevents
+  // triggering 20 requests for a single scan.
   const lastScanned = useRef({ token: null, at: 0 })
 
   const supported = typeof window !== 'undefined' && 'BarcodeDetector' in window
@@ -41,7 +37,7 @@ export default function GatePortal() {
     try {
       const res = await checkIn(token)
       setResult(res)
-      // Har scan ke baad counter refresh
+      // Refresh counter after each scan
       if (event) getCheckinStats(event.id).then(setStats).catch(() => {})
     } catch (err) {
       setResult({ ok: false, reason: 'error', error: err.message })
@@ -60,7 +56,7 @@ export default function GatePortal() {
     setCameraError(null)
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        // Phone pe peeche wala camera — gate pe wahi use hota hai
+        // Use rear camera for gate scanning
         video: { facingMode: 'environment' },
       })
       streamRef.current = stream
@@ -77,7 +73,7 @@ export default function GatePortal() {
           if (codes.length) {
             const token = codes[0].rawValue
             const now = Date.now()
-            // Wahi QR 3 second tak dobara process mat karo
+            // Do not re-process the same QR for 3 seconds
             if (token !== lastScanned.current.token || now - lastScanned.current.at > 3000) {
               lastScanned.current = { token, at: now }
               submit(token)
@@ -102,7 +98,7 @@ export default function GatePortal() {
     setScanning(false)
   }
 
-  // Page chhodte waqt camera band karo — warna phone ki light jalti rehti hai
+  // Stop camera when leaving the page to prevent the flashlight from staying on.
   useEffect(() => () => stopCamera(), [])
 
   return (
@@ -111,7 +107,7 @@ export default function GatePortal() {
         <div>
           <h1 className="text-xl font-semibold text-slate-100">Gate Check-in</h1>
           <p className="mt-1 text-sm text-slate-500">
-            {event?.name ?? 'Ticket QR scan karo'}
+            {event?.name ?? 'Scan ticket QR'}
           </p>
         </div>
 
@@ -126,7 +122,7 @@ export default function GatePortal() {
         )}
       </header>
 
-      {/* Result — sabse upar aur sabse bada, kyunki gate pe wahi dekha jata hai */}
+      {/* Result — displayed prominently as it is the primary focus at the gate */}
       {result && <ResultCard result={result} onDismiss={() => setResult(null)} />}
 
       <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
@@ -147,7 +143,7 @@ export default function GatePortal() {
               )}
               {!scanning && (
                 <div className="flex h-48 items-center justify-center text-sm text-slate-600">
-                  Camera band hai
+                  Camera is off
                 </div>
               )}
             </div>
@@ -165,19 +161,17 @@ export default function GatePortal() {
 
             {cameraError && (
               <p className="mt-2 rounded-lg bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
-                Camera nahi khula: {cameraError}. Neeche manual entry use karo.
+                Camera failed to open: {cameraError}. Please use manual entry below.
               </p>
             )}
           </>
         ) : (
           <p className="rounded-lg bg-amber-500/10 px-3 py-2.5 text-xs leading-relaxed text-amber-200">
-            Is browser me QR scanning (<code>BarcodeDetector</code>) nahi hai —
-            Chrome ya Edge me kholo. Tab tak manual entry use karo.
+            This browser does not support QR scanning (<code>BarcodeDetector</code>). Please use Chrome or Edge, or use manual entry in the meantime.
           </p>
         )}
 
-        {/* Manual entry hamesha rehta hai — phata QR, dead battery, ya
-            browser support na ho */}
+        {/* Manual entry is always available for damaged QRs, dead batteries, or lack of browser support */}
         <form
           onSubmit={(e) => {
             e.preventDefault()
@@ -187,13 +181,13 @@ export default function GatePortal() {
           className="mt-4 border-t border-[var(--border)] pt-4"
         >
           <label className="block text-xs font-medium text-slate-400">
-            Ya token manually daalo
+            Or enter token manually
           </label>
           <div className="mt-1.5 flex gap-2">
             <input
               value={manual}
               onChange={(e) => setManual(e.target.value)}
-              placeholder="QR ke neeche likha token"
+              placeholder="Token printed below the QR"
               className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2
                          font-mono text-sm text-slate-100 outline-none transition
                          placeholder:font-sans placeholder:text-slate-700 focus:border-violet-500"
@@ -213,7 +207,7 @@ export default function GatePortal() {
   )
 }
 
-/** Gate pe khada banda 2 second me padhta hai — isliye bada aur rang wala. */
+/** Gate staff need to read this in 2 seconds — keep it large and color-coded. */
 function ResultCard({ result, onDismiss }) {
   const tone = result.ok
     ? { bg: 'bg-emerald-500/15 ring-emerald-500/30', text: 'text-emerald-300', icon: '✓' }
@@ -222,12 +216,12 @@ function ResultCard({ result, onDismiss }) {
       : { bg: 'bg-rose-500/15 ring-rose-500/30', text: 'text-rose-300', icon: '✕' }
 
   const headline = {
-    checked_in: 'Andar jao',
-    already_checked_in: 'Pehle se use ho chuka',
-    invalid_ticket: 'Ticket valid nahi hai',
-    booking_cancelled: 'Booking cancel ho chuki hai',
-    ticket_not_issued: 'Ticket issue hi nahi hua',
-    error: 'Kuch galat hua',
+    checked_in: 'Admit',
+    already_checked_in: 'Already used',
+    invalid_ticket: 'Invalid ticket',
+    booking_cancelled: 'Booking cancelled',
+    ticket_not_issued: 'Ticket not issued',
+    error: 'Something went wrong',
   }[result.reason] ?? result.reason
 
   return (
@@ -254,11 +248,11 @@ function ResultCard({ result, onDismiss }) {
             <p className="font-mono text-xs text-slate-500">{result.booking_ref}</p>
           )}
 
-          {/* Duplicate ke case me "kab aur kisne" — gate pe yahi poocha jata hai */}
+          {/* For duplicates, show "when and by whom" — common questions at the gate */}
           {result.already_checked_in && result.checked_in_at && (
             <p className="mt-2 rounded-lg bg-black/20 px-3 py-2 text-xs text-amber-200">
-              Entry {new Date(result.checked_in_at).toLocaleTimeString()} par ho chuki thi
-              {result.scanned_by && ` — ${result.scanned_by} ne scan kiya`}
+              Checked in at {new Date(result.checked_in_at).toLocaleTimeString()}
+              {result.scanned_by && ` — scanned by ${result.scanned_by}`}
             </p>
           )}
 

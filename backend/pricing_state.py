@@ -1,8 +1,8 @@
 """
-Event ki pricing state nikalne ka shared helper.
+Shared helper to determine the pricing state of an event.
 
-Alag file isliye ki seats, events, bookings aur payments — sab ise use
-karte hain, aur kisi ek router me rakhne se circular imports ban jaate.
+Isolated in a separate file to prevent circular imports, as it is consumed
+by seats, events, bookings, and payments modules.
 """
 
 from sqlalchemy import func, select
@@ -14,10 +14,10 @@ from pricing import PricingInfo, current_price, pricing_for_event
 
 def pricing_state(db: Session, event: Event) -> PricingInfo:
     """
-    Event ki abhi ki pricing.
+    Calculates the current pricing state for an event.
 
-    `sold` ke liye CONFIRMED bookings ginte hain, `seats.status='booked'`
-    nahi — dono almost same hote hain, par bookings hi paise ka sach hai.
+    Uses CONFIRMED bookings to determine `sold` count rather than seat status,
+    as bookings are the authoritative source for revenue.
     """
     total = db.scalar(select(func.count(Seat.id)).where(Seat.event_id == event.id)) or 0
     sold = db.scalar(
@@ -26,9 +26,8 @@ def pricing_state(db: Session, event: Event) -> PricingInfo:
         )
     ) or 0
 
-    # sample_base — "kitni seats me price badhega" ka andaza is price par
-    # lagta hai. Sabse sasti seat use karte hain, kyunki wahi sabse pehle
-    # bikti hai aur user usi ko dekh raha hota hai.
+    # sample_base: Uses the minimum seat price to estimate surge thresholds,
+    # as the lowest-priced seats are typically the first to sell.
     sample = db.scalar(select(func.min(Seat.price)).where(Seat.event_id == event.id))
 
     return pricing_for_event(
@@ -43,10 +42,10 @@ def pricing_state(db: Session, event: Event) -> PricingInfo:
 
 def price_now(db: Session, seat: Seat) -> float:
     """
-    Is seat ka abhi ka price.
+    Returns the current price for a specific seat.
 
-    ⚠️ Hold me hai to LOCKED price milta hai — wahi jo user ko dikhaya tha.
-    Ye is poore feature ka sabse zaroori niyam hai.
+    ⚠️ If the seat is held, return the LOCKED price originally presented to
+    the user. This is a critical requirement for price consistency.
     """
     if seat.held_price is not None:
         return float(seat.held_price)
