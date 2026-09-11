@@ -49,9 +49,9 @@ The test pins this down:
 
 ```python
 def test_draft_does_not_create_an_event(...):
-    before = len(organizer_ke_events)
+    before = len(organizer_events)
     client.post("/api/organizer/events/draft", ...)
-    after = len(organizer_ke_events)
+    after = len(organizer_events)
     assert after == before
 ```
 
@@ -112,8 +112,8 @@ Both are in the same `ai.py`, with their reasons documented separately — other
 The first output was:
 
 ```
-"description": "Arijit Singh ke saath ek shaam ka anand lein. Yeh live
-  concert sangeet premion ke liye ek vishesh avsar hai..."
+"description": "Enjoy an evening with Arijit Singh. This live
+  concert is a special occasion for music lovers..."
 ```
 
 The brief was in **English**, but the response came in **Hindi transliteration**.

@@ -80,7 +80,7 @@ export default function GatePortal() {
             }
           }
         } catch {
-          /* frame decode fail — agla frame try hoga */
+          /* frame decode failed — the next frame will retry */
         }
         loopRef.current = requestAnimationFrame(tick)
       }

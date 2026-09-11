@@ -111,6 +111,8 @@ seat filters.
 
 Rules:
 - Only populate fields explicitly mentioned. Do not guess.
+- Users write in English or Hinglish (romanised Hindi). The quoted phrases
+  below are example USER INPUT, not instructions — recognise both forms.
 - "saath me" / "together" / "ek saath" -> together=true
 - "stage ke paas" / "aage" / "front" -> row_preference=front
 - "peeche" / "back" -> row_preference=back

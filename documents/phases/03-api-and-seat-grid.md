@@ -106,7 +106,7 @@ Full code: [../backend/routers/bookings.py](../../backend/routers/bookings.py)
 ```python
 # 1. Cheap check — for clean error messages
 if seat.status != SEAT_AVAILABLE:
-    raise HTTPException(409, f"Seat available nahi hai (status: {seat.status})")
+    raise HTTPException(409, f"Seat is not available (status: {seat.status})")
 
 # 2. LAYER 2 — atomic update, the real decision happens here
 result = db.execute(
@@ -120,14 +120,14 @@ result = db.execute(
 )
 if result.rowcount == 0:
     db.rollback()
-    raise HTTPException(409, "Seat abhi abhi kisi aur ne book kar li")
+    raise HTTPException(409, "Seat was just booked by someone else")
 
 # 3. LAYER 3 — database safety net
 try:
     db.commit()
 except IntegrityError:
     db.rollback()
-    raise HTTPException(409, "Is seat ki booking pehle se maujood hai")
+    raise HTTPException(409, "This seat is already booked")
 ```
 
 **Why isn't the Step 1 check enough?**

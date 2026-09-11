@@ -2,19 +2,16 @@
 #
 # Phase 15 — Pessimistic vs Optimistic locking benchmark.
 #
-# Chaar scenarios chalata hai, har ek se pehle database aur Redis saaf
-# karke. Har run ke baad integrity check bhi chalti hai — kyunki "kaunsa
-# tez hai" ka jawab tabhi matlab rakhta hai jab dono SAHI hon.
+# Runs four scenarios, clearing the database and Redis before each. An integrity check follows every run — because performance comparisons are only valid if both are correct.
 #
-# Chalao (project root se):
+# Run from project root:
 #     bash loadtest/run_benchmark.sh
 #
-# ⚠️ Backend BENCHMARK_MODE=true ke saath chal raha hona chahiye, warna
-# server strategy params ignore kar dega aur chaaron runs ek jaise honge.
+# ⚠️ Backend must run with BENCHMARK_MODE=true, otherwise it ignores strategy parameters and all runs will be identical.
 #
-# Har run ke beech reset hota hai kyunki:
-#   - target seat book ho chuki hoti hai (agli run me sabko 409 milta)
-#   - rate limit buckets khaali ho chuke hote (agli run 429 se shuru hoti)
+# Reset between runs is necessary because:
+#   - Target seats are already booked (subsequent runs would return 409)
+#   - Rate limit buckets are exhausted (subsequent runs would start with 429)
 
 set -u
 
@@ -49,12 +46,11 @@ run_scenario() {
   docker compose exec -T backend python verify_integrity.py 2>&1 | grep -E "✅|❌|OVERSOLD|confirmed"
 }
 
-# Redis ON — asli production path. Yahan dono strategies ka farak
-# chhupa rehta hai, kyunki 99% requests DB tak pahunchti hi nahi.
+# Redis ON — the production path. The difference between strategies is hidden here, as 99% of requests never reach the DB.
 run_scenario "optimistic-redis-on"   optimistic  1
 run_scenario "pessimistic-redis-on"  pessimistic 1
 
-# Redis OFF — poora load database pe. Asli farak yahan dikhta hai.
+# Redis OFF — full load on the database. The true difference is visible here.
 run_scenario "optimistic-redis-off"  optimistic  0
 run_scenario "pessimistic-redis-off" pessimistic 0
 

@@ -14,8 +14,8 @@ Until now, every correctness question in the project had the same shape: **one s
 In a group, the question changes:
 
 ```
-Ek seat, ek booking          ->  ek row par exactly-once
-Sab ya koi nahi              ->  N ALAG payments par atomicity
+One seat, one booking          ->  exactly-once on one row
+All or nothing               ->  atomicity across N separate payments
 ```
 
 This is a true distributed problem because every payment arrives at a different time, from a different user, via a different browser — and the deadline can pass in between.
@@ -239,7 +239,7 @@ Last payment and expiry job at the exact same moment (synced via barrier, with j
 Invariant violations: 0
 
 20 runs — confirmed: 16, expired: 4, stuck: 0
-20 runs — confirmed: 17, expired: 3, atke: 0
+20 runs — confirmed: 17, expired: 3, stuck: 0
 ```
 
 Every run checks:

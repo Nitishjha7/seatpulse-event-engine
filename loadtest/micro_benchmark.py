@@ -1,27 +1,23 @@
 """
-Optimistic vs pessimistic — sirf DB claim step ko isolate karke maapna.
+Optimistic vs pessimistic — isolate and measure only the DB claim step.
 
----- Locust se ye alag kyu hai ----
+---- Why this differs from Locust ----
 
-Locust ne poore system ko maapa, aur wahan do cheezein DB strategy ko
-dhak deti hain:
+Locust measured the entire system, where two factors obscure the DB strategy:
 
-  1. Redis lock  — 1433 me se 1432 requests ko DB tak aane hi nahi deta
-  2. Admission control (30 slots) — 300 users me har request ~3s queue me
-     khadi rehti hai. Us 3 second ke saamne DB ka 5ms dikhta hi nahi.
+  1. Redis lock — prevents 1432 out of 1433 requests from reaching the DB.
+  2. Admission control (30 slots) — with 300 users, each request queues for ~3s. The 5ms DB time is invisible against that 3s delay.
 
-Isliye yahan:
+Therefore, here:
   - Redis layer OFF (`redis_lock=off`)
-  - concurrency admission limit se NEECHE (default 25 vs 30 slots), taki
-    queue wait numbers me na ghule
-  - login pehle ek baar, warna bcrypt (~400ms) sab kuch dabaa deta hai
-  - har round me seat wapas free karke ASLI contention dubara paida karte
-    hain — kyunki ek hi contention event maapna shor (noise) hota hai
+  - Concurrency is BELOW the admission limit (default 25 vs 30 slots) to prevent queue wait times from skewing results.
+  - Login once beforehand, otherwise bcrypt (~400ms) dominates the measurements.
+  - Reset the seat each round to recreate REAL contention — measuring a single contention event is just noise.
 
-Chalao:
+Run:
     docker compose exec backend python /loadtest/micro_benchmark.py
 
-⚠️ Backend BENCHMARK_MODE=true ke saath chal raha hona chahiye.
+⚠️ Backend must be running with BENCHMARK_MODE=true.
 """
 
 import asyncio
@@ -34,17 +30,15 @@ import httpx
 BASE = os.getenv("BENCH_HOST", "http://localhost:8000")
 CONCURRENCY = int(os.getenv("BENCH_CONCURRENCY", "25"))
 ROUNDS = int(os.getenv("BENCH_ROUNDS", "40"))
-# Kaun pehle chale.
+# Execution order.
 #
-# Ye knob zaroori hai: jo strategy pehle chalti hai wo thodi thandi machine
-# par chalti hai (pool, page cache, query plans). Agar dono order me result
-# ek jaisa aata hai, tabhi maan sakte hain ki farak asli hai.
+# This knob is necessary: the first strategy runs on a 'colder' machine (pool, page cache, query plans). If results are consistent regardless of order, the difference is genuine.
 ORDER = os.getenv("BENCH_ORDER", "optimistic,pessimistic").split(",")
 PASSWORD = os.getenv("SEED_PASSWORD", "demo1234")
 
 
 async def login_all(client, n):
-    """Sab users ka token pehle hi le lo — bcrypt measurement se bahar rahe."""
+    """Get all user tokens beforehand — keep bcrypt out of the measurement."""
     async def one(i):
         r = await client.post(
             "/api/auth/login",
@@ -58,10 +52,9 @@ async def login_all(client, n):
 
 def free_seat(seat_id):
     """
-    Seat ko wapas available karo — SQL se, API se nahi.
+    Reset seat availability — via SQL, not API.
 
-    API se karte to cancel endpoint ki latency bhi round ke beech aa jati
-    aur agla round pichle ke asar me chalta.
+    Using the API would introduce cancel endpoint latency into the round, causing subsequent rounds to be affected by previous ones.
     """
     from sqlalchemy import delete, update
 
@@ -88,7 +81,7 @@ def free_seat(seat_id):
 
 
 async def one_round(client, tokens, seat_id, strategy):
-    """CONCURRENCY requests ek saath, ek hi seat par."""
+    """Fire CONCURRENCY requests simultaneously at the same seat."""
     url = f"/api/bookings?strategy={strategy}&redis_lock=off"
 
     async def attempt(token):
@@ -104,7 +97,7 @@ async def one_round(client, tokens, seat_id, strategy):
             code = 0
         return (time.perf_counter() - t0) * 1000, code
 
-    # asyncio.gather = sab ek saath nikalte hain, ek ke baad ek nahi
+    # asyncio.gather = all requests fire concurrently, not sequentially
     return await asyncio.gather(*(attempt(t) for t in tokens[:CONCURRENCY]))
 
 
@@ -113,7 +106,7 @@ async def measure(client, tokens, seat_id, strategy):
 
     for _ in range(ROUNDS):
         free_seat(seat_id)
-        # Rate limiter buckets bhi saaf, warna 4th round se 429 milne lagega
+        # Clear rate limiter buckets, otherwise 429 errors will occur from the 4th round onwards
         _clear_buckets()
 
         for ms, code in await one_round(client, tokens, seat_id, strategy):
@@ -146,12 +139,9 @@ async def measure(client, tokens, seat_id, strategy):
 
 def _clear_buckets():
     """
-    Rate limit buckets saaf karo.
+    Clear rate limit buckets.
 
-    ⚠️ Prefix `rl:` hai (rate_limit.py me), `ratelimit:` nahi. Pehle galat
-    prefix likha tha — buckets clear hote hi nahi the, aur 4th round se
-    har request 429 khaane lagti thi. Numbers me wo 429 latency ke roop me
-    ghul rahe the, aur "errors" column ne hi ye pakda.
+    ⚠️ The prefix is `rl:` (in rate_limit.py), not `ratelimit:`. Previously, the wrong prefix prevented buckets from clearing, causing 429 errors from the 4th round onwards. These 429s were skewing latency numbers, which the "errors" column helped identify.
     """
     from redis_client import redis_client
 
@@ -166,15 +156,14 @@ async def main():
     async with httpx.AsyncClient(base_url=BASE, timeout=60.0) as client:
         tokens = await login_all(client, CONCURRENCY)
 
-        # Ek available seat dhoondo
+        # Find an available seat
         seats = (await client.get("/api/events/1/seats")).json()
         seat_id = next(s["id"] for s in seats if s["status"] == "available")
         print(f"target seat id = {seat_id}\n")
 
         results = []
         for strategy in ORDER:
-            # Warm-up round — pehli request me connection pool aur query
-            # plan cache bhar jate hain. Usse maapna galat number deta hai.
+            # Warm-up round — the first request populates the connection pool and query plan cache. Measuring it yields inaccurate results.
             free_seat(seat_id)
             _clear_buckets()
             await one_round(client, tokens, seat_id, strategy)
@@ -196,8 +185,7 @@ async def main():
     print(f"\np50: pessimistic {p['p50'] / o['p50']:.2f}x optimistic")
     print(f"p99: pessimistic {p['p99'] / o['p99']:.2f}x optimistic")
 
-    # Har round me theek ek jeetna chahiye — warna number kaise bhi hon,
-    # comparison bekaar hai
+    # Exactly one win is expected per round — otherwise, regardless of the numbers, the comparison is invalid
     expected = ROUNDS
     for r in results:
         ok = "OK" if r["wins"] == expected else f"BAD (expected {expected})"

@@ -1,29 +1,24 @@
 name: CI
 
-# Push aur PR dono par. PR par isliye ki toota hua code main me pahunche
-# hi nahi — merge ke baad pata chalna bahut der ho jati hai.
+# Run on both push and PR. PRs prevent broken code from reaching main — finding issues after merge is too late.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
 
-# Ek hi branch pe naya push aaye to purana run cancel kar do. Warna 5
-# minute purane commit ka result aata rehta hai aur runner minutes barbaad.
+# Cancel previous runs on the same branch to save runner minutes and avoid stale results.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   # ---------------------------------------------------------------------
-  # Asli test — poora stack chalao aur 66 tests maaro.
+  # Full test suite — run the entire stack and execute 66 tests.
   #
-  # ⚠️ `services:` block use NAHI kiya, jaan-boojh ke.
+  # ⚠️ `services:` block intentionally NOT used.
   #
-  # GitHub ka services block sirf DB/Redis containers deta hai, par app
-  # ko runner par alag se chalana padta — matlab CI wo cheez test karta
-  # jo deploy hoti hi nahi. Yahan hum wahi docker compose chalate hain jo
-  # laptop pe chalti hai. Agar compose file toot jaye, CI usse pakdega.
+  # GitHub services only provide DB/Redis containers, requiring the app to run separately on the runner. This means CI would test an environment that doesn't match production. We run the same docker-compose used locally to ensure CI catches configuration errors.
   # ---------------------------------------------------------------------
   test:
     name: Tests (full stack)
@@ -33,9 +28,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Env file banao
-        # Compose ko root .env chahiye. Example hi kaafi hai — usme sab
-        # dev defaults hain aur koi asli secret nahi.
+      - name: Create env file
+        # Compose requires a root .env file. The example file is sufficient as it contains only development defaults, not actual secrets.
         run: |
           cp .env.example .env
           cp backend/.env.example backend/.env
@@ -43,12 +37,11 @@ jobs:
       - name: Docker layer cache
         uses: docker/setup-buildx-action@v3
 
-      - name: Stack chalu karo
+      - name: Start stack
         run: docker compose up -d --build
 
-      - name: Backend ke ready hone ka wait
-        # Blind `sleep 30` se behtar hai poll karna: ready ho to turant
-        # aage badho, aur na ho to logs ke saath fail ho.
+      - name: Wait for backend
+        # Polling is better than a blind `sleep 30`: proceed immediately when ready, or fail with logs if it times out.
         run: |
           for i in $(seq 1 60); do
             if curl -sf http://localhost:8000/api/health > /dev/null; then
@@ -57,7 +50,7 @@ jobs:
             fi
             sleep 1
           done
-          echo "Backend 60s me ready nahi hua"
+          echo "Backend failed to start within 60s"
           docker compose logs backend
           exit 1
 
@@ -65,18 +58,17 @@ jobs:
         run: docker compose exec -T backend alembic upgrade head
 
       - name: Seed data
-        # Tests ko 500 users aur ek event chahiye — fixtures skip ho jaate
-        # hain agar seed na ho, aur skipped tests green dikhte hain.
+        # Tests require 500 users and an event. Without seeding, fixtures are skipped, which can lead to false-positive green test results.
         run: docker compose exec -T backend python seed.py
 
       - name: Pytest
         run: docker compose exec -T backend python -m pytest tests/ -v
 
       - name: Integrity check
-        # Tests ke baad DB invariants — koi overselling to nahi hui
+        # Post-test DB invariants check — ensure no overselling occurred.
         run: docker compose exec -T backend python verify_integrity.py
 
-      - name: Logs (sirf fail hone par)
+      - name: Logs (on failure only)
         if: failure()
         run: docker compose logs --tail 200
 
@@ -85,11 +77,9 @@ jobs:
         run: docker compose down -v
 
   # ---------------------------------------------------------------------
-  # Production images build hoti hain kya.
+  # Verify production image builds.
   #
-  # Ye alag job hai kyunki prod image me dev tools nahi hain — usme tests
-  # chal hi nahi sakte. Par build toot jaye to deploy ke waqt pata chalna
-  # bahut der hoti hai.
+  # This is a separate job because production images lack dev tools and cannot run tests. Detecting build failures during deployment is too late.
   # ---------------------------------------------------------------------
   build-prod:
     name: Production images
@@ -103,36 +93,34 @@ jobs:
       - name: Env file
         run: cp .env.example .env
 
-      - name: Prod images build karo
+      - name: Build prod images
         run: |
           docker compose -f docker-compose.yml -f docker-compose.prod.yml \
             build backend worker frontend
 
-      - name: Prod image me dev tools nahi hone chahiye
-        # Ye ek asli check hai, dikhawa nahi: prod image me pytest/locust
-        # aa gaye to image bhaari bhi hai aur attack surface bada bhi.
+      - name: Ensure no dev tools in prod image
+        # This is a critical check: including pytest/locust in production images increases image size and expands the attack surface.
         run: |
           docker compose -f docker-compose.yml -f docker-compose.prod.yml \
             run --rm --no-deps --entrypoint sh backend -c \
             'if python -c "import pytest" 2>/dev/null; then
-               echo "FAIL: prod image me pytest hai"; exit 1
+               echo "FAIL: pytest found in prod image"; exit 1
              fi
-             echo "OK: dev tools nahi hain"'
+             echo "OK: no dev tools found"'
 
-      - name: Prod image root se nahi chalni chahiye
+      - name: Ensure prod image does not run as root
         run: |
-          # 2>/dev/null — compose apne "Container ... Created" messages stderr
-          # pe likhta hai; wo uid ke saath mix na ho. tail -1 se aakhri line.
+          # 2>/dev/null suppresses compose stderr messages to prevent them from mixing with the UID output. tail -1 captures the final line.
           USER_ID=$(docker compose -f docker-compose.yml -f docker-compose.prod.yml \
             run --rm --no-deps --entrypoint id backend -u 2>/dev/null | tail -1)
           echo "uid = $USER_ID"
           if [ "$USER_ID" = "0" ]; then
-            echo "FAIL: container root se chal raha hai"
+            echo "FAIL: container is running as root"
             exit 1
           fi
 
   # ---------------------------------------------------------------------
-  # Frontend ka build toot to nahi raha.
+  # Ensure frontend build is not broken.
   # ---------------------------------------------------------------------
   frontend:
     name: Frontend build
@@ -148,9 +136,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      # npm ci — lockfile ko exactly follow karta hai. `npm install` CI me
-      # dependency versions chupchaap badal sakta hai, aur tab CI green
-      # hone ka matlab kam ho jata hai.
+      # npm ci strictly follows the lockfile. `npm install` can silently update dependency versions in CI, reducing the reliability of test results.
       - run: npm ci
         working-directory: frontend
 

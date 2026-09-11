@@ -23,9 +23,9 @@ Follow-up to [09-rate-limit-idempotency.md](09-rate-limit-idempotency.md).
 ## Step 1 — Roles
 
 ```python
-ROLE_ATTENDEE  = "attendee"     # seats dekho aur book karo
-ROLE_ORGANIZER = "organizer"    # apne events banao aur manage karo
-ROLE_ADMIN     = "admin"        # poore platform ka access
+ROLE_ATTENDEE  = "attendee"     # view and book seats
+ROLE_ORGANIZER = "organizer"    # create and manage your events
+ROLE_ADMIN     = "admin"        # full platform access
 ```
 
 ### Why flat roles instead of a permission matrix?
@@ -50,7 +50,7 @@ This prevents typos like `"Organizer"` or `"orgnizer"` — the database enforces
 def require_role(*roles: str):
     def dependency(user: User = Depends(get_current_user)) -> User:
         if user.role not in roles:
-            raise HTTPException(403, f"Is kaam ke liye {' ya '.join(roles)} role chahiye")
+            raise HTTPException(403, f"Requires {' or '.join(roles)} role")
         return user
     return dependency
 ```
@@ -78,10 +78,10 @@ user: User = Depends(require_role(ROLE_ORGANIZER, ROLE_ADMIN))
 def _owned_event(event_id: int, user: User, db: Session) -> Event:
     event = db.get(Event, event_id)
     if event is None:
-        raise HTTPException(404, "Event nahi mila")
+        raise HTTPException(404, "Event not found")
 
     if user.role != ROLE_ADMIN and event.organizer_id != user.id:
-        raise HTTPException(404, "Event nahi mila")   # 403 nahi
+        raise HTTPException(404, "Event not found")   # not 403
 
     return event
 ```
@@ -167,7 +167,7 @@ confirmed = db.scalar(
     )
 )
 if confirmed:
-    raise HTTPException(409, f"{confirmed} confirmed booking hain — delete nahi ho sakta")
+    raise HTTPException(409, f"{confirmed} confirmed bookings exist — cannot delete")
 ```
 
 ⚠️ **This is a critical business rule.** Since cascade delete is enabled, this check prevents a single DELETE command from wiping out **purchased tickets**.
@@ -357,7 +357,7 @@ curl -X PATCH -H "Authorization: Bearer $ORG" -d '{"venue":"Habitat World"}' ...
 ```bash
 # After booking
 curl -X DELETE -H "Authorization: Bearer $ORG" http://localhost:8000/api/organizer/events/2
-# {"detail":"1 confirmed booking hain — event delete nahi ho sakta"}
+# {"detail":"1 confirmed booking exists — event cannot be deleted"}
 ```
 
 ### 5. Admin stats

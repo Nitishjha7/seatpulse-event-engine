@@ -745,7 +745,7 @@ def test_worker_generates_a_downloadable_ticket(client, tokens, free_seat):
 
     booking = _wait_for_ticket(client, token, seat_id)
     if booking is None:
-        pytest.skip("Worker chal raha hai? `docker compose up -d worker`")
+        pytest.skip("Is the worker running? `docker compose up -d worker`")
 
     assert booking["ticket_status"] == "ready"
 
@@ -769,10 +769,10 @@ def test_cannot_download_someone_elses_ticket(client, tokens, free_seat):
     client.post("/api/bookings", json={"seat_id": seat_id}, headers=_headers(owner))
     booking = _wait_for_ticket(client, owner, seat_id)
     if booking is None:
-        pytest.skip("Worker nahi chal raha")
+        pytest.skip("Worker is not running")
 
     res = client.get(f"/api/bookings/{booking['id']}/ticket", headers=_headers(attacker))
-    assert res.status_code == 404      # 403 nahi — existence bhi chhupa rahe hain
+    assert res.status_code == 404      # Not 403 — hiding existence
 
 
 def test_ticket_needs_authentication(client, tokens, free_seat):
@@ -780,7 +780,7 @@ def test_ticket_needs_authentication(client, tokens, free_seat):
     client.post("/api/bookings", json={"seat_id": seat_id}, headers=_headers(tokens[0]))
     booking = _wait_for_ticket(client, tokens[0], seat_id)
     if booking is None:
-        pytest.skip("Worker nahi chal raha")
+        pytest.skip("Worker is not running")
 
     assert client.get(f"/api/bookings/{booking['id']}/ticket").status_code == 401
 
@@ -795,7 +795,7 @@ def test_qr_token_is_not_the_booking_id(client, tokens, free_seat):
     client.post("/api/bookings", json={"seat_id": seat_id}, headers=_headers(tokens[0]))
     booking = _wait_for_ticket(client, tokens[0], seat_id)
     if booking is None:
-        pytest.skip("Worker nahi chal raha")
+        pytest.skip("Worker is not running")
 
     # The token is in the DB and is long/random.
     from database import SessionLocal
@@ -820,7 +820,7 @@ def _booked_with_ticket(client, token, seat_id):
     client.post("/api/bookings", json={"seat_id": seat_id}, headers=_headers(token))
     booking = _wait_for_ticket(client, token, seat_id)
     if booking is None or booking["ticket_status"] != "ready":
-        pytest.skip("Worker nahi chal raha")
+        pytest.skip("Worker is not running")
 
     from database import SessionLocal
     from models import Booking
@@ -957,7 +957,7 @@ def test_multiplier_grows_with_demand():
 
 def test_max_surge_is_a_hard_ceiling():
     """Regardless of the demand_factor, it cannot exceed the max_surge."""
-    # 100% bika, factor 5.0 -> formula 6.0 kehta hai, cap 1.5 hai
+    # 100% sold, factor 5.0 -> formula says 6.0, cap is 1.5
     assert multiplier_for(100, 100, 5.0, 1.5) == 1.5
 
 
@@ -988,9 +988,9 @@ def test_disabled_pricing_never_surges():
 def test_seats_until_increase_counts_forward():
     """
     100 seats, factor 0.5, base ₹1000:
-      0 bika -> 1.000x -> ₹1000
-      1 bika -> 1.005x -> ₹1005 -> ₹10 pe round -> ₹1000  (koi badlaav nahi)
-      2 bika -> 1.010x -> ₹1010                            <- yahan badla
+      0 sold -> 1.000x -> ₹1000
+      1 sold -> 1.005x -> ₹1005 -> round to ₹10 -> ₹1000 (no change)
+      2 sold -> 1.010x -> ₹1010                            <- change here
 
     So the answer is 2, not 1. It seems like 1 at first glance — but the ₹5 difference disappears due to the ₹10 rounding. That is why this function runs a loop instead of estimating with a formula.
     """
@@ -1000,7 +1000,7 @@ def test_seats_until_increase_counts_forward():
     )
     assert info.seats_until_increase == 2
 
-    # Chhota factor -> price dheere badhta hai -> zyada seats lagti hain
+    # Small factor -> price increases slowly -> more seats required
     slow = pricing_for_event(
         enabled=True, sold=0, total=100, demand_factor=0.1, max_surge=2.0,
         sample_base=1000.0,
@@ -1043,7 +1043,7 @@ def surge_event(client, role_tokens):
             "seats_per_row": 5,
             "price_tiers": [{"rows": 2, "price": 1000}],   # 10 seats @ ₹1000
             "dynamic_pricing": True,
-            # 10 seats, factor 1.0 -> har booking par +10% — asar saaf dikhta hai
+            # 10 seats, factor 1.0 -> +10% per booking — effect is clearly visible
             "demand_factor": 1.0,
             "max_surge": 2.0,
         },
@@ -1360,7 +1360,7 @@ def _make_group(client, token, seat_ids, minutes=30):
 
 
 def _pay_share(client, token, share_token, share_id):
-    """Share ka checkout banao aur mock provider se success simulate karo."""
+    """Create a checkout for the share and simulate success via the mock provider."""
     res = client.post(
         f"/api/groups/{share_token}/shares/{share_id}/pay", headers=_headers(token)
     )
@@ -1415,7 +1415,7 @@ def test_partial_payment_confirms_nobody(client, tokens, group_seats):
     assert after["paid_shares"] == 2
     assert after["status"] == "collecting", "Should not confirm with 2 out of 3"
 
-    # Ek bhi seat booked nahi
+    # not a single seat is booked
     for seat_id in group_seats:
         assert _seat(client, seat_id)["status"] == "group_held"
 
@@ -1423,7 +1423,7 @@ def test_partial_payment_confirms_nobody(client, tokens, group_seats):
 
 
 def test_all_paid_confirms_everyone(client, tokens, group_seats):
-    """Aakhri payment aate hi sab ek saath confirm."""
+    """The final payment confirms everyone at once."""
     group = _make_group(client, tokens[0], group_seats)
     st = group["share_token"]
 
@@ -1588,7 +1588,7 @@ def test_late_webhook_after_expiry_is_refunded_not_booked(client, tokens, group_
 
 
 def test_only_one_person_can_claim_a_share(client, tokens, group_seats):
-    """Do log ek hi khaali seat par ek saath — ek hi ko milni chahiye."""
+    """Two people claim the same open seat at once — only one may win."""
     group = _make_group(client, tokens[0], group_seats)
     st = group["share_token"]
     open_share = group["shares"][1]["id"]
@@ -1608,11 +1608,11 @@ def test_only_one_person_can_claim_a_share(client, tokens, group_seats):
 
 
 def test_cannot_pay_someone_elses_share(client, tokens, group_seats):
-    """Jo share tumne claim nahi kiya uska paisa nahi de sakte."""
+    """You cannot pay for a share you did not claim."""
     group = _make_group(client, tokens[0], group_seats)
     st = group["share_token"]
 
-    # share[0] creator (tokens[0]) ka hai
+    # share[0] belongs to the creator (tokens[0])
     res = client.post(
         f"/api/groups/{st}/shares/{group['shares'][0]['id']}/pay",
         headers=_headers(tokens[1]),
@@ -1628,7 +1628,7 @@ def test_group_creation_is_all_or_nothing(client, tokens, group_seats):
 
     Partial holds are useless — a user shouldn't be left waiting for a 3rd seat that will never be available.
     """
-    # Ek seat ko book kar do
+    # Book one seat
     taken = group_seats[2]
     assert client.post("/api/bookings", json={"seat_id": taken},
                        headers=_headers(tokens[5])).status_code == 201
@@ -1647,14 +1647,14 @@ def test_group_creation_is_all_or_nothing(client, tokens, group_seats):
 
 
 def test_unknown_share_token_is_404(client, tokens):
-    """Token guess karke doosron ke group me nahi ghus sakte."""
+    """Guessing a token must not grant access to someone else's group."""
     res = client.get("/api/groups/definitely-not-a-real-token",
                      headers=_headers(tokens[0]))
     assert res.status_code == 404
 
 
 def test_only_creator_can_cancel(client, tokens, group_seats):
-    """Aur non-creator ko 404 milta hai, 403 nahi — existence bhi na pata chale."""
+    """A non-creator gets 404, not 403 — existence stays hidden."""
     group = _make_group(client, tokens[0], group_seats)
     st = group["share_token"]
 
@@ -1900,7 +1900,7 @@ def test_empty_and_oversized_layouts_are_rejected():
         seat_layout.validate({"sections": []})
 
     with pytest.raises(seat_layout.LayoutError):
-        seat_layout.validate(_layout(_section("X", 100)))     # koi row nahi
+        seat_layout.validate(_layout(_section("X", 100)))     # no rows
 
     huge = _layout(
         _section("X", 100, *[_row(f"R{i}", 60) for i in range(40)])
@@ -2062,10 +2062,10 @@ class _FakeSeat:
         self.section = section
 
 
-# ⚠️ `_seat_row`, `_row` nahi — Phase 18 ke layout tests me pehle se ek
-# `_row()` helper hai jiska signature alag hai. Dono ek hi module me hain,
-# to same naam rakhne par baad wali definition pehli ko chupchaap overwrite
-# kar deti hai aur 8 purane tests TypeError se fail hone lagte hain.
+# ⚠️ Named `_seat_row`, not `_row` — the Phase 18 layout tests already
+# define a `_row()` helper with a different signature. Both live in this
+# module, so reusing the name would silently shadow the first definition
+# and make 8 existing tests fail with TypeError.
 def _seat_row(label, count, *, taken=(), price=1000, section=None, start_id=1):
     return [
         _FakeSeat(
@@ -2090,11 +2090,11 @@ def test_single_seat_search_returns_cheapest_first():
 
 def test_together_needs_consecutive_seats():
     """If there is a booked seat in between, they are not 'together'."""
-    # A: seats 1,2,[3 booked],4,5  -> 3 saath wali seats nahi milengi
+    # A: seats 1,2,[3 booked],4,5  -> no run of 3 adjacent seats exists
     seats = _seat_row("A", 5, taken=(3,))
 
     assert seat_search.find(seats, quantity=3, together=True) == []
-    # 2 saath wali mil jaayengi (1-2 aur 4-5)
+    # two adjacent pairs remain (1-2 and 4-5)
     assert len(seat_search.find(seats, quantity=2, together=True)) == 2
 
 
@@ -2202,7 +2202,7 @@ def test_search_endpoint_works_without_ai(client, tokens):
     body = res.json()
 
     assert body["filters"]["quantity"] == 2
-    assert body["interpreted"] is False        # AI use hi nahi hui
+    assert body["interpreted"] is False        # AI was never used
     assert len(body["matches"]) > 0
     assert all(len(m["seat_ids"]) == 2 for m in body["matches"])
 

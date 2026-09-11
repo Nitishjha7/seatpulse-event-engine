@@ -1,22 +1,20 @@
 """
-Load tests — daawe ko number me badalne ke liye.
+Load tests — to quantify performance claims.
 
 Do scenarios:
 
-  FlashSaleUser  — sab ek hi seat pe toot pade. Ye "overselling nahi hoti"
-                   wala claim prove karta hai.
-  BrowsingUser   — normal traffic (grid dekhna, alag-alag seats book karna).
-                   Ye response times measure karne ke liye hai.
+  FlashSaleUser  — all users target the same seat. Validates the "no overselling" claim.
+  BrowsingUser   — normal traffic (viewing grid, booking random seats). Measures response times.
 
-Chalao:
+Run:
     docker compose --profile loadtest run --rm locust \
         -f locustfile.py FlashSaleUser --headless -u 500 -r 100 -t 30s
 
 Flags:
     -u 500     500 concurrent users
-    -r 100     100 users/second ki speed se badhao
-    -t 30s     30 second chalao
-    --headless web UI ke bina, seedha terminal me
+    -r 100     ramp up at 100 users/second
+    -t 30s     run for 30 seconds
+    --headless run in terminal without web UI
 """
 
 import itertools
@@ -26,43 +24,43 @@ import random
 from locust import HttpUser, between, events, task
 from locust.exception import RescheduleTask
 
-# Kis event pe test karna hai
+# Event ID to test against
 EVENT_ID = int(os.getenv("EVENT_ID", "1"))
 
-# FlashSaleUser ke liye — sab isi ek seat ke peeche padenge
+# For FlashSaleUser — all users will target this single seat
 TARGET_SEAT_ID = int(os.getenv("TARGET_SEAT_ID", "1"))
 
-# DB me kitne users hain (seed.py se). Har Locust user ek alag user_id lega.
+# Number of users in DB (from seed.py). Each Locust user uses a unique user_id.
 #
-# Ye zaroori kyu: agar do Locust users same user_id bhejein, to dusre ko
-# "already_owned" wala 200 mil jayega aur success count galat ho jayega.
-# Alag-alag user_id se hi asli contention test hoti hai.
+# Why this matters: if two Locust users send the same user_id, the second one
+# receives a 200 "already_owned" response, skewing success counts.
+# Unique user_ids are required to test actual contention.
 USER_POOL_SIZE = int(os.getenv("USER_POOL_SIZE", "499"))
 
-# seed.py sab test users ko yahi password deta hai
+# Password assigned to all test users by seed.py
 PASSWORD = os.getenv("SEED_PASSWORD", "demo1234")
 
-# ---- Phase 15: locking benchmark ke knobs ----
+# ---- Phase 15: locking benchmark configuration ----
 #
-# Ye tabhi asar karte hain jab backend BENCHMARK_MODE=true se chal raha ho.
-# Warna server inhe chupchaap ignore kar deta hai aur normal (optimistic +
-# Redis) path chalta hai.
+# These only take effect if the backend is running with BENCHMARK_MODE=true.
+# Otherwise, the server ignores them and uses the normal (optimistic +
+# Redis) path.
 #
 #   BOOKING_STRATEGY=optimistic|pessimistic
 #   USE_REDIS_LOCK=1|0
 #
-# USE_REDIS_LOCK=0 kyu chahiye: Redis layer 500 me se 499 requests ko
-# database tak pahunchne hi nahi deti. Uske rehte dono DB strategies
-# bilkul ek jaisi dikhti hain — kyunki unpe contention aata hi nahi.
-# Farak dekhne ke liye Redis hatana padta hai.
+# Why USE_REDIS_LOCK=0 is needed: The Redis layer prevents 499 out of 500
+# requests from reaching the database. With it enabled, both DB strategies
+# appear identical because there is no contention. Redis must be disabled
+# to observe the difference.
 BOOKING_STRATEGY = os.getenv("BOOKING_STRATEGY", "optimistic")
 USE_REDIS_LOCK = os.getenv("USE_REDIS_LOCK", "1") != "0"
 
-# Query string jo har booking request ke saath jayegi
+# Query string to be included with every booking request
 _BOOK_QS = f"?strategy={BOOKING_STRATEGY}&redis_lock={'on' if USE_REDIS_LOCK else 'off'}"
 
-# Locust ki report me har scenario alag naam se dikhe, warna chaar runs
-# ka comparison karna namumkin ho jata
+# Ensure each scenario has a unique name in the Locust report to allow
+# comparison between runs.
 _BOOK_NAME = f"POST /bookings [{BOOKING_STRATEGY}, redis={'on' if USE_REDIS_LOCK else 'off'}]"
 
 _user_nums = itertools.cycle(range(1, USER_POOL_SIZE + 1))
@@ -70,14 +68,13 @@ _user_nums = itertools.cycle(range(1, USER_POOL_SIZE + 1))
 
 class AuthedUser(HttpUser):
     """
-    Base class — har Locust user apna account login karke token le leta hai.
+    Base class — each Locust user logs in to obtain an authentication token.
 
-    ⭐ Login `on_start` me hota hai, task me nahi. Warna har request se
-    pehle ek login bhi jata aur load test asal me login ka test ban jata.
-    Bcrypt jaan-boojh ke slow hai (~100ms), wo numbers kharab kar deta.
+    ⭐ Login occurs in `on_start`, not in the task. Otherwise, every request
+    would trigger a login, turning the load test into a login test.
+    Bcrypt is intentionally slow (~100ms), which would skew the results.
 
-    abstract = True -> Locust isko khud se run nahi karega, sirf inherit
-    karne ke liye hai.
+    abstract = True -> Locust will not run this directly; it is for inheritance only.
     """
 
     abstract = True
@@ -92,38 +89,38 @@ class AuthedUser(HttpUser):
             name="POST /auth/login",
         )
         if res.status_code != 200:
-            # Users seed nahi hue — is user ko rok do, warna 401 ka
+            # Users were never seeded — stop this user, otherwise a pile of 401s
             # dher lag jayega aur report bekaar ho jayegi
             self.environment.runner.quit()
             raise RescheduleTask(f"Login fail ({res.status_code}) — seed.py chalao")
 
         token = res.json()["access_token"]
-        # Ab se is user ke saare requests me ye header apne aap jayega
+        # All subsequent requests for this user will include this header.
         self.client.headers["Authorization"] = f"Bearer {token}"
 
 
 class FlashSaleUser(AuthedUser):
     """
-    Sabse kathin scenario: har user EK hi seat chahta hai.
+    Most difficult scenario: every user targets the same seat.
 
-    Expected result: chahe 5000 users hon, database me exactly EK
-    confirmed booking honi chahiye. Baaki sabko 409 milna chahiye.
+    Expected result: even with 5000 users, exactly ONE confirmed booking
+    should exist in the database. All others should receive a 409.
 
-    409 yahan FAILURE nahi hai — wahi to sahi jawab hai. Isliye humne
-    unhe success maana hai (catch_response), warna Locust ka report
-    "99% failure" dikhata jo galatfehmi paida karta.
+    A 409 is not a failure here; it is the expected outcome. We mark it
+    as success (catch_response) to prevent the Locust report from
+    misleadingly showing a 99% failure rate.
     """
 
-    # Flash sale me koi soch ke click nahi karta — turant, bar bar
+    # In a flash sale, users click repeatedly and immediately.
     wait_time = between(0.1, 0.5)
 
     @task
     def grab_the_seat(self):
-        # Step 1 — seat hold karne ki koshish (Redis lock)
-        # user_id body me nahi jata — token se aata hai (AuthedUser.on_start)
+        # Step 1 — attempt to hold seat (Redis lock)
+        # user_id is derived from the token (AuthedUser.on_start), not the body.
         #
-        # Benchmark me USE_REDIS_LOCK=0 ho to ye step poora skip hota hai
-        # aur har request seedha database pe jaati hai.
+        # If USE_REDIS_LOCK=0, this step is skipped and requests go directly
+        # to the database.
         if USE_REDIS_LOCK:
             with self.client.post(
                 f"/api/seats/{TARGET_SEAT_ID}/lock",
@@ -134,7 +131,7 @@ class FlashSaleUser(AuthedUser):
                     res.success()
                     got_lock = True
                 elif res.status_code == 409:
-                    # Expected — seat kisi aur ke paas hai
+                    # Expected — seat is already held by someone else.
                     res.success()
                     got_lock = False
                 else:
@@ -144,7 +141,7 @@ class FlashSaleUser(AuthedUser):
             if not got_lock:
                 return
 
-        # Step 2 — book karo
+        # Step 2 — book the seat
         with self.client.post(
             f"/api/bookings{_BOOK_QS}",
             json={"seat_id": TARGET_SEAT_ID},
@@ -154,8 +151,8 @@ class FlashSaleUser(AuthedUser):
             if res.status_code in (201, 409):
                 res.success()
             elif res.status_code == 429:
-                # Rate limiter ne roka — ye load ka natija hai, server ka
-                # bug nahi. Alag se ginte hain taki numbers me na ghule.
+                # Rate limited — this is a result of the load, not a server bug.
+                # Count separately to avoid skewing metrics.
                 res.success()
             else:
                 res.failure(f"Unexpected {res.status_code}: {res.text[:100]}")
@@ -163,16 +160,16 @@ class FlashSaleUser(AuthedUser):
 
 class BrowsingUser(AuthedUser):
     """
-    Normal traffic — response times measure karne ke liye.
+    Normal traffic — used to measure response times.
 
-    Zyadatar log sirf dekhte hain, kuch hi book karte hain. Ratio task ke
-    weight se set kiya hai: grid 10x zyada load hota hai booking se.
+    Most users browse, while few book. The ratio is set via task weights:
+    the grid is loaded 10x more frequently than bookings.
     """
 
     wait_time = between(1, 3)
 
     def on_start(self):
-        super().on_start()      # pehle login (token set hota hai)
+        super().on_start()      # login first (sets the token)
         self.seat_ids = []
 
         res = self.client.get(f"/api/events/{EVENT_ID}/seats", name="GET /events/{id}/seats")
@@ -221,7 +218,7 @@ class BrowsingUser(AuthedUser):
 
 @events.quitting.add_listener
 def _print_summary(environment, **kwargs):
-    """Test khatam hone par kaam ke numbers dikhao."""
+"""Display relevant metrics after the test finishes."""
     stats = environment.stats.total
     print("\n" + "=" * 62)
     print("SUMMARY")
@@ -234,5 +231,5 @@ def _print_summary(environment, **kwargs):
     print(f"  p99              : {stats.get_response_time_percentile(0.99)} ms")
     print(f"  Max              : {stats.max_response_time} ms")
     print("=" * 62)
-    print("  Ab verify karo: docker compose exec backend python verify_integrity.py")
+    print("  Verify integrity: docker compose exec backend python verify_integrity.py")
     print("=" * 62 + "\n")

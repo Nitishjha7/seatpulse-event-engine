@@ -1,31 +1,22 @@
 """
-Phase 16 ka proof — WebSocket broadcast alag worker processes ke paar jaata hai.
+Phase 16 proof — WebSocket broadcast crosses worker process boundaries.
 
----- Ye test kyu zaroori hai ----
+---- Why this test is necessary ----
 
-Phase 5 me maine broadcast ke liye Redis pub/sub use kiya tha, ek simple
-Python dict ke bajaye. Wajah likhi thi: "multi-worker me har worker alag
-process hai, in-memory dict share nahi hota."
+In Phase 5, I used Redis pub/sub for broadcasting instead of a simple Python dict. The reason: "In multi-worker setups, each worker is a separate process; in-memory dicts are not shared."
 
-Par wo daawa aaj tak KABHI test nahi hua — kyunki dev me hamesha ek hi
-worker chalta raha. Ek argument jo kabhi verify na hua ho, wo sirf ek
-umeed hai.
+However, that claim was NEVER tested because dev environments only run one worker. An unverified argument is just a hope.
 
----- Test kya karta hai ----
+---- What the test does ----
 
-1. Kai WebSocket clients connect karo. Har connection OS kisi bhi worker
-   ko de sakta hai, isliye ye alag-alag processes me bant jaate hain.
-2. `/api/health` bhi kai baar hit karo — `worker_pid` se SABIT karo ki
-   sach me kai processes chal rahe hain (warna test kuch prove nahi karta).
-3. EK seat book karo. Wo booking kisi EK worker me hoti hai.
-4. Check karo ki SAARE clients ko update mila — chahe wo kisi bhi worker
-   se juda ho.
+1. Connect multiple WebSocket clients. The OS distributes connections across workers, spreading them across different processes.
+2. Hit `/api/health` multiple times — use `worker_pid` to PROVE multiple processes are running (otherwise the test proves nothing).
+3. Book ONE seat. The booking occurs in exactly ONE worker.
+4. Verify that ALL clients receive the update, regardless of which worker they are connected to.
 
-Agar broadcast in-memory hota, to sirf usi worker ke clients ko message
-milta jisme booking hui thi. Baaki chup rehte, aur unke seat grid me seat
-hari dikhti rehti jabki wo bik chuki hai.
+If the broadcast were in-memory, only clients connected to the booking worker would receive the message. Others would remain silent, showing the seat as available even though it is sold.
 
-Chalao (prod stack chalte hue):
+Run (with prod stack active):
     docker compose exec backend python /loadtest/verify_multiworker.py
 """
 
@@ -45,17 +36,16 @@ PASSWORD = os.getenv("SEED_PASSWORD", "demo1234")
 
 async def probe_workers(n=40):
     """
-    Kitne alag worker processes jawab de rahe hain.
+    Check how many distinct worker processes are responding.
 
-    ⚠️ Har probe ke liye NAYA connection chahiye.
+    ⚠️ Each probe requires a NEW connection.
 
-    Ek hi httpx client se 40 requests bhejo to sabko wahi ek keep-alive
-    TCP connection milta hai — aur wo connection ek hi worker se juda
-    hota hai. Nateeja: 4 workers chalte hue bhi jawab "1 worker" aata hai.
-    (Ye test likhte waqt exactly yahi hua tha.)
+    Sending 40 requests via a single httpx client reuses the same keep-alive
+    TCP connection, which is pinned to one worker. Result: Even with 4 workers,
+    it reports "1 worker". (This was observed during test development.)
 
-    Worker distribution CONNECTION level pe hoti hai, request level pe
-    nahi. Isliye naya connection = naya (shayad alag) worker.
+    Worker distribution occurs at the CONNECTION level, not the request level.
+    Therefore, a new connection = a new (potentially different) worker.
     """
     pids = set()
     for _ in range(n):
@@ -66,7 +56,7 @@ async def probe_workers(n=40):
 
 
 async def listen(url, got, ready, idx):
-    """Ek WebSocket client — seat_update aane tak sunta rahe."""
+    """A WebSocket client — listens until a seat_update is received."""
     async with websockets.connect(url) as ws:
         ready.set()
         try:
@@ -76,23 +66,23 @@ async def listen(url, got, ready, idx):
                     got.add(idx)
                     return
         except asyncio.TimeoutError:
-            # Ye failure hai — is client tak broadcast pahuncha hi nahi
+            # This is a failure — the broadcast did not reach this client
             return
 
 
 async def main():
     async with httpx.AsyncClient(base_url=BASE, timeout=30.0) as client:
         pids = await probe_workers()
-        print(f"\nJawab dene wale worker processes: {len(pids)}  -> {sorted(pids)}")
+        print(f"\nResponding worker processes: {len(pids)}  -> {sorted(pids)}")
 
         if len(pids) < 2:
-            print("\n⚠️  Sirf ek worker mila. Ye test single-worker pe kuch")
-            print("   prove nahi karta — prod stack se chalao:")
+            print("\n⚠️  Only one worker found. This test proves nothing")
+            print("   on a single-worker setup — run with the prod stack:")
             print("   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d")
             return 1
 
-        # Har client ka alag user — ek hi user ke kai connections bhi chalte
-        # hain, par alag users asli scenario ke kareeb hai
+        # Each client is a unique user — while one user can have multiple
+        # connections, distinct users better simulate a real-world scenario.
         tokens = []
         for i in range(1, CLIENTS + 1):
             r = await client.post(
@@ -113,8 +103,8 @@ async def main():
             )
             for i in range(CLIENTS)
         ]
-        # Sab connect ho jaayein, TAB booking karo — warna jo late juda
-        # usse message miss hona normal hai aur test jhoothi fail hogi
+        # Wait for all connections to establish before booking — otherwise,
+        # late joiners might miss the message, causing a false test failure.
         await asyncio.gather(*(r.wait() for r in readies))
         print(f"{CLIENTS} WebSocket clients connected")
 
@@ -125,11 +115,11 @@ async def main():
             headers={"Authorization": f"Bearer {booker}"},
         )
         print(f"Seat {target['row_label']}-{target['seat_number']} booked "
-              f"(HTTP {res.status_code}) — ek worker me")
+              f"(HTTP {res.status_code}) — in one worker")
 
         await asyncio.gather(*tasks)
 
-        print(f"\nBroadcast mila: {len(got)} / {CLIENTS} clients")
+        print(f"\nBroadcast received: {len(got)} / {CLIENTS} clients")
 
         # Cleanup
         if res.status_code == 201:
@@ -139,13 +129,13 @@ async def main():
             )
 
         if len(got) == CLIENTS:
-            print(f"\n✅ PASS — {len(pids)} workers, sab {CLIENTS} clients tak "
-                  f"broadcast pahuncha")
-            print("   Redis pub/sub sach me process boundary paar kar raha hai.")
+            print(f"\n✅ PASS — {len(pids)} workers, broadcast reached all "
+                  f"{CLIENTS} clients")
+            print("   Redis pub/sub is successfully crossing process boundaries.")
             return 0
 
-        print(f"\n❌ FAIL — {CLIENTS - len(got)} clients ko update nahi mila")
-        print("   Matlab broadcast worker ke andar hi atka reh gaya.")
+        print(f"\n❌ FAIL — {CLIENTS - len(got)} clients did not receive the update")
+        print("   Meaning the broadcast remained trapped within the worker.")
         return 1
 
 
