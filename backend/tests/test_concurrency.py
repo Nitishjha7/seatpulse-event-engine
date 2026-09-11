@@ -1864,7 +1864,7 @@ def test_duplicate_row_label_across_sections_is_rejected():
 
     Without catching this, expansion would fail with an IntegrityError AFTER inserting 500 seats — by which time the transaction would be heavy.
     """
-    with pytest.raises(seat_layout.LayoutError, match="duplicate"):
+    with pytest.raises(seat_layout.LayoutError, match="appears twice"):
         seat_layout.validate(
             _layout(
                 _section("Ground", 100, _row("A", 5)),
@@ -1886,7 +1886,7 @@ def test_aisle_outside_row_is_rejected():
 
 
 def test_duplicate_section_name_is_rejected():
-    with pytest.raises(seat_layout.LayoutError, match="duplicate name"):
+    with pytest.raises(seat_layout.LayoutError, match="share the same name"):
         seat_layout.validate(
             _layout(
                 _section("Ground", 100, _row("A", 5)),
@@ -1905,7 +1905,7 @@ def test_empty_and_oversized_layouts_are_rejected():
     huge = _layout(
         _section("X", 100, *[_row(f"R{i}", 60) for i in range(40)])
     )
-    with pytest.raises(seat_layout.LayoutError, match="Max 2000"):
+    with pytest.raises(seat_layout.LayoutError, match="At most 2000"):
         seat_layout.validate(huge)
 
 
@@ -1986,7 +1986,7 @@ def test_bad_layout_creates_no_event(client, role_tokens):
         },
     )
     assert res.status_code == 422
-    assert "duplicate" in res.json()["detail"]
+    assert "appears twice" in res.json()["detail"]
 
     after = len(client.get("/api/organizer/events", headers=_headers(token)).json())
     assert after == before, "event was created even though it should have failed"
