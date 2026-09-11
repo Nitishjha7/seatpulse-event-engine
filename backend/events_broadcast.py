@@ -1,8 +1,8 @@
 """
-Seat change hone par sab clients ko batane ka helper.
+Helper to notify all clients of seat changes.
 
-Alag file isliye taki routers ko WebSocket ki detail na pata ho — unhe bas
-`broadcast_seat_update(db, seat_id, "locked")` call karna hai.
+Separated into this file to decouple routers from WebSocket implementation details;
+routers only need to call `broadcast_seat_update(db, seat_id, "locked")`.
 """
 
 from sqlalchemy.orm import Session
@@ -13,30 +13,27 @@ from pricing_state import pricing_state
 from schemas import PricingOut, SeatOut
 from websocket import publish
 
-# Ye actions bikee hui seats ki ginti badalte hain -- matlab poore event ka
-# demand multiplier badal jata hai, sirf ek seat ka nahi.
+# These actions alter the sold seat count, triggering a global event demand
+# multiplier update.
 #
-# List yahan rakhi hai (call site pe nahi) taki koi naya route add karte
-# waqt pricing broadcast bhoolna MUMKIN hi na ho. Bhool jaate to grid me
-# stale prices dikhte rehte jab tak user refresh na kare.
+# Centralized here to ensure pricing broadcasts are not omitted when adding
+# new routes, preventing stale prices on the frontend.
 _SOLD_COUNT_CHANGED = ("booked", "cancelled")
 
 
 def broadcast_seat_update(db: Session, seat_id: int, action: str) -> None:
     """
-    Ek seat ka naya state sab connected clients ko bhejo.
+    Broadcast the new seat state to all connected clients.
 
-    `action` sirf batane ke liye hai (locked / released / booked / cancelled) —
-    frontend seat object se hi sab kuch samajh leta hai. Debugging aur logs
-    me kaam aata hai.
+    The `action` parameter (locked / released / booked / cancelled) is used
+    for frontend logic, debugging, and logging.
     """
     seat = db.get(Seat, seat_id)
     if seat is None:
         return
 
-    # ZAROORI: routers me `update()` statement se seat badli hai, aur wo
-    # session ke cached object ko update nahi karta (synchronize_session=False).
-    # Bina refresh ke purana status broadcast ho jayega.
+    # IMPORTANT: Routers use `update()` with synchronize_session=False,
+    # leaving the session cache stale. Refresh required to broadcast current state.
     db.refresh(seat)
 
     event = db.get(Event, seat.event_id)
@@ -59,7 +56,7 @@ def broadcast_seat_update(db: Session, seat_id: int, action: str) -> None:
 
 
 def broadcast_pricing_update(db: Session, event_id: int) -> None:
-    """Organizer ne pricing knobs badle -- sabko turant naya price dikhao."""
+    """Broadcast updated pricing to all clients when knobs are adjusted."""
     event = db.get(Event, event_id)
     if event is None:
         return
@@ -68,13 +65,11 @@ def broadcast_pricing_update(db: Session, event_id: int) -> None:
 
 def _publish_pricing(event_id: int, info) -> None:
     """
-    Sirf EVENT-level pricing bhejte hain, har seat ka naya price nahi.
+    Broadcasts EVENT-level pricing only, rather than individual seat prices.
 
-    500 seats wale event me har booking par 500 seat objects bhejna paagalpan
-    hoga. Multiplier poore event ka ek hi hai, aur base price frontend ke paas
-    pehle se hai -- wo khud `base x multiplier` kar leta hai.
-
-    Ek chhota message vs 500 -- aur dono ka result bilkul same.
+    Avoids payload bloat for large events (e.g., 500 seats). Since the multiplier
+    is global and the base price is cached on the frontend, the client can
+    calculate the current price locally.
     """
     publish(
         event_id,

@@ -1,13 +1,13 @@
 """
-Pytest ko backend root sys.path me daal do.
+Add the backend root to sys.path for pytest.
 
-Kyu zaroori: hamare tests `tests/` folder me hain aur usme `__init__.py`
-nahi hai. Us case me pytest sirf `tests/` ko sys.path me daalta hai, `/app`
-ko nahi — to `import database` fail ho jata hai.
+Required because tests reside in a `tests/` folder without an `__init__.py`.
+By default, pytest only adds `tests/` to sys.path, causing `import database`
+to fail.
 
-Ye file backend root me hai, isliye pytest ise pehle uthata hai aur yahi
-path fix ho jata hai. (`tests/` me `__init__.py` daalna dusra tareeka hai,
-par usse test files package ban jaati hain aur naam clash ho sakte hain.)
+Since this file is in the backend root, pytest loads it first, ensuring the
+correct path is set. (Adding `__init__.py` to `tests/` is an alternative,
+but it turns test files into a package, risking name collisions.)
 """
 
 import sys

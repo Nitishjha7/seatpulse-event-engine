@@ -1,10 +1,10 @@
 """
-Database connection setup — engine, session, aur Base.
+Database connection setup: engine, session, and Base.
 
-Teen cheezein yahan hain:
-  engine       -> asli connection pool (DB se baat karne wala)
-  SessionLocal -> har request ke liye ek naya session
-  Base         -> saare models isi se inherit karte hain
+Components:
+  engine       -> The connection pool interface.
+  SessionLocal -> Factory for request-scoped sessions.
+  Base         -> Base class for all ORM models.
 """
 
 from sqlalchemy import create_engine
@@ -16,61 +16,54 @@ engine = create_engine(
     settings.DATABASE_URL,
     echo=settings.DB_ECHO,
 
-    # Connection use karne se pehle check karo ki wo abhi zinda hai.
-    # Bina iske: DB restart hua to app "stale connection" errors dega.
+    # Validate connections before use to prevent "stale connection" errors
+    # following database restarts.
     pool_pre_ping=True,
 
-    # ⚠️ Ye numbers thread pool se JUDE hue hain — random nahi hain.
+    # ⚠️ These values are tied to the thread pool size.
     #
-    # Hamare routes sync hain (`def`, `async def` nahi), isliye FastAPI unhe
-    # ek threadpool me chalata hai (anyio ka default: 40 threads). Har chalti
-    # hui request `get_db()` se EK connection pakadti hai aur poori request
-    # tak pakde rehti hai.
+    # Since routes are synchronous, FastAPI executes them in a thread pool
+    # (default: 40 threads). Each request holds one connection from `get_db()`
+    # for its entire duration.
     #
-    # Matlab: pool_size + max_overflow  >  threadpool size
+    # Requirement: pool_size + max_overflow > threadpool size.
     #
-    # Pehle 10 + 20 = 30 tha, jo 40 se kam hai. Load test me exactly wahi
-    # phata:
-    #     QueuePool limit of size 10 overflow 20 reached, connection timed out
-    # Aur users ko 500 milne lage.
+    # Previously, 10 + 20 = 30 caused "QueuePool limit reached" errors under
+    # load, as bcrypt operations hold connections for ~100ms.
     #
-    # Login me ye aur bura hota hai: bcrypt jaan-boojh ke ~100ms leta hai,
-    # aur us poore time connection bandha rehta hai.
+    # Current thread pool is 32; pool 20 + 20 = 40 ensures sufficient capacity.
+    # Postgres default max_connections is 100, keeping this safe.
     #
-    # Ab threadpool main.py me 32 pe fix hai, aur pool 20 + 20 = 40 > 32.
-    # Postgres ka default max_connections 100 hai, to ye safe hai.
-    #
-    # ⚠️ Phase 16: ye ab config se aate hain, hardcoded nahi. Multi-worker
-    # me har worker ka apna pool hota hai — 4 workers x 40 = 160 connections
-    # maang lete, jo Postgres ki 100 wali limit todh deta. Prod compose me
-    # ye 5 + 5 pe set hain.
+    # ⚠️ Phase 16: Values are now configurable. Note that in multi-worker
+    # setups, each worker maintains its own pool (e.g., 4 workers x 40 = 160
+    # connections), which may exceed Postgres limits. Production compose
+    # settings are currently 5 + 5.
     pool_size=settings.DB_POOL_SIZE,
     max_overflow=settings.DB_MAX_OVERFLOW,
-    # 30 sec chupchap wait karne se behtar hai jaldi fail hona — tab pata to
-    # chale ki pool chhota pad raha hai.
+    # Fail fast to identify pool exhaustion rather than waiting 30 seconds.
     pool_timeout=10,
 )
 
 SessionLocal = sessionmaker(
     bind=engine,
-    autocommit=False,   # commit hum khud karenge, taki transaction control apne haath me rahe
-    autoflush=False,    # flush bhi khud — Phase 4 me locking me ye control zaroori hai
+    autocommit=False,   # Manual commit for explicit transaction control.
+    autoflush=False,    # Manual flush required for locking control in Phase 4.
 )
 
 
 class Base(DeclarativeBase):
-    """Saare models isse inherit karenge. Alembic isi se tables detect karta hai."""
+    """Base class for all models; used by Alembic for table detection."""
     pass
 
 
 def get_db():
     """
-    FastAPI dependency — har request ko apna DB session milta hai.
+    FastAPI dependency providing a scoped DB session per request.
 
-    Kyu generator: request khatam hone par session band ho jaye, chahe error
-    hi kyu na aaye. Warna connections leak hote hain aur pool khatam ho jata hai.
+    Uses a generator to ensure the session closes after the request,
+    preventing connection leaks and pool exhaustion.
 
-    Use: def route(db: Session = Depends(get_db))
+    Usage: def route(db: Session = Depends(get_db))
     """
     db = SessionLocal()
     try:

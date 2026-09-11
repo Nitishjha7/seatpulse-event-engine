@@ -1,38 +1,38 @@
 """
-Seat claim karne ke do tareeke — benchmark ke liye.
+Benchmarking seat claim strategies.
 
-Poore project me maine OPTIMISTIC locking use kiya hai. Ye file wo daawa
-maapne ke liye hai: dusra tareeka (pessimistic, `SELECT ... FOR UPDATE`)
-bhi implement karke dono ko same load pe chalate hain.
+The project uses OPTIMISTIC locking by default. This file implements a 
+PESSIMISTIC approach (`SELECT ... FOR UPDATE`) to compare performance 
+under identical load.
 
----- Do tareeke, ek line me ----
+---- Comparison Summary ----
 
-    OPTIMISTIC  — "koshish karo, takra gaye to haar maan lo"
-                  UPDATE ... WHERE version = <jo maine padha tha>
-                  rowcount 0 aaya matlab koi aur jeet gaya. TURANT fail.
+    OPTIMISTIC  — "Try, then fail on conflict."
+                  UPDATE ... WHERE version = <read_version>
+                  Rowcount 0 indicates a conflict. Fails immediately.
 
-    PESSIMISTIC — "pehle taala lagao, phir aaram se karo"
-                  SELECT ... FOR UPDATE  -> row lock, doosre RUKTE hain
-                  jab tak main commit na karun.
+    PESSIMISTIC — "Lock first, then process."
+                  SELECT ... FOR UPDATE -> Locks the row; others wait
+                  until the transaction commits.
 
----- Correctness dono me same hai ----
+---- Correctness ----
 
-Ye zaroori baat hai: dono overselling rokte hain. Ye correctness ka
-mukabla nahi hai, **behaviour under contention** ka hai:
+Both strategies prevent overselling. The comparison focuses on 
+**behaviour under contention**:
 
-    Optimistic   -> haarne wala TURANT 409 leke chala jata hai
-    Pessimistic  -> haarne wala QATAAR me lagta hai, apni baari aane par
-                    pata chalta hai ki seat ja chuki, phir 409 milta hai
+    Optimistic   -> Losers return 409 immediately.
+    Pessimistic  -> Losers queue up, only to find the seat taken 
+                    upon acquisition, then return 409.
 
-Matlab optimistic me "fail fast", pessimistic me "wait then fail".
-500 users ek seat pe hon to ye farak bahut bada ho jata hai — aur wahi
-benchmark maapta hai.
+Optimistic provides "fail-fast" behavior, while pessimistic involves 
+"wait-then-fail." Under high contention (e.g., 500 users for one seat), 
+this difference is significant and is the primary metric for this benchmark.
 
----- ⚠️ Ye code sirf benchmark ke liye chalta hai ----
+---- ⚠️ Benchmark-only code ----
 
-Pessimistic path tabhi reachable hai jab `settings.BENCHMARK_MODE` on ho.
-Production me hamesha optimistic chalta hai. Wajah neeche
-`routers/bookings.py` me likhi hai.
+The pessimistic path is only reachable when `settings.BENCHMARK_MODE` 
+is enabled. Production defaults to optimistic locking. See 
+`routers/bookings.py` for the rationale.
 """
 
 from dataclasses import dataclass
@@ -47,8 +47,8 @@ PESSIMISTIC = "pessimistic"
 
 _CLAIMABLE = (SEAT_AVAILABLE, SEAT_LOCKED)
 
-# Booked karte waqt jo values set karni hain — dono strategies me bilkul
-# same, warna benchmark do alag cheezein maap raha hota.
+# Values to set upon booking; must be identical across strategies to 
+# ensure valid benchmark comparisons.
 _CLAIM_VALUES = {
     "status": SEAT_BOOKED,
     "locked_by": None,
@@ -60,21 +60,21 @@ _CLAIM_VALUES = {
 @dataclass
 class ClaimResult:
     won: bool
-    # Haarne par kyu — dono strategies me wajah alag alag hoti hai, aur
-    # yahi farak benchmark ki asli kahani hai.
+    # Failure reasons differ by strategy; this distinction is central 
+    # to the benchmark analysis.
     reason: str | None = None
 
 
 def claim_optimistic(db: Session, seat_id: int, expected_version: int) -> ClaimResult:
     """
-    Ek atomic UPDATE. Koi lock nahi, koi wait nahi.
+    Atomic UPDATE with no locks or waiting.
 
-    Poora faisla WHERE clause me hai: version wahi hona chahiye jo maine
-    padha tha. Do parallel requests me sirf EK ka WHERE match karega,
-    doosre ko 0 rows milengi — aur wo turant nikal jayega.
+    The logic relies on the WHERE clause: the version must match the 
+    previously read state. Only one of multiple parallel requests will 
+    match; others will return 0 rows and fail immediately.
 
-    Isi ko "optimistic" kehte hain: hum maan ke chalte hain ki takrav
-    nahi hoga, aur ho gaya to detect karke haar maan lete hain.
+    This is "optimistic" concurrency: assuming no conflict, but 
+    detecting and aborting if one occurs.
     """
     result = db.execute(
         update(Seat)
@@ -94,22 +94,20 @@ def claim_optimistic(db: Session, seat_id: int, expected_version: int) -> ClaimR
 
 def claim_pessimistic(db: Session, seat_id: int) -> ClaimResult:
     """
-    Pehle row lock lo, phir check karo, phir update karo.
+    Lock the row, verify state, then update.
 
-    ⚠️ `with_for_update()` wali line BLOCK karti hai. Jab tak lock rakhne
-    wali transaction commit/rollback na kare, ye request yahin khadi
-    rehti hai.
+    ⚠️ `with_for_update()` blocks. Requests wait here until the 
+    transaction holding the lock commits or rolls back.
 
-    Aur khadi rehne ka matlab sirf "der" nahi hai — ye request tab tak
-    apna **database connection pakde** rehti hai. 500 users ek seat pe
-    hon to 499 connections qataar me atke rehte hain, jabki pool me sirf
-    40 hain. Wahi se pool exhaustion shuru hota hai.
-    (Bilkul wahi bimari jo Phase 7 me pakdi thi, alag wajah se.)
+    Blocking consumes database connections. High contention (e.g., 500 
+    users) can lead to pool exhaustion if the connection pool is smaller 
+    than the number of waiting requests. (Similar to the issue identified 
+    in Phase 7).
 
-    Optimistic version me `version` column ki zaroorat padti hai. Yahan
-    nahi — row lock hi guarantee de deta hai ki beech me koi ghusa nahi.
-    Phir bhi hum version badhate hain, taki WebSocket clients ko pata
-    chale ki seat badli (aur dono strategies ka data identical rahe).
+    Unlike the optimistic version, this does not strictly require a 
+    `version` column for safety, as the row lock prevents concurrent 
+    access. The version is still incremented to notify WebSocket clients 
+    and maintain data consistency across strategies.
     """
     seat = db.execute(
         select(Seat).where(Seat.id == seat_id).with_for_update()
@@ -118,12 +116,11 @@ def claim_pessimistic(db: Session, seat_id: int) -> ClaimResult:
     if seat is None:
         return ClaimResult(False, "not_found")
 
-    # ⭐ Ye check lock MILNE KE BAAD hai, pehle nahi.
+    # ⭐ Check status after acquiring the lock.
     #
-    # Yahi poora point hai: jab tak main yahan pahuncha, ho sakta hai
-    # jisne mujhe rok rakha tha usne seat book kar li ho. Isliye status
-    # dobara padhna zaroori hai — aur ab wo padhai bharosemand hai,
-    # kyunki row mere lock me hai.
+    # By the time this request acquires the lock, the previous holder 
+    # may have already booked the seat. Re-verifying status is necessary 
+    # and reliable because the row is now locked.
     if seat.status not in _CLAIMABLE:
         return ClaimResult(False, f"already_{seat.status}")
 

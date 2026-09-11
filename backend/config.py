@@ -1,39 +1,35 @@
 """
-App ki saari settings ek jagah.
+Centralized application configuration.
 
-Kyu: hardcoded values code me nahi honi chahiye. Aage Phase 2 me database URL
-aur Phase 4 me Redis URL bhi yahin aayenge — tab tak ye pattern set ho jayega.
+Rationale: Avoid hardcoded values. Database and Redis URLs will be added in
+Phase 2 and Phase 4 respectively; this pattern ensures consistency.
 
-pydantic-settings apne aap environment variables padhta hai (aur .env file bhi),
-aur types validate karta hai. Galat value di to app start hote hi error dega,
-baad me kahin random jagah crash nahi hoga.
+pydantic-settings automatically reads environment variables (and .env files)
+and validates types. Invalid values trigger an immediate startup error rather
+than runtime crashes.
 """
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    # .env file se padho. Container me env variables bhi kaam karenge —
-    # environment variable ki priority .env file se zyada hoti hai.
+    # Read from .env file. Environment variables take precedence over .env.
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     APP_NAME: str = "SeatPulse API"
     DEBUG: bool = True
 
-    # docker-compose isko environment variable ke through bhejta hai.
-    # "db" host ka naam compose service se aata hai — localhost yahan kaam nahi karega.
+    # Provided via environment variables in docker-compose.
+    # "db" refers to the service name; localhost is not applicable here.
     DATABASE_URL: str = "postgresql+psycopg2://seatpulse:seatpulse_dev_password@db:5432/seatpulse"
 
-    # SQL queries terminal me print karni hain? Debugging me kaam aata hai,
-    # par logs bahut bhar jaate hain — default off.
+    # Toggle SQL query logging. Useful for debugging, but verbose; default is off.
     DB_ECHO: bool = False
 
-    # Ek waqt me kitni requests andar aane dena hai (admission control).
+    # Admission control: maximum concurrent requests.
     #
-    # ⚠️ Ye DB pool se CHHOTA hona chahiye. Har chalti hui request ek DB
-    # connection pakadti hai aur request khatam hone tak pakde rehti hai —
-    # to agar in-flight requests pool se zyada ho gayin, to pool khatam
-    # aur users ko 500.
+    # ⚠️ Must be smaller than the DB pool size. Each request holds a DB
+    # connection until completion; exceeding the pool size results in 500 errors.
     #
     # Invariant:  MAX_CONCURRENT_REQUESTS  <  pool_size + max_overflow
     #             (30 < 40)
@@ -41,12 +37,11 @@ class Settings(BaseSettings):
 
     # ---- Connection pool (Phase 16) ----
     #
-    # Ye env se aane chahiye, hardcoded nahi — kyunki sahi value WORKERS
-    # par nirbhar karti hai.
+    # Must be configured via environment variables as optimal values depend on
+    # the number of WORKERS.
     #
-    # Har uvicorn worker ek alag process hai aur uska APNA pool hota hai.
-    # Yaani asli connections = WORKERS x (pool_size + max_overflow).
-    # 4 workers x 40 = 160, aur Postgres ka default max_connections 100 hai.
+    # Each uvicorn worker is a separate process with its own pool.
+    # Total connections = WORKERS x (pool_size + max_overflow).
     #
     # Single worker (dev): 20 + 20 = 40
     # 4 workers (prod):     5 +  5 = 40 total
@@ -55,78 +50,68 @@ class Settings(BaseSettings):
 
     # ---- Benchmark mode (Phase 15) ----
     #
-    # On hone par booking endpoint do extra query params maanta hai:
-    # `strategy` (optimistic/pessimistic) aur `redis_lock` (on/off).
+    # Enables extra query params: `strategy` (optimistic/pessimistic) and
+    # `redis_lock` (on/off).
     #
-    # Default OFF, aur ye jaan-boojh ke hai. Ek query param jo locking
-    # semantics badal de, wo production me footgun hai — koi client
-    # galti se (ya jaan-boojh ke) `?redis_lock=off` bhej ke sabse mehngi
-    # code path chala sakta hai. Benchmark ke waqt env se on karte hain,
-    # baaki hamesha optimistic + Redis.
+    # Default is OFF. Exposing locking semantics via query params is a security
+    # risk in production, as clients could force inefficient code paths.
     BENCHMARK_MODE: bool = False
 
-    # "redis" host bhi compose service ka naam hai, "db" ki tarah.
+    # "redis" refers to the compose service name.
     REDIS_URL: str = "redis://redis:6379/0"
 
     # ---------- Auth ----------
-    # ⚠️ Production me ye MUST badalna hai. Isi se tokens sign hote hain —
-    # leak ho gaya to koi bhi kisi ka bhi token bana sakta hai.
-    # Naya banao: python -c "import secrets; print(secrets.token_urlsafe(48))"
+    # ⚠️ Must be changed in production. Used for signing tokens; if leaked,
+    # authentication is compromised.
+    # Generate new: python -c "import secrets; print(secrets.token_urlsafe(48))"
     JWT_SECRET: str = "dev-only-secret-CHANGE-IN-PRODUCTION"
     JWT_ALGORITHM: str = "HS256"
 
-    # Access token chhota rakhte hain — chori ho bhi jaye to 30 min me bekaar.
+    # Short-lived access tokens limit the impact of theft (30 min).
     ACCESS_TOKEN_MINUTES: int = 30
-    # Refresh token lamba — user ko roz login na karna pade.
+    # Long-lived refresh tokens improve user experience.
     REFRESH_TOKEN_DAYS: int = 7
 
-    # Cookie sirf HTTPS par bheji jaye? Dev me http hai isliye False.
-    # Production me hamesha True.
+    # Cookies must be secure (HTTPS) in production.
     COOKIE_SECURE: bool = False
 
     # ---------- Google OAuth ----------
-    # Khali chhod do to Google login apne aap band rehta hai (frontend me
-    # button hi nahi dikhega). Email/password phir bhi chalta rahega.
+    # If empty, Google login is disabled (frontend button hidden).
+    # Email/password authentication remains active.
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
-    # Ye Google Console me EXACTLY yahi register honi chahiye
+    # Must match the URI registered in Google Console exactly.
     GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/auth/google/callback"
 
-    # Google login ke baad user ko kahan wapas bhejna hai
+    # Redirect target after successful Google login.
     FRONTEND_URL: str = "http://localhost:5173"
 
     @property
     def google_enabled(self) -> bool:
         return bool(self.GOOGLE_CLIENT_ID and self.GOOGLE_CLIENT_SECRET)
 
-    # Rate limiting on/off.
+    # Rate limiting toggle.
     #
-    # Load testing ke waqt kaam aata hai — limits per-user hain, to normal
-    # load test waise bhi pass ho jata hai, par single-user stress test
-    # karna ho to isse band kar sakte ho.
+    # Useful for load testing; disabling allows stress testing without
+    # per-user rate limit interference.
     RATE_LIMIT_ENABLED: bool = True
 
     # ---------- Payments ----------
-    # Khali chhodo to MOCK provider chalta hai — poora flow bina Stripe
-    # account ke test ho jata hai. Yahi pattern Google OAuth me use kiya tha.
+    # If empty, the MOCK provider is used, allowing full flow testing
+    # without a Stripe account.
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
 
-    # User ke paas checkout complete karne ke liye kitna time hai.
-    # Seat lock ki TTL bhi isi ke barabar kar dete hain — warna payment
-    # ke beech me lock chhut jata aur koi aur seat le leta.
+    # Time allowed for checkout completion.
+    # Should match seat lock TTL to prevent lock expiration during payment.
     PAYMENT_TTL_SECONDS: int = 600      # 10 minute
 
     CURRENCY: str = "INR"
 
     # ---- Natural language seat search (Phase 19) ----
     #
-    # Khali chhod do to search box dikhta hi nahi — wahi graceful
-    # degradation jo Google OAuth (Phase 7) aur Stripe (Phase 11) me hai.
-    # Feature na ho to wo gayab ho, toota hua na dikhe.
-    #
-    # ⚠️ Ye sirf natural language wale input ko band karta hai. Normal
-    # price/section filters bina key ke bhi chalte hain.
+    # Graceful degradation: if empty, the search UI is hidden.
+    # ⚠️ Only disables natural language input; standard filters remain active.
     GEMINI_API_KEY: str = ""
 
     @property
@@ -135,28 +120,26 @@ class Settings(BaseSettings):
 
     @property
     def payment_provider(self) -> str:
-        """Keys hain to stripe, warna mock. Config me flag rakhne se behtar —
-        ek hi jagah sach hai."""
+        """Returns 'stripe' if keys are present, otherwise 'mock'."""
         return "stripe" if self.STRIPE_SECRET_KEY else "mock"
 
-    # Seat lock kitni der chalega (seconds).
-    # 300 = 5 minute — itna time user ko payment ke liye milta hai.
-    # Iske baad Redis khud key delete kar deta hai aur seat wapas available.
+    # Seat lock duration (seconds).
+    # 300 = 5 minutes. Redis automatically releases the lock after this period.
     #
-    # Trade-off: chhota rakho to user checkout ke beech me seat kho de,
-    # bada rakho to abandoned carts seats ghere rakhte hain.
+    # Trade-off: Short TTLs risk premature lock expiration; long TTLs
+    # increase the number of abandoned seats held in the system.
     SEAT_LOCK_TTL: int = 300
 
-    # Kaun se frontend origins API call kar sakte hain.
-    # Comma se alag karke .env me likho: CORS_ORIGINS=http://localhost:5173,http://localhost:3000
-    # Production me yahan asli domain aayega — ["*"] nahi.
+    # Allowed CORS origins.
+    # Comma-separated list in .env: CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+    # Production must use specific domains, not ["*"].
     CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     @property
     def cors_origins_list(self) -> list[str]:
-        """Comma-separated string ko list me todo, extra spaces hata ke."""
+        """Parses comma-separated string into a list, stripping whitespace."""
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
 
-# Ek hi instance banao aur poore app me wahi use karo
+# Singleton instance for application-wide use.
 settings = Settings()
