@@ -27,7 +27,7 @@ yarn-error.log*
 pnpm-debug.log*
 
 # ---------- Environment / Secrets ----------
-# NEVER commit these — inme passwords aur API keys hote hain
+# NEVER commit these — they contain passwords and API keys
 .env
 .env.*
 !.env.example
@@ -38,8 +38,8 @@ pnpm-debug.log*
 docker-compose.override.yml
 
 # ---------- Personal Notes ----------
-# Setup guides aur command references — sirf local reference ke liye,
-# GitHub par nahi jaayenge
+# Setup guides and command references — for local reference only,
+# Do not push to GitHub
 
 # ---------- Editors / OS ----------
 .vscode/*
@@ -56,15 +56,15 @@ logs/
 *.log
 tickets/
 
-# Benchmark ke CSV outputs — har run pe naye bante hain.
-# Asli numbers documents/phases/15-locking-benchmark.md me likhe hain.
+# Benchmark CSV outputs — generated on every run.
+# Official results are documented in documents/phases/15-locking-benchmark.md.
 loadtest/results/
 
-# Git Bash Windows pe `/tmp/...` aur `/w` jaise paths ko project ke andar
-# translate kar deta hai, jisse `frontend/C:/...` ya `backend;W` jaisi
-# ajeeb directories ban jaati hain.
+# Git Bash on Windows translates paths like `/tmp/...` and `/w` inside the project,
+# creating invalid directories like `frontend/C:/...` or `backend;W`.
 #
-# Isliye: container ke andar build/temp files banao, host pe nahi.
+#
+# Therefore: create build/temp files inside the container, not on the host.
 *;W
 *;C
 **/C:/

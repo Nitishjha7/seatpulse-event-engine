@@ -53,13 +53,13 @@ Tables are located here:
 Servers → SeatPulse (Docker) → Databases → seatpulse → Schemas → public → Tables
 ```
 
-> Ensure you include "(Docker)" in the name to avoid confusion with your local PostgreSQL instance.
+> Include "(Docker)" in the name to avoid confusion with your local PostgreSQL instance.
 
 ---
 
 ## 2. psql Meta-Commands (backslash commands)
 
-These are not SQL — they are psql shortcuts. **Do not use a semicolon.**
+These are not SQL; they are psql shortcuts. **Do not use a semicolon.**
 
 | Command | Description |
 |---|---|

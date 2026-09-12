@@ -240,7 +240,7 @@ The same pattern as Google login ([Phase 7](07-auth-google-oauth.md)) and Stripe
       all user emails                             -> None
 ```
 
-Hinglish works, and prompt injection was blocked both times.
+The natural language parsing works, and prompt injection was blocked both times.
 
 ### End-to-end
 

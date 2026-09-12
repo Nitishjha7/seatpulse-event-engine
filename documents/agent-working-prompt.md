@@ -64,7 +64,7 @@ Rules:
     3     | Vector store + top-k query   | Now it can retrieve   | ~1 day
     4     | Answer generation            | Retrieval must be     | ~2 days
           |                              | good before this      |
-    5     | Eval set + accuracy measured | Proves 3 and 4 work   | ~1 day
+    5     | Evaluation set + accuracy    | Proves 3 and 4 work   | ~1 day
 
 Every phase ends with a PROOF — something concrete I can run or observe.
 

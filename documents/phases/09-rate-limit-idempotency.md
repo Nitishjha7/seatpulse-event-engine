@@ -4,7 +4,7 @@ Follows [Phase 8 — Dashboard UI](08-dashboard-ui.md).
 
 **Implemented:** Bot protection and double-click protection. Both use Redis; no new services required.
 
-> ⭐ This phase completes the project's **narrative**. The entire project is built on the premise that "bots attack flash sales" — yet until now, there was no mechanism to stop them. An interviewer could easily have identified this gap.
+> ⭐ This phase completes the project's **narrative**. The project is built on the premise that "bots attack flash sales," yet until now, there was no mechanism to stop them. An interviewer could easily have identified this gap.
 
 ---
 
@@ -29,9 +29,9 @@ tokens = calculate(tokens)       # 2. calculate
 redis.set(key, tokens)           # 3. write
 ```
 
-Between those three steps, a second request could **read the same old token count**, and both would be granted permission. A classic read-modify-write race.
+Between those three steps, a second request could **read the same old token count**, and both would be granted permission. This is a classic read-modify-write race.
 
-A Lua script runs as **one atomic unit** inside Redis — nothing can interrupt it. This is the same reason we used it for lock release in Phase 4.
+A Lua script runs as **one atomic unit** inside Redis—nothing can interrupt it. We used this same approach for lock release in Phase 4.
 
 ```lua
 local bucket = redis.call("HMGET", key, "tokens", "ts")
@@ -50,15 +50,15 @@ end
 
 **TTL is also set** — `capacity / refill + 60` seconds. Once the bucket is full, the key is redundant. Redis automatically cleans up expired keys.
 
-### ⭐ What to limit — the most important design decision
+### ⭐ What to limit—the most important design decision
 
-**Per user / per email. Not per IP.**
+**Per user/email, not per IP.**
 
 | Why not IP | |
 |---|---|
 | Behind a proxy | The app sees every request from the **same IP** (the load balancer). `X-Forwarded-For` can be **spoofed**. |
-| NAT | An entire office/campus shares one IP. One bot blocks 200 legitimate users — incorrect. |
-| Attacker | Changing an IP is trivial. Changing the **email** of the account they want to compromise is not. |
+| NAT | An entire office/campus shares one IP. One bot could incorrectly block 200 legitimate users. |
+| Attacker | Changing an IP is trivial. Changing the **email** of the account they want to compromise is difficult. |
 
 > **Per-IP limiting should be at the edge** — nginx, Cloudflare, API gateway. The app limits by identity, which is more targeted.
 >
@@ -97,9 +97,9 @@ if user is None or not verify_password(...):
     raise HTTPException(401, "Incorrect email or password")
 ```
 
-Users who log in correctly every day **never hit the rate limit**. Only incorrect guesses are counted.
+Users who log in correctly every day **never hit the rate limit**; only incorrect guesses are counted.
 
-> If every attempt were counted, a user logging in 20 times a day (multiple devices, tabs) would be blocked despite doing nothing wrong.
+> If every attempt were counted, a user logging in 20 times a day (e.g., multiple devices or tabs) would be blocked despite doing nothing wrong.
 
 ### ⚠️ Fail-open, not fail-closed
 
@@ -110,7 +110,7 @@ except Exception:
     return True, limit.capacity, 0     # Redis down -> ALLOW
 ```
 
-If we used fail-closed, the entire site would go down if Redis failed. Rate limiting is a **protection** layer, not a correctness layer — and booking correctness is already handled by three other layers.
+If we used fail-closed, the entire site would go down if Redis failed. Rate limiting is a **protection** layer, not a correctness layer; booking correctness is already handled by three other layers.
 
 ### Response headers
 
@@ -120,7 +120,7 @@ X-RateLimit-Remaining: 3
 Retry-After: 2          (only on 429)
 ```
 
-These are sent **always**, not just on 429 — the client can see how close they are to the limit and throttle themselves.
+These are sent **always**, not just on 429, allowing the client to see how close they are to the limit and throttle themselves.
 
 ---
 
@@ -134,7 +134,7 @@ A user **double-clicks** "Confirm Booking," or a network glitch causes the brows
 
 The result was correct, but **by coincidence, not by design.** The user saw a confusing error despite their booking being successful.
 
-When payments are integrated, this coincidence will not suffice — the "money deducted but no booking" scenario stems from this.
+When payments are integrated, this coincidence will not suffice; the "money deducted but no booking" scenario stems from this.
 
 ### Solution
 
@@ -183,13 +183,13 @@ raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
 fingerprint = hashlib.sha256(raw.encode()).hexdigest()[:32]
 ```
 
-If someone sends the **same key with a DIFFERENT body**, it is a bug (or an attack). Returning the old response would be incorrect → **422**.
+If someone sends the **same key with a DIFFERENT body**, it is a bug (or an attack). Returning the old response would be incorrect (returns **422**).
 
 `sort_keys=True` is mandatory — `{"a":1,"b":2}` and `{"b":2,"a":1}` must produce the same hash.
 
 **3. "Processing" state returns 409**
 
-If the first request is still running (the double-click case) → 409, the client can retry after a short delay.
+If the first request is still running (the double-click case), it returns 409, allowing the client to retry after a short delay.
 
 The TTL is only **60 seconds** — if the server crashes, the key won't be stuck forever.
 
@@ -201,7 +201,7 @@ except Exception:
     raise
 ```
 
-Without this, the user cannot retry with the same key after a 500 error — they would receive "already processing" for 60 seconds.
+Without this, the user cannot retry with the same key after a 500 error; they would receive "already processing" for 60 seconds.
 
 ### Why include `user_id` in the key
 
@@ -266,7 +266,7 @@ if tokens >= needed then
 end
 ```
 
-> A small bug, but it **rendered the entire brute-force protection useless** — manual testing might never have caught it. Automated tests caught it on the first run.
+> A small bug, but it **rendered the entire brute-force protection useless**; manual testing might never have caught it. Automated tests caught it on the first run.
 
 ---
 

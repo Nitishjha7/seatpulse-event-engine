@@ -124,12 +124,12 @@ def decode_token(token: str, expected_type: str) -> dict:
             token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM]
         )
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token expire ho gaya")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token has expired")
     except jwt.InvalidTokenError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token invalid hai")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token is invalid")
 
     if payload.get("type") != expected_type:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Galat token type")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect token type")
 
     return payload
 

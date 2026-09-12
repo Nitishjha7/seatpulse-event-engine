@@ -1,39 +1,39 @@
-# Production override — dev compose ke UPAR lagti hai:
+# Production override — applied on top of dev compose:
 #
 #     docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 #
-# Override file kyu, alag poori file kyu nahi: db/redis ki config, network,
-# volumes, healthchecks — sab wahi rehne chahiye. Do poori files hoti to wo
-# dheere-dheere alag ho jaati aur "prod me alag behave karta hai" wali
-# dikkat paida hoti. Yahan sirf WOHI likha hai jo asal me badalta hai.
+# Why an override file instead of a separate one: db/redis config, network,
+# volumes, and healthchecks must remain consistent. Separate files would
+# drift over time, leading to "it behaves differently in prod" issues.
+# This file only contains what actually changes.
 
 services:
   backend:
     build:
       target: prod
-    # ⭐ Ye phase isi line ke liye hai — 1 worker se 4.
+    # ⭐ This phase is for this line — scaling from 1 worker to 4.
     #
-    # Har worker apni alag PROCESS hai, apni memory ke saath. Iska matlab
-    # in-memory kuch bhi share nahi hota — WebSocket connections bhi nahi.
-    # Isiliye Phase 5 me broadcast Redis pub/sub se kiya tha, ek Python
-    # dict se nahi. Wo faisla yahin aake kaam aata hai.
+    # Each worker is a separate process with its own memory. This means
+    # nothing is shared in-memory — not even WebSocket connections.
+    # That is why broadcasting in Phase 5 used Redis pub/sub, not a
+    # Python dict. That design decision is critical here.
     environment:
       WORKERS: ${WORKERS:-4}
-      # Har worker ka apna connection pool hai. 4 workers x 40 = 160
-      # connections — aur Postgres ka default max_connections 100 hai.
+      # Each worker has its own connection pool. 4 workers x 40 = 160
+      # connections — while Postgres default max_connections is 100.
       #
-      # Isliye per-worker pool chhota karna PADTA hai. Ye wo galti hai jo
-      # sirf multi-worker pe chalane ke baad dikhti hai:
-      #   4 x (5 + 5) = 40 connections, 100 ki limit ke andar aaram se.
+      # Therefore, the per-worker pool MUST be reduced. This is a common
+      # mistake only visible after running in multi-worker mode:
+      #   4 x (5 + 5) = 40 connections, well within the 100 limit.
       DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
-      # Admission control bhi per-worker hai, isliye ye bhi ghatana hai.
-      # Invariant wahi rehta hai: MAX_CONCURRENT < pool + overflow.
+      # Admission control is also per-worker, so this must be reduced too.
+      # The invariant remains: MAX_CONCURRENT < pool + overflow.
       MAX_CONCURRENT_REQUESTS: ${MAX_CONCURRENT_REQUESTS:-8}
-      # Benchmark knobs production me kabhi nahi.
+      # Never use benchmark knobs in production.
       BENCHMARK_MODE: "false"
-    # Source bind-mount NAHI. Prod image me code baked hai — mount karte
-    # to deployed image aur chalta hua code alag ho sakte the.
+    # NO source bind-mount. Code is baked into the prod image — mounting
+    # would cause the deployed image and running code to diverge.
     volumes:
       - ticket_data:/app/tickets
     restart: unless-stopped
@@ -41,9 +41,9 @@ services:
   worker:
     build:
       target: prod
-    # ARQ worker ko web workers ki zaroorat nahi — wo apni concurrency
-    # khud handle karta hai. Par uska pool bhi chhota rakhna hai, kyunki
-    # wo bhi usi Postgres ko share karta hai.
+    # ARQ worker doesn't need web workers — it handles its own
+    # concurrency. However, its pool must also be small, as it
+    # shares the same Postgres instance.
     environment:
       DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
@@ -55,11 +55,11 @@ services:
     build:
       target: prod
       args:
-        # ⚠️ Build time pe bake hota hai. Deploy karte waqt yahan asli
-        # domain daalna hoga — container start hone par ye badla nahi
-        # ja sakta.
+        # ⚠️ Baked at build time. You must provide the actual domain
+        # during deployment — it cannot be changed once the container
+        # starts.
         VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
-    # nginx 80 pe sunta hai, Vite 5173 pe suntа tha
+    # nginx listens on 80, Vite used to listen on 5173
     ports:
       - "${FRONTEND_PORT:-3000}:80"
     volumes: []

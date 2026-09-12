@@ -1,4 +1,4 @@
-# Do targets: `dev` (Vite dev server) aur `prod` (built assets + nginx).
+# Build targets: `dev` (Vite dev server) and `prod` (built assets + nginx).
 
 # ---------------------------------------------------------------------------
 FROM node:20-alpine AS dev
@@ -18,17 +18,17 @@ FROM node:20-alpine AS build
 
 WORKDIR /app
 
-# npm ci (npm install nahi) — lockfile ko exactly follow karta hai.
-# Production build me dependency version chup-chaap badal jaana wo bug hai
-# jo sirf deploy ke baad dikhta hai.
+# Use npm ci (not npm install) to strictly follow the lockfile.
+# Silent dependency version changes in production builds are bugs
+# that only appear after deployment.
 COPY package*.json ./
 RUN npm ci
 
 COPY . .
 
-# ⚠️ Vite env vars BUILD TIME pe bake hote hain, runtime pe nahi.
-# Yaani API URL image ke andar chala jata hai — container start hone par
-# badla nahi ja sakta. Isliye ye build arg hai.
+# ⚠️ Vite env vars are baked in at BUILD TIME, not runtime.
+# This means the API URL is embedded in the image and cannot be
+# changed after the container starts. Hence, it is a build arg.
 ARG VITE_API_URL=http://localhost:8000
 ENV VITE_API_URL=$VITE_API_URL
 
@@ -37,8 +37,8 @@ RUN npm run build
 # ---------------------------------------------------------------------------
 FROM nginx:1.27-alpine AS prod
 
-# Sirf built static files — na node_modules, na source. Dev image ~500MB
-# ki hai, ye ~50MB.
+# Only built static files — no node_modules or source. Dev image is ~500MB,
+# while this is ~50MB.
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 

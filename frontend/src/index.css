@@ -1,22 +1,20 @@
-/* Tailwind v4 — bas ek line. Purani @tailwind base/components/utilities
-   wali teen lines ab nahi chahiye. */
+/* Tailwind v4 — single line import. Replaces the old three-line @tailwind directives. */
 @import "tailwindcss";
 
-/* App ki theme ek jagah. Tailwind classes me `bg-[var(--panel)]` se use hoti hain,
-   isliye color badalna ho to sirf yahan badlo — poori app me lag jayega. */
+/* Centralized theme configuration. Update colors here to apply changes globally via CSS variables. */
 :root {
-  --bg: #08080c;          /* page background — halka purple-black */
+  --bg: #08080c;          /* Page background — subtle purple-black */
   --panel: #101018;       /* cards */
-  --panel-2: #16161f;     /* card ke andar wale blocks */
+  --panel-2: #16161f;     /* Inner card blocks */
   --border: #23232f;
-  --accent: #7c3aed;      /* violet — brand color */
+  --accent: #7c3aed;      /* Violet — brand color */
 }
 
 body {
   margin: 0;
   min-height: 100vh;
   background: var(--bg);
-  /* Halka sa purple glow upar — flat black se behtar dikhta hai */
+  /* Subtle top purple glow — improves depth over flat black */
   background-image:
     radial-gradient(900px 400px at 15% -10%, rgba(124, 58, 237, 0.10), transparent),
     radial-gradient(700px 350px at 95% 0%, rgba(37, 99, 235, 0.07), transparent);
@@ -24,27 +22,26 @@ body {
 }
 
 /* ---------- Animations ----------
-   Sab CSS me hain — koi animation library nahi lagayi. */
+   Native CSS animations — no external library used. */
 
 @keyframes fade-in {
   from { opacity: 0; }
   to   { opacity: 1; }
 }
 
-/* Modal thoda neeche se upar aata hai — seedha appear hone se natural lagta hai */
+/* Modal slides up from below for a more natural entry. */
 @keyframes pop-in {
   from { opacity: 0; transform: translateY(12px) scale(0.96); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-/* Page transitions — content thoda upar slide karta hai */
+/* Page transitions — content slides up slightly. */
 @keyframes rise {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* Confetti: girta hua + ghoomta hua. --x aur --r inline style se aate hain
-   taki har piece alag direction me jaye. */
+/* Confetti: falling and rotating. --x and --r are set via inline styles for unique trajectories. */
 @keyframes confetti-fall {
   0%   { opacity: 1; transform: translate3d(0, -10px, 0) rotate(0deg); }
   100% { opacity: 0; transform: translate3d(var(--x, 0), 320px, 0) rotate(var(--r, 360deg)); }
@@ -55,8 +52,7 @@ body {
 .animate-rise    { animation: rise 0.3s ease-out both; }
 .animate-confetti { animation: confetti-fall 1.6s ease-in forwards; }
 
-/* ⚠️ Accessibility: kuch logon ko motion se chakkar/nausea hota hai.
-   OS me "reduce motion" on hai to saari animations band. */
+/* ⚠️ Accessibility: Disable animations if "reduce motion" is enabled in OS settings. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -67,14 +63,14 @@ body {
   }
 }
 
-/* Keyboard users ke liye saaf focus ring — mouse users ko nahi dikhta */
+/* Clear focus ring for keyboard users — hidden for mouse users. */
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 6px;
 }
 
-/* Default scrollbar dark theme me bhadda lagta hai */
+/* Default scrollbar styling for dark theme. */
 * {
   scrollbar-width: thin;
   scrollbar-color: #2a2a38 transparent;

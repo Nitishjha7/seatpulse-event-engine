@@ -69,7 +69,7 @@ bcrypt.hashpw(password.encode(), bcrypt.gensalt())
 
 **bcrypt is intentionally slow (~100ms).** Fast hashes like SHA256 are unsuitable here, as attackers could perform millions of guesses per second. bcrypt makes brute force practically impossible. Salting is handled automatically.
 
-> The "slow by design" nature impacted load testing — see the "Auth broke the load test" section below.
+> The "slow by design" nature impacted load testing — see the "Authentication impacted load testing" section below.
 
 ---
 
@@ -305,7 +305,7 @@ Allows recruiters to log in with one click.
 
 ---
 
-## ⭐ Auth broke the load test — and revealed two bugs
+## ⭐ Authentication impacted load testing — and revealed two bugs
 
 After adding auth, the load test failed:
 

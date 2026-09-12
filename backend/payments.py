@@ -84,7 +84,7 @@ class StripeProvider:
     def create_checkout(self, *, payment_id: int, amount: float, description: str) -> CheckoutSession:
         frontend = settings.FRONTEND_URL.rstrip("/")
 
-        # ⚠️ Stripe requires the smallest currency unit (e.g., paise for INR).
+        # ⚠️ Stripe requires the smallest currency unit (e.g., cents for USD).
         # Passing 800 for ₹800 would result in a charge of ₹8.
         minor_units = int(round(amount * 100))
 
@@ -111,7 +111,7 @@ class StripeProvider:
             )
             res.raise_for_status()
         except httpx.HTTPError as exc:
-            logger.warning("Stripe checkout create fail: %s", exc)
+            logger.warning("Stripe checkout creation failed: %s", exc)
             raise PaymentError("Failed to communicate with payment gateway") from exc
 
         body = res.json()

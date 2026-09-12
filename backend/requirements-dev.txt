@@ -1,4 +1,4 @@
-# Sirf development/testing ke liye. Production image me ye nahi jaana chahiye.
+# For development/testing purposes only. Do not include in production images.
 -r requirements.txt
 
 pytest>=8.0.0

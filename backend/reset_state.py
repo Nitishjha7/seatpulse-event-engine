@@ -29,7 +29,7 @@ def reset():
             )
         ).rowcount
         db.commit()
-        print(f"✅ {payments} payments, {bookings} bookings hataye, {seats} seats available ki")
+        print(f"✅ {payments} payments, {bookings} bookings removed, {seats} seats set to available")
     finally:
         db.close()
 
@@ -45,7 +45,7 @@ def reset():
         keys = list(redis_client.scan_iter(pattern))
         if keys:
             redis_client.delete(*keys)
-        print(f"✅ {len(keys)} {label} saaf kiye")
+        print(f"✅ {len(keys)} {label} cleared")
 
 
 if __name__ == "__main__":

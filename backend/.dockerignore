@@ -1,5 +1,5 @@
-# Ye files container me copy NAHI hongi (COPY . . ke waqt).
-# Fayda: build fast, image chhoti, aur secrets container me nahi jaate.
+# These files will NOT be copied into the container (during COPY . .).
+# Benefit: faster builds, smaller images, and secrets are not exposed.
 
 __pycache__/
 *.py[cod]
@@ -13,13 +13,13 @@ env/
 .coverage
 htmlcov/
 
-# Secrets — ye kabhi image me nahi jaane chahiye
+# Secrets — these should never be included in the image
 .env
 .env.*
 *.pem
 *.key
 
-# Git aur docs ki container me koi zaroorat nahi
+# Git and documentation are not needed in the container
 .git
 .gitignore
 Dockerfile

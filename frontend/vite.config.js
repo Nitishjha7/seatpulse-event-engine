@@ -4,19 +4,19 @@ import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig({
-  // Tailwind v4 ab Vite plugin ki tarah aata hai — koi tailwind.config.js
-  // ya postcss.config.js banane ki zaroorat nahi.
+  // Tailwind v4 is now a Vite plugin — no need for tailwind.config.js
+  // or postcss.config.js.
   plugins: [react(), tailwindcss()],
 
   server: {
-    // Container ke bahar se access ke liye. Dockerfile me bhi --host diya hai,
-    // yahan likhne se local pe bhi same behaviour milta hai.
+    // For external container access. --host is also set in the Dockerfile,
+    // setting it here ensures consistent behavior locally.
     host: true,
     port: 5173,
 
     watch: {
-      // Docker + Windows volume mount pe file-change events reliably nahi aate.
-      // Polling se Vite khud check karta rehta hai — isi se hot reload chalta hai.
+      // File-change events are unreliable on Docker + Windows volume mounts.
+      // Polling allows Vite to monitor changes, enabling hot reload.
       usePolling: true,
     },
   },

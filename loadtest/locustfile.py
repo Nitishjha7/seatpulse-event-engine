@@ -89,10 +89,10 @@ class AuthedUser(HttpUser):
             name="POST /auth/login",
         )
         if res.status_code != 200:
-            # Users were never seeded — stop this user, otherwise a pile of 401s
-            # dher lag jayega aur report bekaar ho jayegi
+            # Users were never seeded — stop this user to prevent a flood of 401 errors
+            # which would clutter the logs and invalidate the report.
             self.environment.runner.quit()
-            raise RescheduleTask(f"Login fail ({res.status_code}) — seed.py chalao")
+            raise RescheduleTask(f"Login failed ({res.status_code}) — please run seed.py")
 
         token = res.json()["access_token"]
         # All subsequent requests for this user will include this header.

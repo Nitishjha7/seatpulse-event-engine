@@ -7,11 +7,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Locust ka web UI
+# Locust web UI
 EXPOSE 8089
 
-# ENTRYPOINT isliye (sirf CMD nahi): `docker compose run` ke arguments
-# CMD ko poora replace kar dete hain. Entrypoint fix rehta hai, to
-# `run --rm locust -f locustfile.py --headless ...` sahi chalta hai.
+# Use ENTRYPOINT instead of CMD: `docker compose run` arguments
+# override the CMD. Since the entrypoint remains fixed,
+# `run --rm locust -f locustfile.py --headless ...` works correctly.
 ENTRYPOINT ["locust"]
 CMD ["-f", "locustfile.py"]

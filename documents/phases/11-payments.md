@@ -129,7 +129,7 @@ The provider selects itself based on `STRIPE_SECRET_KEY` — no separate config 
 
 ### ⭐ Why build a Mock
 
-An interviewer will clone my repo — they won't have my Stripe keys. Without a mock, they couldn't run the checkout flow, and the claim "payments are implemented" would seem false.
+Interviewers cloning this repo won't have Stripe keys. A mock allows them to run the checkout flow, ensuring the "payments implemented" claim remains valid.
 
 The mock checkout page opens on the frontend (`/pay/:id`) and calls the **same `_fulfil`/`_fail` functions** as the real webhook. This means we aren't testing a separate code path for the mock — only the trigger is different; the logic is identical.
 

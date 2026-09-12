@@ -120,7 +120,7 @@ def test_garbage_token_rejected(client):
 
 def test_login_wrong_password(client):
     res = client.post(
-        "/api/auth/login", json={"email": "demo@seatpulse.dev", "password": "galat"}
+        "/api/auth/login", json={"email": "demo@seatpulse.dev", "password": "wrong-password"}
     )
     assert res.status_code == 401
     # Use the same message for unknown emails to prevent user enumeration.
