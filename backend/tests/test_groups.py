@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from helpers import auth_headers, clear_user_rate_limits
+from helpers import auth_headers
 
 
 # ---------------------------------------------------------------------------
@@ -20,8 +20,6 @@ from helpers import auth_headers, clear_user_rate_limits
 @pytest.fixture
 def group_seats(client, tokens):
     """3 available seats — clean up remaining ones after the test."""
-    clear_user_rate_limits()
-
     seats = client.get("/api/events/1/seats").json()
     available = [s["id"] for s in seats if s["status"] == "available"]
     if len(available) < 3:

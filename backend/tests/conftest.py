@@ -16,7 +16,30 @@ logging in again for every module would add seconds per file for nothing.
 import httpx
 import pytest
 
-from helpers import BASE_URL, CONCURRENCY, auth_headers, login
+from helpers import BASE_URL, CONCURRENCY, auth_headers, clear_user_rate_limits, login
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rate_limits():
+    """
+    Clear per-user rate limit buckets (`rl:user:*`) before every test.
+
+    `tokens[0]` (demo@seatpulse.dev) is also `role_tokens["attendee"]`, and
+    it is the account most tests book, lock, or search with — dozens of
+    real calls against BOOKING (5 burst / 1 per second) and SEAT_LOCK (15
+    burst / 5 per second) accumulate across the whole run. Locally there is
+    enough wall-clock time between test files for the bucket to refill; CI
+    runs the same 110 tests in under a minute, too fast for that, so a test
+    with no rate-limiting opinion of its own can get an unrelated 429 purely
+    because of what an earlier, unrelated test did to this shared account.
+
+    This does not weaken the rate-limit tests themselves — each one drives
+    its own account into 429 within the test (tokens[3..6], a login email),
+    so starting from a clean bucket only removes noise, not the assertion.
+    `rl:login:*` is left untouched — the brute-force login test depends on
+    failures actually accumulating there.
+    """
+    clear_user_rate_limits()
 
 
 @pytest.fixture(scope="session")

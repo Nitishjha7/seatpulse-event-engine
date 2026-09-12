@@ -7,7 +7,7 @@ keep working with AI switched off.
 """
 
 import seat_search
-from helpers import auth_headers, clear_user_rate_limits
+from helpers import auth_headers
 
 
 # ---------------------------------------------------------------------------
@@ -242,10 +242,6 @@ def test_config_exposes_ai_flag(client):
 
 def test_draft_needs_organizer_role(client, tokens, role_tokens):
     """An attendee cannot create an event, so they cannot request a draft."""
-    # role_tokens["attendee"] is the same account as tokens[0], reused for
-    # real bookings throughout the suite — clear its bucket so an earlier
-    # file's booking calls can't cause an unrelated 429 here.
-    clear_user_rate_limits()
     res = client.post(
         "/api/organizer/events/draft",
         headers=auth_headers(role_tokens["attendee"]),
