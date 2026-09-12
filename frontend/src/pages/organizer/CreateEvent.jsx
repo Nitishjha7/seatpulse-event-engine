@@ -350,7 +350,7 @@ export default function CreateEvent() {
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-slate-400">Aggression level</span>
                     <span className="font-mono text-violet-300">
-                      sold out par +{Math.round(surge.demand_factor * 100)}%
+                      +{Math.round(surge.demand_factor * 100)}% when sold out
                     </span>
                   </div>
                   {/* Using a slider because 0.5 isn't immediately intuitive — but "+50% when sold out" is clear */}
