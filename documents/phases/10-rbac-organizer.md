@@ -429,7 +429,7 @@ backend/
 │   ├── organizer.py            ← new ⭐ CRUD + ownership + seat generation
 │   ├── admin.py                ← new (platform stats)
 │   └── auth.py                 ← role in response
-├── tests/test_concurrency.py   ← 9 new tests (20 → 29)
+├── tests/test_auth.py          ← 9 new tests (20 → 29)
 └── alembic/versions/...        ← role + organizer_id migration
 
 frontend/src/

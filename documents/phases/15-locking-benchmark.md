@@ -273,7 +273,7 @@ Tests pass in both modes (**66/66**) — this is intentional, so that if benchma
 | `backend/routers/bookings.py` | Extracted claim step strategies; benchmark knobs |
 | `loadtest/locustfile.py` | `BOOKING_STRATEGY` / `USE_REDIS_LOCK` env |
 | `docker-compose.yml`, `backend/.env.example` | `BENCHMARK_MODE` |
-| `backend/tests/test_concurrency.py` | 3 new tests |
+| `backend/tests/test_concurrency.py` (locking-strategy tests) | 3 new tests |
 
 ---
 

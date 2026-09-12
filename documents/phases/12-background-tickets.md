@@ -327,7 +327,7 @@ backend/
 ├── routers/bookings.py         ← ticket download + retry, enqueue
 ├── routers/payments.py         ← enqueue after fulfillment
 ├── requirements.txt            ← arq, qrcode, reportlab
-├── tests/test_concurrency.py   ← 5 new tests (37 → 42)
+├── tests/test_checkout.py      ← 5 new tests (37 → 42)
 └── alembic/versions/...        ← ticket columns
 
 frontend/src/

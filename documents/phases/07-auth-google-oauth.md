@@ -415,7 +415,7 @@ backend/
 ├── main.py                 ← update (admission control, WS auth)
 ├── routers/seats.py        ← update (auth)
 ├── routers/bookings.py     ← update (auth + IDOR fix)
-└── tests/test_concurrency.py  ← update (13 tests)
+└── tests/test_auth.py         ← 7 new auth tests (6 → 13)
 
 frontend/src/
 ├── auth/

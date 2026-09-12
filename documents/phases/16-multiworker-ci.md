@@ -333,7 +333,7 @@ docker compose exec backend python -m pytest tests/ -q
 | `backend/database.py` | Pool now from config |
 | `backend/main.py` | `worker_pid` in `/api/health` |
 | `backend/seed.py` | **Bug 1 + Bug 2 fix** |
-| `backend/tests/test_concurrency.py` | **Bug 3 fix** — per-run idempotency keys |
+| `backend/tests/helpers.py` | **Bug 3 fix** — per-run idempotency keys |
 | `docker-compose.yml` | `target: dev` explicit |
 
 ---

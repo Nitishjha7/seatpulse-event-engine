@@ -52,14 +52,14 @@ docker compose exec backend pytest tests/ -v
 ```
 
 ```
-tests/test_concurrency.py::test_health                              PASSED
-tests/test_concurrency.py::test_protected_routes_need_a_token       PASSED
-tests/test_concurrency.py::test_garbage_token_rejected              PASSED
-tests/test_concurrency.py::test_login_wrong_password                PASSED
-tests/test_concurrency.py::test_login_unknown_email_same_message    PASSED
-tests/test_concurrency.py::test_refresh_rotates_and_old_token_dies  PASSED
-tests/test_concurrency.py::test_logout_kills_refresh_token          PASSED
-tests/test_concurrency.py::test_cannot_cancel_someone_elses_booking PASSED
+tests/test_auth.py::test_health                              PASSED
+tests/test_auth.py::test_protected_routes_need_a_token       PASSED
+tests/test_auth.py::test_garbage_token_rejected              PASSED
+tests/test_auth.py::test_login_wrong_password                PASSED
+tests/test_auth.py::test_login_unknown_email_same_message    PASSED
+tests/test_auth.py::test_refresh_rotates_and_old_token_dies  PASSED
+tests/test_auth.py::test_logout_kills_refresh_token          PASSED
+tests/test_auth.py::test_cannot_cancel_someone_elses_booking PASSED
 tests/test_concurrency.py::test_only_one_user_gets_the_lock         PASSED
 tests/test_concurrency.py::test_no_double_booking                   PASSED
 tests/test_concurrency.py::test_lock_blocks_other_users_booking     PASSED

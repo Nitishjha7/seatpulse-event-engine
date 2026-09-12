@@ -354,7 +354,7 @@ backend/
 ├── config.py                   ← Stripe keys, PAYMENT_TTL, provider picker
 ├── reset_state.py              ← cleans up payments too
 ├── routers/seats.py            ← payment_pending expiry cleanup
-├── tests/test_concurrency.py   ← 8 new tests (29 → 37)
+├── tests/test_checkout.py      ← 8 new tests (29 → 37)
 └── alembic/versions/...        ← payments table + seat constraint
 
 frontend/src/

@@ -280,7 +280,7 @@ New tests in two parts:
 - `test_absurd_surge_settings_are_rejected`
 
 ```bash
-docker compose exec backend python -m pytest tests/test_concurrency.py -q
+docker compose exec backend python -m pytest tests/test_pricing.py -q
 ```
 
 ---

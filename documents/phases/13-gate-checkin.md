@@ -322,7 +322,7 @@ backend/
 ├── models.py                   ← checked_in_at, checked_in_by, foreign_keys fix
 ├── schemas.py                  ← CheckInRequest, CheckInResult
 ├── main.py                     ← checkin router
-├── tests/test_concurrency.py   ← 7 new tests (42 → 49)
+├── tests/test_checkout.py      ← 7 new tests (42 → 49)
 └── alembic/versions/...        ← checkin columns
 
 frontend/src/

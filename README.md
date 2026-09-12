@@ -1,13 +1,25 @@
+<div align="center">
+
 # SeatPulse
 
 **High-concurrency event ticketing engine.** When 5,000 people click the same seat at the same instant, exactly one booking is created — and everyone else sees the seat turn red in real time.
+
+[![tests](https://github.com/Nitishjha7/seatpulse-event-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/Nitishjha7/seatpulse-event-engine/actions/workflows/ci.yml)
+[![tests passing](https://img.shields.io/badge/tests-110%20passing-3fb950)](backend/tests/)
+[![double bookings](https://img.shields.io/badge/double%20bookings-0%20in%20200--user%20flash%20sale-3fb950)](#measured-results)
+[![FastAPI](https://img.shields.io/badge/FastAPI-ASGI-009688)](backend/main.py)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169e1)](backend/models.py)
+[![Redis](https://img.shields.io/badge/Redis-locks%20%C2%B7%20pub%2Fsub-dc382d)](backend/redis_client.py)
+[![React](https://img.shields.io/badge/React-19-0ea5e9)](frontend/)
+
+</div>
 
 <p align="center">
   <img src="documents/images/seat-grid.png" alt="Live seat grid" width="900">
 </p>
 
 <p align="center">
-  <em>Live seat grid — holds, purchases and bookings stream to every connected client over WebSockets.</em>
+  <sub>Live seat grid — holds, purchases and bookings stream to every connected client over WebSockets.</sub>
 </p>
 
 <p align="center">
