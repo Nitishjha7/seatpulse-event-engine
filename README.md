@@ -192,8 +192,20 @@ docker compose exec backend python seed.py
 ## Features
 
 <p align="center">
-  <img src="documents/images/group-booking.png" alt="Group booking split payment" width="440">
-  <img src="documents/images/gate-checkin.png" alt="Gate check-in" width="440">
+  <img src="documents/images/group-booking.png" alt="Group booking with split payment" width="430">
+  <img src="documents/images/gate-checkin.png" alt="Gate check-in admitting a ticket" width="430">
+</p>
+
+<p align="center">
+  <em>Split payment — nobody's seat is confirmed until every share is paid &nbsp;·&nbsp; Gate check-in — one atomic statement admits exactly once</em>
+</p>
+
+<p align="center">
+  <img src="documents/images/create-event.png" alt="Organizer event creation with AI draft and layout builder" width="870">
+</p>
+
+<p align="center">
+  <em>Organizer view — AI drafts the listing, the layout builder describes sections, row sizes and aisles.</em>
 </p>
 
 | Area | What it does | Notes |
