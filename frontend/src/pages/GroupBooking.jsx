@@ -138,7 +138,7 @@ export default function GroupBooking() {
 
       {group.status === 'collecting' && (
         <>
-          {/* Progress — "abhi kaun rok raha hai" ka seedha jawab */}
+          {/* Progress — a direct answer to "who are we still waiting on" */}
           <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
             <div className="flex items-baseline justify-between text-sm">
               <span className="text-slate-300">

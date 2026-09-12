@@ -136,7 +136,7 @@ export default function GatePortal() {
                 muted
               />
               {scanning && (
-                // Aiming frame — user ko pata chale QR kahan rakhna hai
+                // Aiming frame — shows the user where to hold the QR code
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                   <div className="h-40 w-40 rounded-2xl border-2 border-violet-400/70" />
                 </div>

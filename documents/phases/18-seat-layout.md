@@ -25,7 +25,7 @@ This is simple and sufficient for most events. However, it cannot handle these t
 
 ## ⭐ Decision 1 — The old path was NOT removed
 
-The easiest path would have been to remove `price_tiers` and keep only the layout. That would be wrong:
+The easiest path would have been to remove `price_tiers` and keep only the layout. That would be incorrect:
 
 1. **Data from 17 phases depends on it.** Seeds, tests, and demos would all break.
 2. **Most events do not need a map.** Forcing a layout builder on a user for a "5 rows, 10 seats, one price" event is unnecessary friction.

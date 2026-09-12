@@ -264,7 +264,7 @@ This is the most important part. It determines the direction of the interview.
 
 ### Why bcrypt, not SHA256?
 
-> "Because bcrypt is **intentionally slow** — ~100ms. SHA256 is fast, and for passwords, speed is the problem: an attacker can make crores of guesses in a second. With bcrypt, that attack becomes practically impossible. Salt is also handled internally.
+> "Because bcrypt is **intentionally slow** — ~100ms. SHA256 is fast, and for passwords, speed is the problem: an attacker can make millions of guesses in a second. With bcrypt, that attack becomes practically impossible. Salt is also handled internally.
 >
 > And this slowness actually bit me during the load test — I'll get to that story later."
 
@@ -710,7 +710,7 @@ where my own default **didn't work** — and I chose it after benchmarking.
 >
 > In groups, the question changes: **all or nothing, across N separate payments.** Every payment arrives at its own time, from a different user, a different browser — and the deadline is ticking.
 >
-> 3 paid, 4th didn't, deadline hit. Giving seats to the three and not the fourth — that defeats the purpose of the group. They came to sit together. So the group breaks, seats are released, money is refunded to the three."
+> 3 paid, the 4th did not, and the deadline was reached. Giving seats to the three and not the fourth defeats the purpose of the group. They came to sit together. Therefore, the group is dissolved, seats are released, and money is refunded to the three."
 
 ### "Couldn't you just create N bookings and join them with a `group_id`?"
 

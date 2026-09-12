@@ -2185,7 +2185,7 @@ def test_quantity_is_clamped():
     assert seat_search.find(seats, quantity=999, together=True) != []
 
 
-# ---- HTTP flow (AI ke bina) ----
+# ---- HTTP flow (without AI) ----
 
 def test_search_endpoint_works_without_ai(client, tokens):
     """
@@ -2281,14 +2281,14 @@ def test_draft_needs_organizer_role(client, tokens, role_tokens):
     res = client.post(
         "/api/organizer/events/draft",
         headers=_headers(role_tokens["attendee"]),
-        json={"brief": "some music event in mumbai"},
+        json={"brief": "some music event in Mumbai"},
     )
     assert res.status_code == 403
 
 
 def test_draft_needs_auth(client):
     res = client.post(
-        "/api/organizer/events/draft", json={"brief": "some music event in mumbai"}
+        "/api/organizer/events/draft", json={"brief": "some music event in Mumbai"}
     )
     assert res.status_code == 401
 

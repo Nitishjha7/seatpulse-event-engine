@@ -22,7 +22,7 @@ Totaling **2-3 seconds**. If performed within the request:
 - If SMTP is down, the booking **fails**, which is unacceptable.
 - During flash sales, every booking blocks a connection for 3 seconds, causing the connection pool to collapse (as seen in Phase 7).
 
-Now, the API immediately returns `201 confirmed`, and the ticket is generated in the background. The user sees **"Ticket…"**, which is accurate.
+Now, the API immediately returns `201 confirmed`, and the ticket is generated in the background. The user sees **"Ticket..."**, which is accurate.
 
 ---
 

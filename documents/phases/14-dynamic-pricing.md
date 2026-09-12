@@ -234,10 +234,10 @@ A holds A-1
   quoted price = Rs.1000
 
 B buys 4 seats:
-  A-2 booked @ Rs.  1000   | remaining seats now Rs.1100
-  A-3 booked @ Rs.  1100   | remaining seats now Rs.1200
-  A-4 booked @ Rs.  1200   | remaining seats now Rs.1300
-  A-5 booked @ Rs.  1300   | remaining seats now Rs.1400
+  A-2 booked @ ₹1000   | remaining seats now ₹1100
+  A-3 booked @ ₹1100   | remaining seats now ₹1200
+  A-4 booked @ ₹1200   | remaining seats now ₹1300
+  A-5 booked @ ₹1300   | remaining seats now ₹1400
 
 WebSocket: 5 seat_update, 4 pricing_update
   +10%  sold 1/10  next increase in 1 seat(s)
@@ -245,8 +245,8 @@ WebSocket: 5 seat_update, 4 pricing_update
   +30%  sold 3/10  next increase in 1 seat(s)
   +40%  sold 4/10  next increase in 1 seat(s)
 
-A's held seat: held_price=Rs.1000   (market is now Rs.1400)
-A books -> charged Rs.1000
+A's held seat: held_price=₹1000   (market is now ₹1400)
+A books -> charged ₹1000
 MATCH — promise honored
 ```
 

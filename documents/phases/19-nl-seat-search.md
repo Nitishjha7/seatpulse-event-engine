@@ -22,7 +22,7 @@ SeatFilters(quantity=3, together=True, max_price=1500,
         seat_search.find(...)
 ```
 
-The easy path would be to ask the LLM for raw SQL or seat IDs. That is wrong for three reasons:
+The easy path would be to ask the LLM for raw SQL or seat IDs. That is incorrect for three reasons:
 
 ### 1. Security
 
@@ -197,7 +197,7 @@ Therefore, every result shows **how the query was interpreted**:
 [3 seats] [together] [under ₹1500] [front]
 ```
 
-And if the AI cannot understand the query, it is clearly stated — default results are not silently "guessed":
+And if the AI cannot understand the query, it is clearly stated — default results are not silently "assumed":
 
 > *Query not understood — showing all available seats*
 

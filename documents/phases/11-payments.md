@@ -12,7 +12,7 @@ Booking was incomplete without payments. However, payments were not just a missi
 
 As soon as money is involved, a critical question arises:
 
-> **The payment was deducted, but the booking failed. Now what?**
+> **The payment was deducted, but the booking failed. What happens now?**
 
 This is the classic **dual-write problem** — keeping two systems (the payment gateway and our database) consistent when either can fail at any time.
 
