@@ -4,7 +4,8 @@
 
 **High-concurrency event ticketing engine.** When 5,000 people click the same seat at the same instant, exactly one booking is created — and everyone else sees the seat turn red in real time.
 
-[![Live demo](https://img.shields.io/badge/live%20demo-seatpulse.nitishkj5019.workers.dev-8b5cf6)](https://seatpulse.nitishkj5019.workers.dev)
+### 🔗 [seatpulse.nitishkj5019.workers.dev](https://seatpulse.nitishkj5019.workers.dev) — login `demo@seatpulse.dev` / `demo1234`
+
 [![tests](https://github.com/Nitishjha7/seatpulse-event-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/Nitishjha7/seatpulse-event-engine/actions/workflows/ci.yml)
 [![tests passing](https://img.shields.io/badge/tests-123%20passing-3fb950)](backend/tests/)
 [![double bookings](https://img.shields.io/badge/double%20bookings-0%20in%20200--user%20flash%20sale-3fb950)](#measured-results)
