@@ -1,0 +1,9 @@
+name = "seatpulse"
+compatibility_date = "2026-01-01"
+
+# Serves the Vite build as static assets. SPA fallback (any unknown path
+# serves index.html) matches the same behavior as nginx.conf in the
+# Docker prod target — react-router needs this for client-side routes.
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
