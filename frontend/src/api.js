@@ -129,6 +129,10 @@ export const unlockSeat = (seatId) =>
 
 export const getMyEvents = () => request("/api/organizer/events");
 
+/** 404 means "not enough bookings yet" — a normal, expected outcome for a new event. */
+export const getForecast = (eventId) =>
+  request(`/api/organizer/events/${eventId}/forecast`);
+
 /** Drafts event fields from a brief — doesn't persist anything, just pre-fills the form. */
 export const draftEvent = (brief) =>
   request("/api/organizer/events/draft", {

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from core.auth import require_role
 import services.ai as ai
 import services.poster as poster
+from services.forecast import MIN_BOOKINGS, estimate_sellout
 from core.database import get_db
 from core.rate_limit import BOOKING, limit_user
 # Alias `layout` to avoid shadowing local variables.
@@ -36,8 +37,16 @@ from core.models import (
     Event,
     Seat,
     User,
+    utcnow,
 )
-from core.schemas import EventDraftOut, EventDraftRequest, EventCreate, EventUpdate, OrganizerEventOut
+from core.schemas import (
+    EventDraftOut,
+    EventDraftRequest,
+    EventCreate,
+    EventUpdate,
+    ForecastOut,
+    OrganizerEventOut,
+)
 
 router = APIRouter(prefix="/api/organizer", tags=["organizer"])
 
@@ -308,6 +317,49 @@ def delete_event(
 
     db.delete(event)   # Seats are removed via cascade
     db.commit()
+
+
+@router.get("/events/{event_id}/forecast", response_model=ForecastOut)
+def event_forecast(
+    event_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role(ROLE_ORGANIZER, ROLE_ADMIN)),
+):
+    """
+    Sellout projection from this event's own booking pace.
+
+    404 rather than an empty/zeroed response when there isn't enough
+    history yet — a flat "can't project this yet" beats a chart that
+    looks confident about three data points.
+    """
+    event = _owned_event(event_id, user, db)
+
+    booking_times = list(db.scalars(
+        select(Booking.created_at).where(
+            Booking.event_id == event_id, Booking.status == BOOKING_CONFIRMED
+        )
+    ).all())
+    booked_seats = len(booking_times)
+
+    forecast = estimate_sellout(
+        booking_times,
+        total_seats=event.total_seats,
+        booked_seats=booked_seats,
+        event_starts_at=event.starts_at,
+        now=utcnow(),
+    )
+    if forecast is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            f"Not enough bookings yet to project — need at least {MIN_BOOKINGS}",
+        )
+
+    return ForecastOut(
+        bookings_analyzed=forecast.bookings_analyzed,
+        rate_per_day=round(forecast.rate_per_day, 2),
+        sellout_date=forecast.sellout_date,
+        projected_percent_sold=forecast.projected_percent_sold,
+    )
 
 
 def _to_organizer_out(event: Event, stats: dict) -> OrganizerEventOut:

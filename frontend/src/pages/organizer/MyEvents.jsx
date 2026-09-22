@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom'
 
 import { deleteEvent, getMyEvents } from '../../api'
 import { useAuth } from '../../auth/AuthContext'
+import DemandForecast from '../../components/DemandForecast'
 import { IconCalendar, IconPin } from '../../layout/icons'
 
 export default function MyEvents() {
@@ -186,6 +187,8 @@ export default function MyEvents() {
                     ₹{event.revenue.toLocaleString('en-IN')}
                   </span>
                 </div>
+
+                <DemandForecast eventId={event.id} />
               </article>
             )
           })}

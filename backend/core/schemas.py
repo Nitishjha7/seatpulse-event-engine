@@ -77,6 +77,18 @@ class PricingOut(BaseModel):
     seats_until_increase: int | None = None
 
 
+class ForecastOut(BaseModel):
+    """
+    Sellout projection from the event's own booking velocity — a linear
+    extrapolation, not a trained model. See services/forecast.py.
+    """
+    bookings_analyzed: int
+    rate_per_day: float
+    # Exactly one of these two is set, never both.
+    sellout_date: datetime | None = None
+    projected_percent_sold: float | None = None
+
+
 class EventDetail(EventOut):
     """Event + seat summary for overview before loading the grid."""
     available_seats: int
