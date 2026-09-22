@@ -17,19 +17,28 @@ from core.config import settings
 
 logger = logging.getLogger(__name__)
 
-MODEL = "stabilityai/stable-diffusion-xl-base-1.0"
-ENDPOINT = f"https://api-inference.huggingface.co/models/{MODEL}"
+# Hugging Face retired the old api-inference.huggingface.co host and moved
+# to a router that fronts several inference providers. Most free
+# text-to-image models (SDXL, FLUX) have since been dropped from the
+# free "hf-inference" provider entirely — this is the one still on it as
+# of writing. Check https://huggingface.co/api/models?pipeline_tag=text-to-image&inference_provider=hf-inference
+# if this starts returning 410/400.
+MODEL = "stabilityai/stable-diffusion-3-medium-diffusers"
+ENDPOINT = f"https://router.huggingface.co/hf-inference/models/{MODEL}"
 
 # Image generation is slower than text — cold-starting a model on the
 # free tier can take a while, so this gets a longer budget than the
 # search/copy calls.
-TIMEOUT_SECONDS = 45.0
+TIMEOUT_SECONDS = 90.0
 
 MAX_BRIEF_CHARS = 200
 
+# Image models reliably render fake, garbled text when asked for "no text"
+# only in the negative prompt — putting it in the main prompt too, plus
+# steering toward a purely visual scene, cuts that down a lot.
 NEGATIVE_PROMPT = (
-    "text, watermark, logo, signature, blurry, low quality, distorted, "
-    "extra limbs, extra fingers"
+    "text, words, letters, writing, typography, caption, title, watermark, "
+    "logo, signature, blurry, low quality, distorted, extra limbs, extra fingers"
 )
 
 
@@ -39,10 +48,16 @@ def is_enabled() -> bool:
 
 
 def _prompt_for(brief: str) -> str:
+    # Deliberately not asking for a "poster" — this model's training data
+    # ties that word so strongly to typography-heavy designs that it draws
+    # fake, garbled text over the image even with an explicit negative
+    # prompt against it. Asking for a photograph of the event instead gets
+    # a clean, text-free background image that still works as a poster.
     return (
-        f"Professional event poster for: {brief}. "
-        "Vibrant concert poster design, dramatic lighting, high detail, "
-        "cinematic, no text"
+        f"Cinematic photograph for an event: {brief}. "
+        "Dramatic concert stage lighting, crowd silhouettes, vibrant colors, "
+        "high detail, photorealistic, absolutely no text or writing anywhere, "
+        "pure photography"
     )
 
 
