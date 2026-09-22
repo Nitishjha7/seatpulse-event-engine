@@ -59,6 +59,10 @@ tickets/
 # Benchmark CSV outputs — regenerated on every run.
 loadtest/results/
 
+# Wrangler's local build cache / session state.
+.wrangler/
+.dev.vars
+
 # Git Bash on Windows translates paths like `/tmp/...` and `/w` inside the project,
 # creating invalid directories like `frontend/C:/...` or `backend;W`.
 #

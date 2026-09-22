@@ -4,6 +4,7 @@
 
 **High-concurrency event ticketing engine.** When 5,000 people click the same seat at the same instant, exactly one booking is created — and everyone else sees the seat turn red in real time.
 
+[![Live demo](https://img.shields.io/badge/live%20demo-seatpulse.nitishkj5019.workers.dev-8b5cf6)](https://seatpulse.nitishkj5019.workers.dev)
 [![tests](https://github.com/Nitishjha7/seatpulse-event-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/Nitishjha7/seatpulse-event-engine/actions/workflows/ci.yml)
 [![tests passing](https://img.shields.io/badge/tests-123%20passing-3fb950)](backend/tests/)
 [![double bookings](https://img.shields.io/badge/double%20bookings-0%20in%20200--user%20flash%20sale-3fb950)](#measured-results)
@@ -165,7 +166,9 @@ Same 200-user flash sale, before and after: **1,250 requests / 58 failures / 21 
 
 ## Quick start
 
-Only Docker Desktop is required.
+**[Try the live demo](https://seatpulse.nitishkj5019.workers.dev)** — login `demo@seatpulse.dev` / `demo1234` (or run it locally below). It's on free hosting tiers, so the first request can take ~30-50s to wake up if it's been idle.
+
+To run it locally, only Docker Desktop is required.
 
 ```bash
 git clone https://github.com/Nitishjha7/seatpulse-event-engine.git
@@ -303,12 +306,12 @@ documents/        Architecture walkthrough and screenshots
 
 ## Deploying on free tiers
 
-`docker-compose.prod.yml` runs everything as long-lived containers, which is the straightforward path on a VPS. On free hosting, though, a persistent background worker usually isn't available — this stack works around that with four separate free services instead of one box:
+`docker-compose.prod.yml` runs everything as long-lived containers, which is the straightforward path on a VPS. The live demo above runs on genuinely free tiers instead, split across four services since free plans don't give you an always-on background worker:
 
 | Piece | Where | Why |
 |---|---|---|
-| Frontend | Cloudflare Pages | Static build, genuinely free, no sleep |
-| Backend API | Render free Web Service | Sleeps after 15 min idle, wakes on the next request (~30s) |
+| Frontend | Cloudflare Workers (static assets) | Free, no sleep |
+| Backend API | Render free Web Service | Sleeps after 15 min idle, wakes on the next request (~30-50s) |
 | Database | [Neon](https://neon.tech) | Free Postgres with no time-limited expiry |
 | Redis | [Upstash](https://upstash.com) | Free tier, enough for seat locks and rate limiting |
 | Background jobs | Cloudflare Worker + Cron Trigger | See below — this replaces the `worker` container |
@@ -317,16 +320,7 @@ documents/        Architecture walkthrough and screenshots
 
 **Steps:**
 
-1. Create a Neon Postgres project and an Upstash Redis database — both free, both give you a connection string.
-2. Deploy `backend/` to Render as a Docker web service — root directory `backend`, and point it at the `prod` build stage in `backend/Dockerfile` (Render's UI for selecting a multi-stage target has moved around over the years, so check their current docs for the exact field name). Set `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET` (generate a new one), `CORS_ORIGINS` (your Pages URL), `COOKIE_SECURE=True`, `CRON_SECRET` (any random string), `WORKERS=1`, `DB_POOL_SIZE=3`, `DB_MAX_OVERFLOW=2`.
-3. From Render's shell: `alembic upgrade head` then `python -m scripts.seed`.
-4. Deploy `frontend/` to Cloudflare Pages (build command `npm run build`, output `dist`, env var `VITE_API_URL` pointing at the Render URL).
-5. Deploy `cron-worker/` with Wrangler (see [cron-worker/README.md](cron-worker/README.md)) — set `BACKEND_URL` and the same `CRON_SECRET` as secrets, then `wrangler deploy`.
-
----
-
-## Not built
-
-Stated plainly rather than implied:
-
-- **Live deployment** — production compose, nginx config and non-root images are ready; nothing is hosted yet.
+1. Create a Neon Postgres project and an Upstash Redis database (its **TCP** connection string, not the REST one) — both free.
+2. Deploy `backend/` to Render as a Docker web service, root directory `backend`. Render's free plan locks Shell and Pre-Deploy Command behind a paid plan, so there's nowhere to run migrations as a one-off step — set the **Docker Command** to `sh start.sh` instead (`backend/start.sh` runs `alembic upgrade head` and the seed script before starting uvicorn; both are idempotent, so this is safe to run on every cold start). Set env vars: `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET` (generate a new one), `CORS_ORIGINS` (your Cloudflare URL, no trailing slash), `COOKIE_SECURE=True`, `CRON_SECRET` (any random string), `WORKERS=1`, `DB_POOL_SIZE=3`, `DB_MAX_OVERFLOW=2`.
+3. Deploy `frontend/` on Cloudflare (Workers & Pages → Create → connect the repo; needs `frontend/wrangler.toml`, already in the repo). Build command `npm run build`, path `frontend`, env var `VITE_API_URL` pointing at the Render URL — **no trailing slash**, or every API call 404s on a double slash.
+4. Deploy `cron-worker/` with Wrangler (see [cron-worker/README.md](cron-worker/README.md)) — set `BACKEND_URL` and the same `CRON_SECRET` as secrets, then `wrangler deploy`.
