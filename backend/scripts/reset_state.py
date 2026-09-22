@@ -9,9 +9,9 @@ Usage:
 
 from sqlalchemy import delete, update
 
-from database import SessionLocal
-from models import SEAT_AVAILABLE, Booking, Payment, Seat
-from redis_client import redis_client
+from core.database import SessionLocal
+from core.models import SEAT_AVAILABLE, Booking, Payment, Seat
+from core.redis_client import redis_client
 
 
 def reset():

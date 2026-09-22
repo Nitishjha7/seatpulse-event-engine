@@ -32,8 +32,8 @@ import logging
 import redis.asyncio as aioredis
 from fastapi import WebSocket
 
-from config import settings
-from redis_client import redis_client
+from core.config import settings
+from core.redis_client import redis_client
 
 logger = logging.getLogger(__name__)
 

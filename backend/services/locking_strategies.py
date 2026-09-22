@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from models import SEAT_AVAILABLE, SEAT_BOOKED, SEAT_LOCKED, Seat
+from core.models import SEAT_AVAILABLE, SEAT_BOOKED, SEAT_LOCKED, Seat
 
 OPTIMISTIC = "optimistic"
 PESSIMISTIC = "pessimistic"

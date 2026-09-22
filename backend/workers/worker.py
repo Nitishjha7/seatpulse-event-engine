@@ -2,8 +2,8 @@
 Background worker — ARQ.
 
 Usage:
-    docker compose up worker          (service defined in compose)
-    arq worker.WorkerSettings         (manual execution)
+    docker compose up worker              (service defined in compose)
+    arq workers.worker.WorkerSettings     (manual execution)
 
 ---- Why ARQ instead of Celery ----
 
@@ -26,10 +26,10 @@ from arq import cron
 from arq.connections import RedisSettings
 from sqlalchemy import select
 
-from config import settings
-from database import SessionLocal
-from groups import expire_due_groups
-from models import (
+from core.config import settings
+from core.database import SessionLocal
+from services.groups import expire_due_groups
+from core.models import (
     TICKET_FAILED,
     TICKET_READY,
     Booking,
@@ -38,7 +38,7 @@ from models import (
     User,
     utcnow,
 )
-from tickets import make_ticket_pdf, new_qr_token, save_ticket, send_ticket_email
+from services.tickets import make_ticket_pdf, new_qr_token, save_ticket, send_ticket_email
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("worker")

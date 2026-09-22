@@ -41,9 +41,9 @@ from datetime import timedelta
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from events_broadcast import broadcast_seat_update
-from job_queue import enqueue_ticket
-from models import (
+from realtime.events_broadcast import broadcast_seat_update
+from workers.job_queue import enqueue_ticket
+from core.models import (
     BOOKING_CONFIRMED,
     GROUP_CANCELLED,
     GROUP_COLLECTING,

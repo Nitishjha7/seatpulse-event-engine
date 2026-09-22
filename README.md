@@ -8,8 +8,8 @@
 [![tests passing](https://img.shields.io/badge/tests-110%20passing-3fb950)](backend/tests/)
 [![double bookings](https://img.shields.io/badge/double%20bookings-0%20in%20200--user%20flash%20sale-3fb950)](#measured-results)
 [![FastAPI](https://img.shields.io/badge/FastAPI-ASGI-009688)](backend/main.py)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169e1)](backend/models.py)
-[![Redis](https://img.shields.io/badge/Redis-locks%20%C2%B7%20pub%2Fsub-dc382d)](backend/redis_client.py)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169e1)](backend/core/models.py)
+[![Redis](https://img.shields.io/badge/Redis-locks%20%C2%B7%20pub%2Fsub-dc382d)](backend/core/redis_client.py)
 [![React](https://img.shields.io/badge/React-19-0ea5e9)](frontend/)
 
 </div>
@@ -177,7 +177,7 @@ cp frontend/.env.example frontend/.env
 
 docker compose up --build -d
 docker compose exec backend alembic upgrade head
-docker compose exec backend python seed.py
+docker compose exec backend python -m scripts.seed
 ```
 
 > PowerShell: use `Copy-Item .env.example .env` instead of `cp`.
@@ -260,7 +260,7 @@ stateDiagram-v2
 
 ```bash
 docker compose exec backend pytest tests/ -q        # 110 integration tests
-docker compose exec backend python verify_integrity.py
+docker compose exec backend python -m scripts.verify_integrity
 
 # Flash sale
 docker compose --profile loadtest run --rm locust \
@@ -275,7 +275,16 @@ Tests run against a **live stack** rather than mocks, because race conditions on
 ## Project structure
 
 ```
-backend/          FastAPI app — routers, models, Redis, ARQ worker, tests
+backend/
+  main.py         FastAPI app + WebSocket route
+  core/           config, database, models, schemas, auth, rate limiting
+  services/       business logic — pricing, locking, groups, layout, search, AI
+  routers/        HTTP endpoints, thin — call into services/
+  realtime/       WebSocket manager, Redis pub/sub broadcast
+  workers/        ARQ background worker, ticket retries, payment reconciliation
+  scripts/        seed / reset / integrity-check, run manually or in CI
+  tests/          110 integration tests against the live stack
+
 frontend/         React app — seat grid, booking context, organizer + gate portals
 loadtest/         Locust scenarios, locking benchmark, multi-worker verification
 documents/        Architecture walkthrough and screenshots

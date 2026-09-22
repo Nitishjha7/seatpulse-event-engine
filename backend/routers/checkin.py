@@ -19,9 +19,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from auth import require_role
-from database import get_db
-from models import (
+from core.auth import require_role
+from core.database import get_db
+from core.models import (
     BOOKING_CONFIRMED,
     ROLE_ADMIN,
     ROLE_ORGANIZER,
@@ -32,8 +32,8 @@ from models import (
     User,
     utcnow,
 )
-from rate_limit import SEAT_LOCK, limit_user
-from schemas import CheckInRequest, CheckInResult
+from core.rate_limit import SEAT_LOCK, limit_user
+from core.schemas import CheckInRequest, CheckInResult
 
 logger = logging.getLogger(__name__)
 

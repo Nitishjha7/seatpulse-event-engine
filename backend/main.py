@@ -9,14 +9,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
-from auth import user_from_ws_token
-from config import settings
-from database import SessionLocal, get_db
-from models import Event, Seat
-from redis_client import ping as redis_ping
+from core.auth import user_from_ws_token
+from core.config import settings
+from core.database import SessionLocal, get_db
+from core.models import Event, Seat
+from core.redis_client import ping as redis_ping
 from routers import group_bookings, admin, bookings, checkin, events, organizer, payments, search, seats
 from routers import auth as auth_router
-from websocket import manager, start_subscriber
+from realtime.websocket import manager, start_subscriber
 
 
 @asynccontextmanager

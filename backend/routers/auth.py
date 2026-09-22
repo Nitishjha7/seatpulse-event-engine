@@ -33,7 +33,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from auth import (
+from core.auth import (
     clear_refresh_cookie,
     create_access_token,
     create_refresh_token,
@@ -48,12 +48,12 @@ from auth import (
     set_refresh_cookie,
     verify_password,
 )
-from config import settings
-from database import get_db
-from models import User
-from rate_limit import LOGIN_FAIL, REGISTER, check, client_ip, enforce
-from redis_client import redis_client
-from schemas import (
+from core.config import settings
+from core.database import get_db
+from core.models import User
+from core.rate_limit import LOGIN_FAIL, REGISTER, check, client_ip, enforce
+from core.redis_client import redis_client
+from core.schemas import (
     AuthConfigOut,
     LoginRequest,
     RegisterRequest,

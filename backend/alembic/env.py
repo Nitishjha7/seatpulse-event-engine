@@ -11,11 +11,11 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from config import settings
-from database import Base
+from core.config import settings
+from core.database import Base
 
 # Required to ensure Alembic registers models; otherwise, it generates empty migrations.
-import models  # noqa: F401
+import core.models as models  # noqa: F401
 
 config = context.config
 

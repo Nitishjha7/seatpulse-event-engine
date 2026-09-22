@@ -8,9 +8,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from auth import require_role
-from database import get_db
-from models import (
+from core.auth import require_role
+from core.database import get_db
+from core.models import (
     BOOKING_CANCELLED,
     BOOKING_CONFIRMED,
     ROLE_ADMIN,
@@ -20,9 +20,9 @@ from models import (
     Seat,
     User,
 )
-from redis_client import redis_client
-from schemas import AdminStatsOut
-from websocket import manager
+from core.redis_client import redis_client
+from core.schemas import AdminStatsOut
+from realtime.websocket import manager
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 

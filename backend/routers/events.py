@@ -4,10 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from database import get_db
-from models import SEAT_AVAILABLE, SEAT_BOOKED, SEAT_LOCKED, Event, Seat
-from pricing_state import pricing_state
-from schemas import EventDetail, EventOut, PricingOut
+from core.database import get_db
+from core.models import SEAT_AVAILABLE, SEAT_BOOKED, SEAT_LOCKED, Event, Seat
+from services.pricing_state import pricing_state
+from core.schemas import EventDetail, EventOut, PricingOut
 
 router = APIRouter(prefix="/api/events", tags=["events"])
 

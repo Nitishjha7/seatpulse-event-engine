@@ -6,7 +6,7 @@ a draft); search, RBAC and validation around it are ordinary code that must
 keep working with AI switched off.
 """
 
-import seat_search
+import services.seat_search as seat_search
 from helpers import auth_headers
 
 

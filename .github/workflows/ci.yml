@@ -51,13 +51,13 @@ jobs:
         run: docker compose exec -T backend alembic upgrade head
 
       - name: Seed data
-        run: docker compose exec -T backend python seed.py
+        run: docker compose exec -T backend python -m scripts.seed
 
       - name: Pytest
         run: docker compose exec -T backend python -m pytest tests/ -v
 
       - name: Integrity check
-        run: docker compose exec -T backend python verify_integrity.py
+        run: docker compose exec -T backend python -m scripts.verify_integrity
 
       - name: Logs (on failure only)
         if: failure()

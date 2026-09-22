@@ -257,8 +257,8 @@ def test_qr_token_is_not_the_booking_id(client, tokens, free_seat):
         pytest.skip("Worker is not running")
 
     # The token is in the DB and is long/random.
-    from database import SessionLocal
-    from models import Booking
+    from core.database import SessionLocal
+    from core.models import Booking
 
     db = SessionLocal()
     try:
@@ -281,8 +281,8 @@ def _booked_with_ticket(client, token, seat_id):
     if booking is None or booking["ticket_status"] != "ready":
         pytest.skip("Worker is not running")
 
-    from database import SessionLocal
-    from models import Booking
+    from core.database import SessionLocal
+    from core.models import Booking
 
     db = SessionLocal()
     try:

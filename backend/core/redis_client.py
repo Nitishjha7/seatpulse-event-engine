@@ -18,7 +18,7 @@ Postgres constraints remain the final source of truth.
 
 import redis
 
-from config import settings
+from core.config import settings
 
 # decode_responses=True returns strings instead of bytes, avoiding manual .decode().
 redis_client = redis.Redis.from_url(

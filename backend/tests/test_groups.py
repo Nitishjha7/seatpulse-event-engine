@@ -147,9 +147,9 @@ def test_expired_group_releases_seats_and_refunds(client, tokens, group_seats):
 
     from sqlalchemy import update as sa_update
 
-    from database import SessionLocal
-    from groups import expire_due_groups
-    from models import GroupBooking, utcnow
+    from core.database import SessionLocal
+    from services.groups import expire_due_groups
+    from core.models import GroupBooking, utcnow
 
     group = _make_group(client, tokens[0], group_seats, minutes=5)
     st = group["share_token"]
@@ -191,9 +191,9 @@ def test_pending_payment_dies_with_the_group(client, tokens, group_seats):
 
     from sqlalchemy import update as sa_update
 
-    from database import SessionLocal
-    from groups import expire_due_groups
-    from models import GroupBooking, GroupShare, Payment, utcnow
+    from core.database import SessionLocal
+    from services.groups import expire_due_groups
+    from core.models import GroupBooking, GroupShare, Payment, utcnow
 
     group = _make_group(client, tokens[0], group_seats, minutes=5)
     st = group["share_token"]
@@ -238,9 +238,9 @@ def test_late_webhook_after_expiry_is_refunded_not_booked(client, tokens, group_
 
     from sqlalchemy import update as sa_update
 
-    from database import SessionLocal
-    from groups import expire_due_groups
-    from models import GroupBooking, GroupShare, Payment, utcnow
+    from core.database import SessionLocal
+    from services.groups import expire_due_groups
+    from core.models import GroupBooking, GroupShare, Payment, utcnow
     from routers.payments import _fulfil
 
     group = _make_group(client, tokens[0], group_seats, minutes=5)
@@ -371,9 +371,9 @@ def test_confirm_and_expiry_race_has_exactly_one_winner(client, tokens, group_se
 
     from sqlalchemy import select as sa_select, update as sa_update
 
-    from database import SessionLocal
-    from groups import expire_due_groups
-    from models import GroupBooking, GroupShare, utcnow
+    from core.database import SessionLocal
+    from services.groups import expire_due_groups
+    from core.models import GroupBooking, GroupShare, utcnow
 
     group = _make_group(client, tokens[0], group_seats[:2], minutes=5)
     st = group["share_token"]
@@ -458,8 +458,8 @@ def test_broken_group_does_not_leave_pending_payments(client, tokens, group_seat
     """
     from sqlalchemy import select as sa_select
 
-    from database import SessionLocal
-    from models import Payment
+    from core.database import SessionLocal
+    from core.models import Payment
 
     group = _make_group(client, tokens[0], group_seats)
     st = group["share_token"]

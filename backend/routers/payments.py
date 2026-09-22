@@ -39,13 +39,13 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from auth import get_current_user
-from config import settings
-from database import get_db
-from groups import mark_share_paid
-from events_broadcast import broadcast_seat_update
-from pricing_state import price_now
-from models import (
+from core.auth import get_current_user
+from core.config import settings
+from core.database import get_db
+from services.groups import mark_share_paid
+from realtime.events_broadcast import broadcast_seat_update
+from services.pricing_state import price_now
+from core.models import (
     BOOKING_CONFIRMED,
     PAYMENT_EXPIRED,
     PAYMENT_FAILED,
@@ -61,11 +61,11 @@ from models import (
     User,
     utcnow,
 )
-from job_queue import enqueue_ticket
-from payments import PaymentError, get_provider
-from rate_limit import BOOKING, limit_user
-from redis_client import acquire_seat_lock, get_lock_owner, redis_client, release_seat_lock
-from schemas import CheckoutOut, CheckoutRequest, PaymentOut, SimulateRequest
+from workers.job_queue import enqueue_ticket
+from services.payments import PaymentError, get_provider
+from core.rate_limit import BOOKING, limit_user
+from core.redis_client import acquire_seat_lock, get_lock_owner, redis_client, release_seat_lock
+from core.schemas import CheckoutOut, CheckoutRequest, PaymentOut, SimulateRequest
 
 logger = logging.getLogger(__name__)
 

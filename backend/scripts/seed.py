@@ -12,9 +12,9 @@ from datetime import timedelta
 
 from sqlalchemy import func, select
 
-from auth import hash_password
-from database import SessionLocal
-from models import (
+from core.auth import hash_password
+from core.database import SessionLocal
+from core.models import (
     ROLE_ADMIN,
     ROLE_ATTENDEE,
     ROLE_ORGANIZER,

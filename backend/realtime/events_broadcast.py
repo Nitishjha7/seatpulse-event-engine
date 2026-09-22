@@ -7,11 +7,11 @@ routers only need to call `broadcast_seat_update(db, seat_id, "locked")`.
 
 from sqlalchemy.orm import Session
 
-from models import Event, Seat
-from pricing import current_price
-from pricing_state import pricing_state
-from schemas import PricingOut, SeatOut
-from websocket import publish
+from core.models import Event, Seat
+from services.pricing import current_price
+from services.pricing_state import pricing_state
+from core.schemas import PricingOut, SeatOut
+from realtime.websocket import publish
 
 # These actions alter the sold seat count, triggering a global event demand
 # multiplier update.

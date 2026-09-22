@@ -23,14 +23,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from auth import require_role
-import ai
-from database import get_db
-from rate_limit import BOOKING, limit_user
+from core.auth import require_role
+import services.ai as ai
+from core.database import get_db
+from core.rate_limit import BOOKING, limit_user
 # Alias `layout` to avoid shadowing local variables.
-import layout as seat_layout
-from events_broadcast import broadcast_pricing_update
-from models import (
+import services.layout as seat_layout
+from realtime.events_broadcast import broadcast_pricing_update
+from core.models import (
     BOOKING_CONFIRMED,
     ROLE_ADMIN,
     ROLE_ORGANIZER,
@@ -42,7 +42,7 @@ from models import (
     Seat,
     User,
 )
-from schemas import EventDraftOut, EventDraftRequest, EventCreate, EventUpdate, OrganizerEventOut
+from core.schemas import EventDraftOut, EventDraftRequest, EventCreate, EventUpdate, OrganizerEventOut
 
 router = APIRouter(prefix="/api/organizer", tags=["organizer"])
 

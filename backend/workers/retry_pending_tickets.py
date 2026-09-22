@@ -18,9 +18,9 @@ from datetime import timedelta
 
 from sqlalchemy import or_, select
 
-from database import SessionLocal
-from job_queue import enqueue_ticket
-from models import (
+from core.database import SessionLocal
+from workers.job_queue import enqueue_ticket
+from core.models import (
     BOOKING_CONFIRMED,
     TICKET_FAILED,
     TICKET_PENDING,

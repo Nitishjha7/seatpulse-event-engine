@@ -59,7 +59,7 @@ services:
     container_name: seatpulse_worker
     # same image as backend, just a different command, so it shares the
     # exact same models/config instead of drifting out of sync
-    command: arq worker.WorkerSettings
+    command: arq workers.worker.WorkerSettings
     volumes:
       - ./backend:/app
       - ticket_data:/app/tickets

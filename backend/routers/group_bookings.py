@@ -19,17 +19,17 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from auth import get_current_user
-from config import settings
-from database import get_db
-from groups import (
+from core.auth import get_current_user
+from core.config import settings
+from core.database import get_db
+from services.groups import (
     DEFAULT_DEADLINE_MINUTES,
     GroupError,
     break_group,
     claim_share,
     create_group,
 )
-from models import (
+from core.models import (
     GROUP_CANCELLED,
     GROUP_COLLECTING,
     PAYMENT_PENDING,
@@ -41,11 +41,11 @@ from models import (
     User,
     utcnow,
 )
-from payments import PaymentError, get_provider
-from pricing_state import price_now
-from rate_limit import BOOKING, limit_user
+from services.payments import PaymentError, get_provider
+from services.pricing_state import price_now
+from core.rate_limit import BOOKING, limit_user
 from routers.payments import _checkout_url_for
-from schemas import CheckoutOut, GroupCreate, GroupOut, GroupShareOut
+from core.schemas import CheckoutOut, GroupCreate, GroupOut, GroupShareOut
 
 router = APIRouter(prefix="/api/groups", tags=["groups"])
 

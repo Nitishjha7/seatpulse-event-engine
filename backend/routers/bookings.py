@@ -18,15 +18,15 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from auth import get_current_user
-from config import settings
-from database import get_db
-from events_broadcast import broadcast_seat_update
-from idempotency import Idempotency
-from job_queue import enqueue_ticket
-from locking_strategies import OPTIMISTIC, PESSIMISTIC, claim_optimistic, claim_pessimistic
-from pricing_state import price_now
-from models import (
+from core.auth import get_current_user
+from core.config import settings
+from core.database import get_db
+from realtime.events_broadcast import broadcast_seat_update
+from core.idempotency import Idempotency
+from workers.job_queue import enqueue_ticket
+from services.locking_strategies import OPTIMISTIC, PESSIMISTIC, claim_optimistic, claim_pessimistic
+from services.pricing_state import price_now
+from core.models import (
     BOOKING_CANCELLED,
     BOOKING_CONFIRMED,
     SEAT_AVAILABLE,
@@ -39,10 +39,10 @@ from models import (
     Seat,
     User,
 )
-from rate_limit import BOOKING, limit_user
-from redis_client import acquire_seat_lock, get_lock_owner, release_seat_lock
-from schemas import BookingCreate, BookingDetail, BookingOut
-from tickets import ticket_path
+from core.rate_limit import BOOKING, limit_user
+from core.redis_client import acquire_seat_lock, get_lock_owner, release_seat_lock
+from core.schemas import BookingCreate, BookingDetail, BookingOut
+from services.tickets import ticket_path
 
 router = APIRouter(prefix="/api/bookings", tags=["bookings"])
 

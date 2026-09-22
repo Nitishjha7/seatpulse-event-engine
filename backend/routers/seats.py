@@ -11,11 +11,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from auth import get_current_user
-from config import settings
-from database import get_db
-from events_broadcast import broadcast_seat_update
-from models import (
+from core.auth import get_current_user
+from core.config import settings
+from core.database import get_db
+from realtime.events_broadcast import broadcast_seat_update
+from core.models import (
     SEAT_AVAILABLE,
     SEAT_LOCKED,
     SEAT_PAYMENT_PENDING,
@@ -24,16 +24,16 @@ from models import (
     User,
     utcnow,
 )
-from pricing import current_price
-from pricing_state import pricing_state
-from rate_limit import SEAT_LOCK, limit_user
-from redis_client import (
+from services.pricing import current_price
+from services.pricing_state import pricing_state
+from core.rate_limit import SEAT_LOCK, limit_user
+from core.redis_client import (
     acquire_seat_lock,
     get_lock_owner,
     get_lock_ttl,
     release_seat_lock,
 )
-from schemas import SeatLockOut, SeatOut
+from core.schemas import SeatLockOut, SeatOut
 
 router = APIRouter(prefix="/api", tags=["seats"])
 

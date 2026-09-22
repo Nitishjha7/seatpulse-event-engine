@@ -19,16 +19,16 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-import ai
-import seat_search
-from auth import get_current_user
-from database import get_db
-from models import Event, Seat, User
-from pricing import current_price
-from pricing_state import pricing_state
-from rate_limit import SEAT_LOCK, limit_user
+import services.ai as ai
+import services.seat_search as seat_search
+from core.auth import get_current_user
+from core.database import get_db
+from core.models import Event, Seat, User
+from services.pricing import current_price
+from services.pricing_state import pricing_state
+from core.rate_limit import SEAT_LOCK, limit_user
 from routers.seats import release_expired_locks
-from schemas import SeatFilters, SeatMatch, SeatSearchOut, SeatSearchRequest
+from core.schemas import SeatFilters, SeatMatch, SeatSearchOut, SeatSearchRequest
 
 logger = logging.getLogger(__name__)
 

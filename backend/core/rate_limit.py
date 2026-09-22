@@ -39,10 +39,10 @@ from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Request, Response, status
 
-from auth import get_current_user
-from config import settings
-from models import User
-from redis_client import redis_client
+from core.auth import get_current_user
+from core.config import settings
+from core.models import User
+from core.redis_client import redis_client
 
 # ---------------------------------------------------------------------------
 # Token bucket in Lua, because the update must be atomic

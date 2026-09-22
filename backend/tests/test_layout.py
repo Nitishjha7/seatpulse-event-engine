@@ -5,7 +5,7 @@ creation through both the layout and the price-tier paths.
 
 import pytest
 
-import layout as seat_layout
+import services.layout as seat_layout
 from helpers import auth_headers
 
 

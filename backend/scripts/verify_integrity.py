@@ -12,8 +12,8 @@ import sys
 
 from sqlalchemy import func, select
 
-from database import SessionLocal
-from models import BOOKING_CONFIRMED, SEAT_BOOKED, Booking, Seat
+from core.database import SessionLocal
+from core.models import BOOKING_CONFIRMED, SEAT_BOOKED, Booking, Seat
 
 
 def check(label: str, ok: bool, detail: str = "") -> bool:

@@ -8,8 +8,8 @@ by seats, events, bookings, and payments modules.
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from models import BOOKING_CONFIRMED, Booking, Event, Seat
-from pricing import PricingInfo, current_price, pricing_for_event
+from core.models import BOOKING_CONFIRMED, Booking, Event, Seat
+from services.pricing import PricingInfo, current_price, pricing_for_event
 
 
 def pricing_state(db: Session, event: Event) -> PricingInfo:

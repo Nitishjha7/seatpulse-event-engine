@@ -5,7 +5,7 @@ Dynamic (surge) pricing: the formula and the quoted-price promise.
 import pytest
 
 from helpers import auth_headers
-from pricing import apply, multiplier_for, pricing_for_event
+from services.pricing import apply, multiplier_for, pricing_for_event
 
 
 # ---------------------------------------------------------------------------

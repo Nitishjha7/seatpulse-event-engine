@@ -43,7 +43,7 @@ def clear_user_rate_limits() -> None:
     first. We only clear per-user buckets — `rl:login:*` is left alone, since
     the brute-force login test relies on it.
     """
-    from redis_client import redis_client
+    from core.redis_client import redis_client
 
     for key in redis_client.scan_iter("rl:user:*", count=500):
         redis_client.delete(key)

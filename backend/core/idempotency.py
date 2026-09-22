@@ -33,7 +33,7 @@ from datetime import timedelta
 
 from fastapi import HTTPException, Request, Response, status
 
-from redis_client import redis_client
+from core.redis_client import redis_client
 
 HEADER = "Idempotency-Key"
 

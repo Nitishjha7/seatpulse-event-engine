@@ -30,7 +30,7 @@ This separation is a deliberate design choice:
 
 from dataclasses import dataclass
 
-from models import SEAT_AVAILABLE
+from core.models import SEAT_AVAILABLE
 
 
 @dataclass(frozen=True)

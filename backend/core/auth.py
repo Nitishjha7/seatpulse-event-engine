@@ -25,10 +25,10 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
-from config import settings
-from database import get_db
-from models import User
-from redis_client import redis_client
+from core.config import settings
+from core.database import get_db
+from core.models import User
+from core.redis_client import redis_client
 
 REFRESH_COOKIE_NAME = "seatpulse_refresh"
 

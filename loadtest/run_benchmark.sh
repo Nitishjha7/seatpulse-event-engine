@@ -30,7 +30,7 @@ run_scenario() {
   echo "  $name   (strategy=$strategy, redis_lock=$redis)"
   echo "=================================================================="
 
-  docker compose exec -T backend python reset_state.py > /dev/null 2>&1
+  docker compose exec -T backend python -m scripts.reset_state > /dev/null 2>&1
 
   docker compose --profile loadtest run --rm \
     -e BOOKING_STRATEGY="$strategy" \
@@ -43,7 +43,7 @@ run_scenario() {
 
   echo ""
   echo "--- integrity ---"
-  docker compose exec -T backend python verify_integrity.py 2>&1 | grep -E "✅|❌|OVERSOLD|confirmed"
+  docker compose exec -T backend python -m scripts.verify_integrity 2>&1 | grep -E "✅|❌|OVERSOLD|confirmed"
 }
 
 # Redis ON — the production path. The difference between strategies is hidden here, as 99% of requests never reach the DB.
