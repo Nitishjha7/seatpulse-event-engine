@@ -36,12 +36,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("worker")
 
 
-def _generate(booking_id: int) -> str:
+def generate_ticket_sync(booking_id: int) -> str:
     """
     Core logic — synchronous, as SQLAlchemy and reportlab are both sync.
 
-    Runs in a separate thread (via `asyncio.to_thread`) to prevent blocking
-    the event loop during PDF rendering, which would otherwise stall the worker.
+    Called two ways: from the ARQ job below (offloaded to a thread so it
+    doesn't block the event loop), and directly from routers/cron.py for
+    deployments with no persistent worker process to run ARQ at all.
     """
     db = SessionLocal()
     try:
@@ -134,7 +135,7 @@ async def generate_ticket(ctx: dict, booking_id: int) -> str:
 
     try:
         # PDF rendering is CPU-bound; offload to thread to keep event loop responsive.
-        return await asyncio.to_thread(_generate, booking_id)
+        return await asyncio.to_thread(generate_ticket_sync, booking_id)
     except Exception as exc:
         if attempt >= WorkerSettings.max_tries:
             _mark_failed(booking_id, str(exc))

@@ -136,6 +136,14 @@ class Settings(BaseSettings):
         """Parses comma-separated string into a list, stripping whitespace."""
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
+    # ---- Cron endpoint (deployments with no persistent worker process) ----
+    # Leave empty in docker-compose setups, where the worker service runs
+    # ARQ continuously — /api/cron/tick then 401s on every call, harmlessly.
+    # Set this when there's no worker at all (e.g. a free hosting tier with
+    # only a web service) and an external scheduler is hitting the endpoint
+    # instead. Compared against X-Cron-Secret, not tied to a user login.
+    CRON_SECRET: str = ""
+
 
 # Singleton instance for application-wide use.
 settings = Settings()

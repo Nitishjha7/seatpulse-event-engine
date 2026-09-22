@@ -14,7 +14,7 @@ from core.config import settings
 from core.database import SessionLocal, get_db
 from core.models import Event, Seat
 from core.redis_client import ping as redis_ping
-from routers import group_bookings, admin, bookings, checkin, events, organizer, payments, search, seats
+from routers import cron, group_bookings, admin, bookings, checkin, events, organizer, payments, search, seats
 from routers import auth as auth_router
 from realtime.websocket import manager, start_subscriber
 
@@ -83,6 +83,7 @@ app.include_router(payments.router)
 app.include_router(checkin.router)
 app.include_router(group_bookings.router)
 app.include_router(search.router)
+app.include_router(cron.router)
 
 
 @app.websocket("/ws/events/{event_id}")
