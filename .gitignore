@@ -37,10 +37,10 @@ pnpm-debug.log*
 # ---------- Docker ----------
 docker-compose.override.yml
 
-# ---------- Personal Notes ----------
-# Setup guides and command references — for local reference only,
-# Do not push to GitHub
+# ---------- Personal notes ----------
+# Build log, setup guides, interview prep — local reference only.
 /notes
+
 # ---------- Editors / OS ----------
 .vscode/*
 !.vscode/extensions.json
@@ -56,8 +56,7 @@ logs/
 *.log
 tickets/
 
-# Benchmark CSV outputs — generated on every run.
-# Official results are documented in documents/phases/15-locking-benchmark.md.
+# Benchmark CSV outputs — regenerated on every run.
 loadtest/results/
 
 # Git Bash on Windows translates paths like `/tmp/...` and `/w` inside the project,
