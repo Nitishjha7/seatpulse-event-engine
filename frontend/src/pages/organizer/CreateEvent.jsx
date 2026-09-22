@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { createEvent } from '../../api'
 import AiDraft from '../../components/AiDraft'
 import LayoutBuilder, { emptyLayout, validateLayout } from '../../components/LayoutBuilder'
+import PosterGenerator from '../../components/PosterGenerator'
 import { IconClose, IconTicket } from '../../layout/icons'
 
 const ROW_LABELS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -36,6 +37,10 @@ export default function CreateEvent() {
   // Default to 'tiers' since most events don't need a custom map.
   const [mode, setMode] = useState('tiers')
   const [layout, setLayout] = useState(emptyLayout)
+
+  // Shared with both AiDraft and PosterGenerator, so the poster is based
+  // on whatever the organizer just typed for the draft.
+  const [brief, setBrief] = useState('')
 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -129,6 +134,8 @@ export default function CreateEvent() {
 
       <form onSubmit={handleSubmit} className="space-y-5">
         <AiDraft
+          brief={brief}
+          onBriefChange={setBrief}
           onDraft={(d) =>
             setForm((f) => ({
               ...f,
@@ -138,6 +145,8 @@ export default function CreateEvent() {
             }))
           }
         />
+
+        <PosterGenerator brief={brief} />
 
         <Card title="Event details">
           <div className="grid gap-4 sm:grid-cols-2">

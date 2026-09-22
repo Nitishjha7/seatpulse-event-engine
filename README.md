@@ -5,7 +5,7 @@
 **High-concurrency event ticketing engine.** When 5,000 people click the same seat at the same instant, exactly one booking is created — and everyone else sees the seat turn red in real time.
 
 [![tests](https://github.com/Nitishjha7/seatpulse-event-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/Nitishjha7/seatpulse-event-engine/actions/workflows/ci.yml)
-[![tests passing](https://img.shields.io/badge/tests-110%20passing-3fb950)](backend/tests/)
+[![tests passing](https://img.shields.io/badge/tests-114%20passing-3fb950)](backend/tests/)
 [![double bookings](https://img.shields.io/badge/double%20bookings-0%20in%20200--user%20flash%20sale-3fb950)](#measured-results)
 [![FastAPI](https://img.shields.io/badge/FastAPI-ASGI-009688)](backend/main.py)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169e1)](backend/core/models.py)
@@ -40,7 +40,7 @@
 | **Frontend** | React 19, Vite, Tailwind CSS v4, WebSockets |
 | **Async** | ARQ worker (PDF tickets, QR codes, scheduled expiry) |
 | **Infra** | Docker Compose (dev + prod targets), GitHub Actions CI |
-| **Tests** | 110 integration tests against a live stack |
+| **Tests** | 114 integration tests against a live stack |
 
 ---
 
@@ -230,10 +230,11 @@ docker compose exec backend python -m scripts.seed
 | **Group booking** | Shareable split-payment link, all-or-nothing against a deadline |
 | **Seat layouts** | Sections, per-row seat counts, aisles — validated server-side |
 | **AI search** | A sentence becomes validated filters; an ordinary query runs them |
+| **AI poster** | Generates a poster image from the event brief via Hugging Face — Gemini's free tier has no image quota |
 | **Rate limiting** | Token bucket in Lua, keyed to identity — never to IP |
 | **RBAC** | Three flat roles, with ownership checked separately from role |
 
-Optional integrations degrade gracefully: no Google keys hides the login button, no Stripe keys switches to a mock provider, no Gemini key hides the AI search box. Nothing breaks.
+Optional integrations degrade gracefully: no Google keys hides the login button, no Stripe keys switches to a mock provider, no Gemini key hides the AI search box, no Hugging Face key hides the poster button. Nothing breaks.
 
 ---
 
@@ -259,7 +260,7 @@ stateDiagram-v2
 ## Testing
 
 ```bash
-docker compose exec backend pytest tests/ -q        # 110 integration tests
+docker compose exec backend pytest tests/ -q        # 114 integration tests
 docker compose exec backend python -m scripts.verify_integrity
 
 # Flash sale
@@ -283,12 +284,12 @@ backend/
   realtime/       WebSocket manager, Redis pub/sub broadcast
   workers/        ARQ background worker, ticket retries, payment reconciliation
   scripts/        seed / reset / integrity-check, run manually or in CI
-  tests/          110 integration tests against the live stack
+  tests/          114 integration tests against the live stack
 
 frontend/         React app — seat grid, booking context, organizer + gate portals
 loadtest/         Locust scenarios, locking benchmark, multi-worker verification
 documents/        Architecture walkthrough and screenshots
-.github/          CI: full stack, 110 tests, production image assertions
+.github/          CI: full stack, 114 tests, production image assertions
 ```
 
 ---
@@ -303,6 +304,5 @@ documents/        Architecture walkthrough and screenshots
 
 Stated plainly rather than implied:
 
-- **AI poster generator** — Gemini's free tier has no image quota; every image model returns 429. The text half shipped.
 - **Demand forecasting** — deliberately left out. Without real historical data it produces a plausible-looking number rather than a useful one.
 - **Live deployment** — production compose, nginx config and non-root images are ready; nothing is hosted yet.

@@ -302,3 +302,60 @@ def test_draft_does_not_create_an_event(client, role_tokens):
 
     after = len(client.get("/api/organizer/events", headers=auth_headers(token)).json())
     assert after == before, "draft created an event — this should never happen"
+
+
+# ---------------------------------------------------------------------------
+# AI poster generation
+#
+# Same contract as the text draft: no Gemini/Hugging Face key needed for
+# these — a 503 with the feature off is a valid, tested outcome, not a gap
+# in coverage.
+# ---------------------------------------------------------------------------
+
+def test_poster_needs_organizer_role(client, role_tokens):
+    res = client.post(
+        "/api/organizer/events/poster",
+        headers=auth_headers(role_tokens["attendee"]),
+        json={"brief": "some music event in Mumbai"},
+    )
+    assert res.status_code == 403
+
+
+def test_poster_needs_auth(client):
+    res = client.post(
+        "/api/organizer/events/poster", json={"brief": "some music event in Mumbai"}
+    )
+    assert res.status_code == 401
+
+
+def test_poster_rejects_empty_or_huge_briefs(client, role_tokens):
+    token = role_tokens["organizer"]
+
+    assert client.post(
+        "/api/organizer/events/poster", headers=auth_headers(token), json={"brief": "hi"}
+    ).status_code == 422
+
+    assert client.post(
+        "/api/organizer/events/poster",
+        headers=auth_headers(token),
+        json={"brief": "x" * 500},
+    ).status_code == 422
+
+
+def test_poster_returns_an_image_or_a_clean_failure(client, role_tokens):
+    """
+    A 503 (no key set) or 502 (generation failed) is a valid outcome here —
+    this just rules out a 500. When it does succeed, the response is the
+    raw image, not a JSON envelope.
+    """
+    res = client.post(
+        "/api/organizer/events/poster",
+        headers=auth_headers(role_tokens["organizer"]),
+        json={"brief": "Arijit Singh concert, DY Patil Mumbai, December"},
+    )
+
+    assert res.status_code in (200, 502, 503), res.text
+
+    if res.status_code == 200:
+        assert res.headers["content-type"].startswith("image/")
+        assert len(res.content) > 0

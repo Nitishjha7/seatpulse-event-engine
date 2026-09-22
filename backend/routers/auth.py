@@ -103,6 +103,7 @@ def auth_config():
     return AuthConfigOut(
         google_enabled=settings.google_enabled,
         ai_search_enabled=settings.ai_search_enabled,
+        poster_enabled=settings.poster_enabled,
     )
 
 

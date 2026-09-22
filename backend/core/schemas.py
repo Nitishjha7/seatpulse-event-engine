@@ -313,6 +313,8 @@ class AuthConfigOut(BaseModel):
     google_enabled: bool
     # AI search box visibility. If missing, frontend does not render the box.
     ai_search_enabled: bool = False
+    # Poster button visibility on the create-event form.
+    poster_enabled: bool = False
 
 
 # ---------- Seat search ----------

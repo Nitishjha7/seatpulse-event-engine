@@ -10,10 +10,9 @@ import { useAuth } from '../auth/AuthContext'
  * model hallucinates something ("featuring special guests"), the organizer
  * has to catch it before hitting publish, not the AI.
  */
-export default function AiDraft({ onDraft }) {
+export default function AiDraft({ brief, onBriefChange, onDraft }) {
   const { aiSearchEnabled } = useAuth()
 
-  const [brief, setBrief] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [filled, setFilled] = useState(false)
@@ -49,7 +48,7 @@ export default function AiDraft({ onDraft }) {
       <div className="mt-2.5 flex gap-2">
         <input
           value={brief}
-          onChange={(e) => setBrief(e.target.value)}
+          onChange={(e) => onBriefChange(e.target.value)}
           maxLength={200}
           placeholder="Arijit Singh concert, DY Patil Mumbai, December"
           // Enter triggers the draft instead of submitting the form

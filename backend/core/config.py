@@ -106,6 +106,16 @@ class Settings(BaseSettings):
     def ai_search_enabled(self) -> bool:
         return bool(self.GEMINI_API_KEY)
 
+    # ---- AI poster generation ----
+    # Uses Hugging Face's Inference API (free tier) instead of Gemini —
+    # Gemini's free tier has no image quota and every image model there
+    # returns 429. If empty, the poster button is hidden.
+    HUGGINGFACE_API_KEY: str = ""
+
+    @property
+    def poster_enabled(self) -> bool:
+        return bool(self.HUGGINGFACE_API_KEY)
+
     @property
     def payment_provider(self) -> str:
         """Returns 'stripe' if keys are present, otherwise 'mock'."""

@@ -136,6 +136,37 @@ export const draftEvent = (brief) =>
     body: JSON.stringify({ brief }),
   });
 
+/**
+ * Returns a poster as a blob URL rather than JSON — the response body is
+ * raw image bytes, so this bypasses request()'s res.json() and handles
+ * refresh/error the same way by hand.
+ */
+export async function generatePoster(brief) {
+  const path = "/api/organizer/events/poster";
+  const options = { method: "POST", body: JSON.stringify({ brief }) };
+
+  let res = await rawRequest(path, options, accessToken);
+  if (res.status === 401) {
+    const refreshed = await tryRefresh();
+    if (refreshed) res = await rawRequest(path, options, accessToken);
+  }
+
+  if (!res.ok) {
+    let message = `${res.status} ${res.statusText}`;
+    try {
+      const body = await res.json();
+      if (body.detail) message = body.detail;
+    } catch {
+      /* Response was not JSON */
+    }
+    const error = new Error(message);
+    error.status = res.status;
+    throw error;
+  }
+
+  return URL.createObjectURL(await res.blob());
+}
+
 export const createEvent = (payload) =>
   request("/api/organizer/events", {
     method: "POST",

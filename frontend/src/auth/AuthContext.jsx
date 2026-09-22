@@ -23,6 +23,7 @@ export function AuthProvider({ children }) {
   const [googleEnabled, setGoogleEnabled] = useState(false)
   // Determines if the AI search feature is enabled based on server configuration.
   const [aiSearchEnabled, setAiSearchEnabled] = useState(false)
+  const [posterEnabled, setPosterEnabled] = useState(false)
 
   const refreshTimer = useRef(null)
 
@@ -61,6 +62,7 @@ export function AuthProvider({ children }) {
         if (!cancelled) {
           setGoogleEnabled(config.google_enabled)
           setAiSearchEnabled(config.ai_search_enabled)
+          setPosterEnabled(config.poster_enabled)
         }
       } catch {
         /* Backend unavailable; health check will handle error display */
@@ -96,6 +98,7 @@ export function AuthProvider({ children }) {
     loading,
     googleEnabled,
     aiSearchEnabled,
+    posterEnabled,
     isAuthenticated: !!user,
 
     async login(email, password) {

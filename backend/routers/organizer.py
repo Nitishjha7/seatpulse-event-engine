@@ -13,12 +13,13 @@ edit any event, only the ones they own.
 
 import string
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from core.auth import require_role
 import services.ai as ai
+import services.poster as poster
 from core.database import get_db
 from core.rate_limit import BOOKING, limit_user
 # Alias `layout` to avoid shadowing local variables.
@@ -131,6 +132,38 @@ def draft_event(
         )
 
     return EventDraftOut(**draft)
+
+
+@router.post(
+    "/events/poster",
+    dependencies=[Depends(limit_user(BOOKING))],
+)
+def generate_poster(
+    payload: EventDraftRequest,
+    user: User = Depends(require_role(ROLE_ORGANIZER, ROLE_ADMIN)),
+):
+    """
+    Generate a poster image from the same brief used for the event draft.
+
+    Returns raw image bytes directly rather than a JSON envelope — the
+    frontend renders the response straight into an <img> via a blob URL.
+    Like the text draft, this is a suggestion for the organizer to use or
+    discard, not something published automatically.
+    """
+    if not poster.is_enabled():
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Poster generation is not available — set HUGGINGFACE_API_KEY",
+        )
+
+    image = poster.generate_poster(payload.brief)
+    if image is None:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Could not generate a poster — try again in a moment",
+        )
+
+    return Response(content=image, media_type="image/jpeg")
 
 
 @router.post("/events", response_model=OrganizerEventOut, status_code=status.HTTP_201_CREATED)
