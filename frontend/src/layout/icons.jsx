@@ -1,8 +1,6 @@
 /**
- * Small inline SVG icons.
- *
- * Avoids external icon libraries to minimize bundle size.
- * These are 24x24 stroke icons that inherit `currentColor`.
+ * Small inline SVG icons — skips an icon library dependency.
+ * 24x24 stroke icons that inherit `currentColor`.
  */
 
 const base = {

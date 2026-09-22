@@ -3,16 +3,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { API_URL, getAccessToken } from '../api'
 
 /**
- * WebSocket hook for live event seat updates.
- *
- * Responsibilities:
- *   - Connect on mount, close on unmount
- *   - Reconnect with exponential backoff on connection loss
- *   - Trigger onSeatUpdate() when "seat_update" messages arrive
+ * WebSocket hook for live seat updates. Connects on mount, reconnects with
+ * exponential backoff on drop, and fires the callbacks for seat/pricing messages.
  *
  * @param {number|null} eventId  null = do not connect
  * @param {(seat, action) => void} onSeatUpdate
- * @param {(pricing) => void} [onPricingUpdate]  Dynamic pricing updates
+ * @param {(pricing) => void} [onPricingUpdate]
  * @returns {{ status: 'connecting'|'open'|'closed' }}
  */
 export function useWebSocket(eventId, onSeatUpdate, onPricingUpdate) {
@@ -38,10 +34,7 @@ export function useWebSocket(eventId, onSeatUpdate, onPricingUpdate) {
     const token = getAccessToken()
     if (!token) return
 
-    // Convert http(s) to ws(s)
-    //
-    // Token passed via query param because the browser WebSocket API
-    // does not support custom headers. Uses short-lived access tokens only.
+    // Token goes via query param since the WebSocket API can't send custom headers
     const base = API_URL.replace(/^http/, 'ws')
     const wsUrl = `${base}/ws/events/${eventId}?token=${encodeURIComponent(token)}`
     const socket = new WebSocket(wsUrl)
@@ -71,9 +64,8 @@ export function useWebSocket(eventId, onSeatUpdate, onPricingUpdate) {
       setStatus('closed')
       if (closedByUsRef.current) return
 
-      // Exponential backoff: 1s, 2s, 4s, 8s... max 15s
-      //
-      // Prevents thundering herd effect on server recovery
+      // Exponential backoff (1s, 2s, 4s... capped at 15s) to avoid hammering
+      // the server with reconnects when it comes back up
       const delay = Math.min(1000 * 2 ** retryRef.current, 15000)
       retryRef.current += 1
       timerRef.current = setTimeout(connect, delay)

@@ -42,16 +42,13 @@ def release_expired_locks(db: Session, event_id: int) -> None:
     """
     Revert expired 'locked' seats in the DB to 'available'.
 
-    Reason:
-      Redis is the source of truth for locks. When a Redis key TTL expires,
-      it is deleted silently without notifying Postgres. Consequently,
-      seats remain 'locked' in the DB even after they are free.
-
-    We perform a lightweight UPDATE before reading seats. This is a
-    "lazy cleanup" strategy, avoiding the need for background jobs or cron.
+    Redis is the source of truth for locks, but when a key's TTL expires it
+    just disappears — Postgres never finds out, so the seat stays 'locked'
+    there even after it's actually free. This does a lightweight UPDATE
+    before reading seats instead of running a separate cleanup job.
     """
-    # Include payment_pending; abandoned checkouts must release the seat,
-    # otherwise, an abandoned payment would block the seat indefinitely.
+    # Include payment_pending too — an abandoned checkout needs to release
+    # the seat, or it stays blocked indefinitely.
     expired = db.scalars(
         select(Seat.id).where(
             Seat.event_id == event_id,
@@ -184,26 +181,22 @@ def lock_seat(
             status.HTTP_409_CONFLICT, "Seat is already held by another user"
         )
 
-    # Lock acquired. Update DB so other users see the seat as 'locked' in the grid.
+    # Lock acquired — update the DB so the grid shows 'locked' for everyone.
     #
-    # The WHERE clause status check is CRITICAL to prevent race conditions:
+    # The WHERE status check matters here: without it, a stale read could
+    # overwrite a seat that got booked in the meantime.
     #
-    #   B: read seat (locked by A)      -> check passes
-    #   A: book seat                    -> status=booked, Redis lock released
-    #   B: acquire Redis lock (free)    -> updates DB status=locked
-    #      ...result: 'booked' seat is overwritten to 'locked'.
+    #   B: read seat (locked by A)   -> check passes
+    #   A: book seat                 -> status=booked, Redis lock released
+    #   B: acquire Redis lock (free) -> updates DB status=locked
+    #      ...'booked' seat gets overwritten back to 'locked'.
     #
-    # With the guard, if the seat was booked in the interim, rowcount is 0,
-    # we release the Redis lock and return 409.
+    # With the guard, that update just gets rowcount 0 and we 409 instead.
     ttl = settings.SEAT_LOCK_TTL
 
-    # PRICE LOCK -- freeze the price at the time of the hold.
-    #
-    # This ensures the user pays the price they saw in the grid, regardless
-    # of dynamic pricing changes during the hold.
-    #
-    # This is stored as a column because historical demand cannot be
-    # recomputed accurately later.
+    # Freeze the price at hold time so the user pays what they saw in the
+    # grid, not whatever dynamic pricing has moved to by the time they pay.
+    # Stored as a column since historical demand can't be recomputed later.
     quoted = current_price(
         float(seat.price), pricing_state(db, db.get(Event, seat.event_id))
     )

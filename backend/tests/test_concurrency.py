@@ -55,12 +55,7 @@ def test_rate_limit_sends_headers(client, tokens, free_seat):
 
 
 def test_rate_limit_is_per_user_not_global(client, tokens, free_seat):
-    """
-    One user being blocked should not affect another user.
-
-    This is the most important rate limit test — a global limiter would
-    shut down the entire system due to one bot.
-    """
+    """One user being blocked shouldn't affect another — a global limiter would let one bot take down everyone."""
     seat_id = free_seat['id']
     victim, other = tokens[5], tokens[6]
 
@@ -92,11 +87,7 @@ def test_wrong_password_eventually_rate_limited(client):
 # ---------------------------------------------------------------------------
 
 def test_same_idempotency_key_returns_same_booking(client, tokens, free_seat):
-    """
-    Real test for double-clicks.
-
-    Same key again -> same booking, and only ONE row in the database.
-    """
+    """Double-click protection — same key again returns the same booking, only one row in the DB."""
     seat_id = free_seat['id']
     token = tokens[0]
     headers = {**auth_headers(token), "Idempotency-Key": f"test-{seat_id}-once-{RUN_ID}"}
@@ -109,7 +100,7 @@ def test_same_idempotency_key_returns_same_booking(client, tokens, free_seat):
     assert second.json()["id"] == first.json()["id"], "A different booking was created!"
     assert second.headers.get("X-Idempotent-Replay") == "true"
 
-    # Most important check — how many bookings were actually created in the DB
+    # How many bookings actually landed in the DB
     mine = client.get("/api/bookings", headers=auth_headers(token)).json()
     for_seat = [b for b in mine if b["seat_id"] == seat_id and b["status"] == "confirmed"]
     assert len(for_seat) == 1
@@ -211,24 +202,14 @@ def test_version_increments_on_change(client, tokens, free_seat):
 # ---------------------------------------------------------------------------
 # Locking strategies
 #
-# These tests must pass in both modes.
-#
-# When BENCHMARK_MODE is off, the server ignores the `strategy` param and runs
-# optimistic. When on, it runs the pessimistic path. In both cases, one thing
-# must hold true: **one seat, one booking**.
-#
-# The test is written for this invariant, not internal details — so it is not
-# skipped based on mode, and remains meaningful even if benchmark mode is
-# accidentally left on.
+# Must pass under both. With BENCHMARK_MODE off the server ignores `strategy`
+# and runs optimistic; on, it runs pessimistic. Either way: one seat, one
+# booking. Written against that invariant rather than the mode, so it stays
+# meaningful even if benchmark mode gets left on by accident.
 # ---------------------------------------------------------------------------
 
 def test_pessimistic_strategy_also_prevents_double_booking(client, tokens, free_seat):
-    """
-    Pessimistic path must also prevent overselling.
-
-    This is the first question of the benchmark: are both strategies CORRECT?
-    "Which is faster" is irrelevant if one is wrong.
-    """
+    """Pessimistic path must also prevent overselling — speed doesn't matter if it's wrong."""
     seat_id = free_seat["id"]
 
     def book(token):
@@ -248,10 +229,10 @@ def test_pessimistic_strategy_also_prevents_double_booking(client, tokens, free_
 
 def test_unknown_strategy_falls_back_to_optimistic(client, tokens, free_seat):
     """
-    Server should fall back to a safe default on garbage `strategy` values, not 500.
+    Garbage `strategy` value should fall back to a safe default, not 500.
 
-    This seems minor but is critical: this param is not in the public API, so
-    anyone can send anything. Crashing on an unknown value would be a DoS.
+    The param isn't part of the public API, so anyone can send anything —
+    crashing on an unknown value would be a DoS.
     """
     res = client.post(
         "/api/bookings?strategy=../../etc/passwd",
@@ -265,9 +246,9 @@ def test_both_strategies_write_identical_seat_state(client, tokens, role_tokens)
     """
     Seat state must look identical after both strategies.
 
-    If the pessimistic path forgets to increment `version` (not needed due to
-    row locks), WebSocket clients won't see the update — and the benchmark
-    would be measuring two DIFFERENT things.
+    If pessimistic forgets to bump `version` (not strictly needed since it
+    has row locks), WebSocket clients miss the update, and the benchmark
+    ends up comparing two different things.
     """
     token = role_tokens["organizer"]
     states = []

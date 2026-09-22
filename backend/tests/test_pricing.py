@@ -11,12 +11,12 @@ from services.pricing import apply, multiplier_for, pricing_for_event
 # ---------------------------------------------------------------------------
 # Dynamic pricing
 #
-# Two separate things are being tested here:
-#   1. The FORMULA is correct (pure functions, no DB).
-#   2. The QUOTED PRICE promise is kept (full HTTP flow).
+# Two things are tested here:
+#   1. The formula is correct (pure functions, no DB).
+#   2. The quoted-price promise is kept (full HTTP flow).
 #
-# (2) is more important. If the formula is wrong, the price might look odd.
-# If the price lock breaks, the user will be charged incorrectly — that is a different level of bug.
+# (2) matters more — a wrong formula just looks odd, but a broken price lock
+# means someone gets charged the wrong amount.
 # ---------------------------------------------------------------------------
 
 def test_multiplier_grows_with_demand():
@@ -63,7 +63,8 @@ def test_seats_until_increase_counts_forward():
       1 sold -> 1.005x -> ₹1005 -> round to ₹10 -> ₹1000 (no change)
       2 sold -> 1.010x -> ₹1010                            <- change here
 
-    So the answer is 2, not 1. It seems like 1 at first glance — but the ₹5 difference disappears due to the ₹10 rounding. That is why this function runs a loop instead of estimating with a formula.
+    Answer is 2, not 1 — the ₹5 difference at 1 sold gets rounded away, which
+    is why this counts with a loop instead of estimating via formula.
     """
     info = pricing_for_event(
         enabled=True, sold=0, total=100, demand_factor=0.5, max_surge=2.0,
@@ -91,17 +92,19 @@ def test_max_surge_reached_reports_no_further_increase():
 
 # ---- Now the HTTP flow — the real promise is tested here ----
 
-# Cleanup for surge_event fixture bookings — which tokens purchased something
-# for this event. Module-level so the fixture can know about tokens created inside the test.
+# Tracks which tokens bought a seat on surge_event, for cleanup. Module-level
+# so the fixture can see tokens that were only created inside the test.
 tokens_cache: list[str] = []
 
 
 @pytest.fixture
 def surge_event(client, role_tokens):
     """
-    A small event with dynamic pricing, its own.
+    Its own small event with dynamic pricing enabled.
 
-    Cannot use Event 1 — other tests keep creating/deleting bookings on it, and the multiplier comes from the sold-count. On a shared event, this test would sometimes pass and sometimes fail (flaky), and a flaky test is a bad test.
+    Can't reuse Event 1 — other tests create/delete bookings on it, and the
+    multiplier is derived from the sold-count, so a shared event would make
+    this flaky.
     """
     token = role_tokens["organizer"]
     res = client.post(
@@ -166,12 +169,9 @@ def test_price_rises_after_a_booking(client, tokens, surge_event):
 
 def test_held_price_survives_a_price_rise(client, tokens, surge_event):
     """
-    The most critical test for this feature.
-
-    User A holds a seat (quoted ₹1000). Then User B buys another seat, increasing demand.
-    A must still pay ₹1000 — because that was the quoted price.
-
-    If this breaks, the user will be silently overcharged.
+    User A holds a seat at ₹1000, then B buys another seat and demand rises.
+    A must still pay ₹1000 — that's what was quoted. If this breaks, A gets
+    silently overcharged.
     """
     tokens_cache.extend([tokens[0], tokens[1]])
     seats = client.get(f"/api/events/{surge_event['id']}/seats").json()
@@ -241,10 +241,9 @@ def test_organizer_can_turn_surge_off(client, role_tokens, surge_event):
 
 def test_base_price_cannot_be_edited(client, role_tokens, surge_event):
     """
-    Base price cannot be changed via PATCH.
-
-    Existing bookings rely on it — changing it would invalidate their receipts.
-    Pydantic silently ignores extra fields, so we verify that no change occurred.
+    Base price can't be changed via PATCH — existing bookings' receipts rely
+    on it. Pydantic silently ignores the extra field, so this just confirms
+    nothing changed.
     """
     client.patch(
         f"/api/organizer/events/{surge_event['id']}",

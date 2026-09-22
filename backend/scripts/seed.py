@@ -24,7 +24,7 @@ from core.models import (
     utcnow,
 )
 
-# Demo login credentials as specified in README and documentation.
+# Demo login credentials (also referenced in the README).
 DEMO_EMAIL = "demo@seatpulse.dev"
 DEMO_PASSWORD = "demo1234"
 
@@ -46,20 +46,14 @@ DEFAULT_PRICE = 800
 def seed():
     db = SessionLocal()
     try:
-        # ---- Users ----
-        #
         # Two types of accounts:
         #   named    — demo / organizer / admin for role-based testing.
         #   numbered — user1 ... userN for load and concurrency testing.
         #
-        # Numbering is fixed to ensure consistency.
-        #
-        # Previously, dynamic ranges caused user1 and user2 to be skipped,
-        # breaking tests that relied on those specific accounts.
-        # Fixed numbering ensures idempotency and consistent test state.
+        # Numbering is fixed (not derived from current row count) so re-running
+        # this script stays idempotent and user1/user2 always exist.
 
-        # Bcrypt is slow (~100ms); hashing once and reusing for all test users
-        # significantly speeds up the seeding process.
+        # Bcrypt is slow (~100ms) — hash once and reuse for every test user.
         shared_hash = hash_password(DEMO_PASSWORD)
 
         named = [
@@ -102,12 +96,8 @@ def seed():
         print(f"          organizer@seatpulse.dev / {DEMO_PASSWORD}  (organizer)")
         print(f"          admin@seatpulse.dev     / {DEMO_PASSWORD}  (admin)")
 
-        # ---- Event ----
-        #
-        # organizer_id is mandatory.
-        #
-        # Missing organizer_id causes 403 errors during gate check-in and
-        # prevents events from appearing in the organizer portal.
+        # organizer_id is required — without it, gate check-in 403s and the
+        # event won't show up in the organizer portal.
         organizer = db.scalar(
             select(User).where(User.email == "organizer@seatpulse.dev")
         )

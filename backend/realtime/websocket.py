@@ -1,28 +1,20 @@
 """
 WebSocket connections + real-time broadcasting.
 
-Problem solved:
-  When User A holds a seat, User B sees it as available until they refresh.
-  If B clicks, they receive a 409 error, resulting in a poor experience.
-  Now, B will see the seat status update immediately.
+Without this, User A holds a seat and User B still sees it as available
+until they refresh, then gets a 409 when they click it. This pushes the
+status update to B immediately instead.
 
-Architecture — Why Redis Pub/Sub instead of direct broadcasting:
+Broadcasting locally would be enough for a single server, but production
+runs multiple Uvicorn workers, each with its own set of socket connections:
 
-  Direct broadcasting suffices for a single backend server. However, in
-  production, multiple Uvicorn workers run, each maintaining its own
-  WebSocket connections:
+    Worker 1: User A, User C sockets
+    Worker 2: User B socket
 
-      Worker 1: User A, User C sockets
-      Worker 2: User B socket
-
-  User A's lock is processed on Worker 1. If it only notifies local sockets,
-  User B will never be informed.
-
-  Therefore: Each worker PUBLISHES to a Redis channel, and every worker
-  SUBSCRIBES to that channel to notify its local sockets. Redis acts as
-  the message bus.
-
-  Bonus: Redis is already in use for seat locking — no new service to run.
+If A's lock is handled on Worker 1 and it only notifies its own sockets,
+B never hears about it. So each worker publishes to a Redis channel and
+every worker subscribes to it, using Redis as the message bus — which
+we're already running for seat locks, so no new service needed.
 """
 
 import asyncio

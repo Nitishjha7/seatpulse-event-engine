@@ -1,37 +1,25 @@
 """
 Core group booking logic — handles the "all or nothing" decision.
 
-Separated from routes because this logic is triggered by three sources:
-  - HTTP route (final user payment)
-  - Payment webhook (gateway confirmation)
-  - Background job (deadline expiry)
+Kept out of routes because this gets triggered from three places: the HTTP
+route (final user paying), the payment webhook (gateway confirmation), and
+a background job (deadline expiry).
 
----- The Problem ----
+The problem: for a single seat, "exactly once" is trivial. For a group it
+isn't — say 4 people, 4 separate payments, 3 have paid, and the deadline
+hits. Giving seats to three people and denying the fourth defeats the point
+of booking together, so the rule is all or nothing: dissolve the group,
+release the seats, refund the three who paid.
 
-In single-seat bookings, "exactly once" is straightforward: one seat, one booking.
-In groups, the requirement changes:
-
-    4 people, 4 separate payments. 3 have paid. The deadline is reached.
-    What now?
-
-Answer: **All or nothing.** Giving seats to three people while denying the fourth
-defeats the purpose of a group (they intended to sit together). Therefore, the
-group is dissolved, seats are released, and the three payments are refunded.
-
----- The Race Condition ----
-
-    Thread A: Final user paying      -> confirm group
-    Thread B: Expiry job running    -> dissolve group
-
-Both occur simultaneously. Exactly one must succeed, and the loser must perform
-the correct cleanup.
-
-The solution is an atomic conditional UPDATE:
+That creates a race: the final payer's thread tries to confirm the group at
+the same moment the expiry job tries to dissolve it. Exactly one has to win,
+and the loser needs to clean up correctly. Solved with an atomic conditional
+UPDATE:
 
     UPDATE group_bookings SET status = ? WHERE id = ? AND status = 'collecting'
 
-rowcount 1 = I made the decision. rowcount 0 = Someone else beat me to it.
-No locks, no waiting.
+rowcount 1 means I won the race; rowcount 0 means someone else already
+decided. No locks, no waiting.
 """
 
 import logging
@@ -78,11 +66,9 @@ MAX_GROUP_SEATS = 10
 
 def new_share_token() -> str:
     """
-    Generates a secret for the share link.
-
-    Uses `secrets` instead of `random` — a predictable share link would let
-    someone guess their way into another group. Same reasoning as the
-    ticket QR tokens.
+    Generates a secret for the share link. Uses `secrets`, not `random` —
+    a predictable link would let someone guess their way into another
+    group, same reasoning as the ticket QR tokens.
     """
     return secrets.token_urlsafe(24)
 
@@ -99,13 +85,9 @@ def create_group(
     db: Session, *, user, seat_ids: list[int], deadline_minutes: int, quoted: dict[int, float]
 ) -> GroupBooking:
     """
-    Holds N seats and initializes a group.
-
-    This is a single transaction by design.
-
-    If any seat is unavailable, the entire group must fail. Otherwise, a user
-    might hold 3 seats while waiting indefinitely for a 4th that will never
-    become available. Partial holds are not useful.
+    Holds N seats and initializes a group, as a single transaction. If any
+    seat is unavailable the whole group fails — otherwise a user could end
+    up holding 3 seats while waiting forever for a 4th that never frees up.
     """
     if not seat_ids:
         raise GroupError("At least one seat must be selected.")
@@ -127,8 +109,8 @@ def create_group(
     db.flush()
 
     for seat_id in seat_ids:
-        # Atomic claim similar to single bookings. `locked` status is allowed
-        # because users often select seats in the grid before forming a group.
+        # Same atomic claim pattern as single bookings. `locked` is allowed
+        # too since users often select seats before forming a group.
         result = db.execute(
             update(Seat)
             .where(
@@ -175,10 +157,8 @@ def create_group(
 
 def claim_share(db: Session, share: GroupShare, user) -> GroupShare:
     """
-    Claims an empty share.
-
-    Uses an atomic conditional UPDATE (`WHERE claimed_by IS NULL`) to ensure
-    only one user can claim a specific share.
+    Claims an empty share. Atomic conditional UPDATE (`WHERE claimed_by IS
+    NULL`) so only one user can claim a given share.
     """
     result = db.execute(
         update(GroupShare)
@@ -200,41 +180,32 @@ def claim_share(db: Session, share: GroupShare, user) -> GroupShare:
 # ---------------------------------------------------------------------------
 
 def mark_share_paid(db: Session, payment: Payment) -> None:
-    """
-    Marks a share as paid.
-
-    Must be idempotent to handle duplicate webhook events from the gateway.
-    """
+    """Marks a share as paid. Must be idempotent — gateways send duplicate webhooks."""
     share = db.get(GroupShare, payment.group_share_id)
     if share is None:
         logger.error("Group share not found for payment %s", payment.id)
         return
 
-    # Uses a PESSIMISTIC LOCK on the group row.
-    #
-    # While the project generally uses optimistic locking, this is an intentional
-    # exception for correctness. Without this lock, a race condition exists:
+    # Pessimistic lock on the group row here, unlike the rest of the app.
+    # Without it there's a race:
     #
     #   payment thread          expiry job
     #   --------------          ----------
-    #   read group status
-    #     -> 'collecting'
-    #                           set group to 'expired'
-    #                           read shares -> share is 'unpaid'
-    #                           -> no refund triggered
-    #   set share to 'paid'
+    #   read group -> 'collecting'
+    #                           set group -> 'expired'
+    #                           read shares -> 'unpaid', no refund triggered
+    #   set share -> 'paid'
     #
-    # Result: A 'paid' share in an 'expired' group. The user is charged, but
-    # the seat is not booked and no refund is issued.
-    #
-    # Optimistic patterns fail here because two different rows (group and share)
-    # are involved. `FOR UPDATE` serializes these operations.
+    # That leaves a 'paid' share in an 'expired' group — user charged, seat
+    # never booked, no refund. Optimistic locking doesn't help because two
+    # different rows (group and share) are involved, so `FOR UPDATE` is used
+    # to serialize this instead.
     group = db.execute(
         select(GroupBooking).where(GroupBooking.id == share.group_id).with_for_update()
     ).scalar_one()
 
-    # Now the read is reliable; the expiry job has either committed or is
-    # waiting for our transaction to finish.
+    # The expiry job has now either committed or is blocked behind us, so
+    # this read is safe.
     if group.status != GROUP_COLLECTING:
         logger.warning(
             "Payment received for share %s, but group %s is now '%s' — refunding.",
@@ -254,9 +225,8 @@ def mark_share_paid(db: Session, payment: Payment) -> None:
 
 def _try_confirm(db: Session, group: GroupBooking) -> bool:
     """
-    Checks if all shares are paid. If so, confirms the group and creates bookings.
-
-    Returns: True if this call performed the confirmation.
+    Checks if all shares are paid, and if so confirms the group and creates
+    bookings. Returns True if this call was the one that confirmed it.
     """
     unpaid = db.scalar(
         select(GroupShare.id)
@@ -266,10 +236,8 @@ def _try_confirm(db: Session, group: GroupBooking) -> bool:
     if unpaid is not None:
         return False
 
-    # The decision point.
-    #
-    # Multiple payments might trigger this simultaneously, or an expiry job
-    # might be running. This UPDATE determines the winner.
+    # Decision point — multiple payments or an expiry job could hit this at
+    # once; the UPDATE below settles who wins.
     result = db.execute(
         update(GroupBooking)
         .where(GroupBooking.id == group.id, GroupBooking.status == GROUP_COLLECTING)
@@ -328,10 +296,8 @@ def _try_confirm(db: Session, group: GroupBooking) -> bool:
 def break_group(db: Session, group: GroupBooking, reason: str) -> bool:
     """
     Dissolves a group, releases seats, and refunds payments.
-
-    `reason` = GROUP_EXPIRED or GROUP_CANCELLED.
-
-    Returns: True if this call performed the dissolution.
+    `reason` is GROUP_EXPIRED or GROUP_CANCELLED. Returns True if this call
+    performed the dissolution.
     """
     result = db.execute(
         update(GroupBooking)
@@ -389,11 +355,9 @@ def break_group(db: Session, group: GroupBooking, reason: str) -> bool:
 
 def _refund_share(db: Session, share: GroupShare, payment: Payment | None) -> None:
     """
-    Refunds a share.
-
-    In the mock provider, this only updates the status. In production, this
-    would trigger an API call to the gateway, requiring a `refund_pending`
-    state to handle the asynchronous confirmation webhook.
+    Refunds a share. The mock provider just flips status; a real gateway
+    would need an API call here plus a `refund_pending` state to wait on
+    the async confirmation webhook.
     """
     share.status = SHARE_REFUNDED
     if payment is not None:
@@ -403,11 +367,9 @@ def _refund_share(db: Session, share: GroupShare, payment: Payment | None) -> No
 
 def expire_due_groups(db: Session) -> int:
     """
-    Dissolves all groups past their deadline.
-
-    Triggered by a background job. Unlike "lazy cleanup" (which only runs when
-    a user visits a page), this ensures refunds are processed promptly even if
-    the user never returns to the site.
+    Dissolves all groups past their deadline. Run by a background job rather
+    than lazy cleanup, so refunds go out promptly even if no one revisits
+    the site.
     """
     due = db.scalars(
         select(GroupBooking).where(

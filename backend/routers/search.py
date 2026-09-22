@@ -38,11 +38,9 @@ router = APIRouter(prefix="/api/events", tags=["search"])
 @router.post(
     "/{event_id}/seats/search",
     response_model=SeatSearchOut,
-    # Rate limiting is critical due to AI costs.
-    #
-    # Each NL query triggers a paid API call. Rate limiting prevents
-    # quota exhaustion from automated loops, which would otherwise
-    # disable the feature for all users.
+    # Each NL query is a paid API call, so rate limiting matters here —
+    # an automated loop could burn through the quota and kill the feature
+    # for everyone.
     dependencies=[Depends(limit_user(SEAT_LOCK))],
 )
 def search_seats(

@@ -1,16 +1,13 @@
 """
 Re-queue tickets for bookings that failed to process.
 
-Rationale: `enqueue_ticket()` suppresses exceptions to ensure booking flows
-succeed even if Redis is unavailable. Consequently, some jobs may fail to
-enter the queue. Additionally, workers mark jobs as `failed` after exhausting
-retries.
+`enqueue_ticket()` swallows exceptions so a Redis outage doesn't break the
+booking flow, which means some jobs never make it into the queue. Workers
+also mark jobs `failed` once retries are exhausted. This script recovers
+both cases — same fast-path-plus-safety-net pattern as reconcile_payments.py.
 
-This script recovers both cases. Run via cron every 10 minutes:
+Run via cron every 10 minutes:
     docker compose exec backend python retry_pending_tickets.py
-
-This follows the pattern used in `reconcile_payments.py` — combining a fast
-path (queue) with a safety net (this script) for background tasks.
 """
 
 import logging

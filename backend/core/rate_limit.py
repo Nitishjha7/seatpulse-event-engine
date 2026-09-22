@@ -1,37 +1,22 @@
 """
 Rate limiting — Redis token bucket.
 
-The project's whole premise is "flash sales attract bots", but until this
-point nothing actually stopped them.
+Flash sales attract bots, and nothing was stopping them before this.
 
----- Why a token bucket ----
+Why a token bucket over the alternatives: a fixed window (60 req/min) allows
+a 2x burst at the boundary — 60 requests in second 59 plus 60 more in second
+61 is 120 in one second. A sliding window log is exact but stores a
+timestamp per request, which gets memory-hungry. A token bucket holds
+`capacity` tokens, refills at `refill`/sec, and each request costs one
+token — so clicking through 4-5 seats quickly is fine, but a script at
+100 req/s gets throttled down to the refill rate.
 
-  Fixed window (60 requests per minute):
-      Simple, but allows a 2x burst at the boundary — 60 requests in
-      second 59 and 60 more in second 61 is 120 in one second.
-
-  Sliding window log (store every request timestamp):
-      Exact, but stores a timestamp per request. Memory-hungry.
-
-  Token bucket (chosen):
-      A bucket holds `capacity` tokens and refills at `refill` tokens per
-      second. Each request costs one token.
-
-      This permits natural user behaviour — clicking through 4-5 seats
-      quickly is fine — while a script running at 100 req/s is throttled
-      down to the refill rate.
-
----- What the limit is keyed on ----
-
-  Per USER (or email), never per IP.
-
-  In production the app sits behind a load balancer or proxy, so every
-  request appears to come from one IP unless X-Forwarded-For is configured
-  correctly — and that header can be spoofed. Behind NAT, an entire office
-  shares one IP, so blocking it for one bot punishes everyone.
-
-  Per-IP limiting belongs at the edge (nginx, Cloudflare). The application
-  limits on identity, which is far more targeted.
+Keyed per USER (or email), never per IP: production sits behind a load
+balancer, so every request looks like it comes from one IP unless
+X-Forwarded-For is configured right — and that header can be spoofed.
+Behind NAT, one bot gets an entire office blocked. Per-IP limiting belongs
+at the edge (nginx, Cloudflare); the app limits on identity instead, which
+is more targeted.
 """
 
 import time
@@ -47,11 +32,10 @@ from core.redis_client import redis_client
 # ---------------------------------------------------------------------------
 # Token bucket in Lua, because the update must be atomic
 # ---------------------------------------------------------------------------
-# In Python this would be GET tokens -> calculate -> SET tokens. Between
-# those three steps a second request reads the same stale token count and
-# both are allowed — a classic read-modify-write race.
-#
-# A Lua script runs inside Redis as a single unit; nothing interleaves.
+# In Python this would be GET tokens -> calculate -> SET tokens, and between
+# those steps a second request could read the same stale count — a classic
+# read-modify-write race. A Lua script runs inside Redis as one unit, so
+# nothing interleaves.
 _BUCKET_SCRIPT = """
 local key      = KEYS[1]
 local capacity = tonumber(ARGV[1])
@@ -73,9 +57,9 @@ end
 local elapsed = math.max(0, now - ts)
 tokens = math.min(capacity, tokens + elapsed * refill)
 
--- cost = 0 means "peek" — only asking whether the bucket is empty.
--- Even then at least 1 token must be available, otherwise `0 >= 0` is
--- always true and an empty bucket would be allowed. (Caught by a test.)
+-- cost = 0 means "peek" — only asking whether the bucket is empty. Still
+-- require at least 1 token, otherwise `0 >= 0` is always true and an
+-- empty bucket would be allowed.
 local needed = cost
 if cost == 0 then
     needed = 1
@@ -117,15 +101,13 @@ class Limit:
         return f"{self.capacity} burst, {self.refill}/s"
 
 
-# Per-endpoint budgets. The reasoning behind each number:
-#
-#   SEAT_LOCK  — a user may try 4-5 seats quickly (burst 15), but a
-#                sustained rate above 5/s means a script
-#   BOOKING    — booking is a deliberate action, never rapid-fire
-#   LOGIN_FAIL — consumed only on a WRONG password. Five mistakes are
-#                allowed, then one attempt per minute. Credential stuffing
-#                dies here
-#   REGISTER   — stops one client farming accounts
+# Per-endpoint budgets:
+#   SEAT_LOCK  — burst of 15 for trying a few seats quickly; sustained >5/s
+#                looks like a script
+#   BOOKING    — a deliberate action, never rapid-fire
+#   LOGIN_FAIL — only consumed on a WRONG password: 5 mistakes allowed, then
+#                one attempt per minute, which kills credential stuffing
+#   REGISTER   — stops one client from farming accounts
 SEAT_LOCK = Limit(capacity=15, refill=5)
 BOOKING = Limit(capacity=5, refill=1)
 LOGIN_FAIL = Limit(capacity=5, refill=1 / 60)
@@ -134,14 +116,11 @@ REGISTER = Limit(capacity=5, refill=1 / 120)
 
 def check(bucket_key: str, limit: Limit, cost: int = 1) -> tuple[bool, int, int]:
     """
-    Try to spend a token.
+    Try to spend a token. Returns (allowed, tokens_remaining, retry_after_seconds).
 
-    Returns: (allowed, tokens_remaining, retry_after_seconds)
-
-    If Redis is down the request is ALLOWED (fail-open). Failing closed
-    would take the whole site down with Redis. Rate limiting is a
-    protection, not a correctness guarantee — and booking correctness
-    already has three independent layers.
+    Fails open if Redis is down — failing closed would take the whole site
+    down with it, and rate limiting is a protection, not a correctness
+    guarantee (booking correctness already has three independent layers).
     """
     if not settings.RATE_LIMIT_ENABLED:
         return True, limit.capacity, 0
@@ -198,10 +177,8 @@ def limit_user(limit: Limit):
 
 def client_ip(request: Request) -> str:
     """
-    Best-effort client IP.
-
-    X-Forwarded-For **can be spoofed** unless a trusted proxy sets it.
-    It is therefore used only as a best-effort key on unauthenticated
+    Best-effort client IP. X-Forwarded-For can be spoofed unless a trusted
+    proxy sets it, so this is only used as a key on unauthenticated
     endpoints, never for a security decision.
     """
     forwarded = request.headers.get("x-forwarded-for")

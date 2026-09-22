@@ -3,13 +3,10 @@ import { useMemo } from 'react'
 const COLORS = ['#a78bfa', '#34d399', '#fbbf24', '#f472b6', '#60a5fa', '#f87171']
 
 /**
- * CSS-only confetti implementation.
+ * CSS-only confetti — avoids pulling in canvas-confetti for this. Just divs
+ * with randomized CSS vars for direction/rotation/color/delay.
  *
- * Avoids heavy external libraries (e.g., canvas-confetti). Uses 40 divs with
- * randomized CSS variables for direction, rotation, color, and delay.
- *
- * `useMemo` is required to prevent re-randomization on every render, which
- * would cause the confetti to jitter.
+ * useMemo keeps the randomization stable across renders so it doesn't jitter.
  */
 export default function Confetti({ count = 40 }) {
   const pieces = useMemo(

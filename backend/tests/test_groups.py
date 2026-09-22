@@ -12,9 +12,8 @@ from helpers import auth_headers
 # ---------------------------------------------------------------------------
 # Group booking (split payment)
 #
-# The core question here differs from single-seat booking. There, "exactly once"
-# meant: one seat, one booking. Here it means: **all or nothing**,
-# across N separate payments.
+# Single-seat booking's "exactly once" meant one seat, one booking. Here it
+# means all or nothing, across N separate payments.
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -65,12 +64,7 @@ def _seat(client, seat_id):
 
 
 def test_group_holds_seats_without_booking_them(client, tokens, group_seats):
-    """
-    Seats are held when a group is created, NOT booked.
-
-    This distinction is the foundation of the feature: no seat is confirmed
-    until payment is received.
-    """
+    """Seats are held (not booked) when a group is created — nothing is confirmed until paid."""
     group = _make_group(client, tokens[0], group_seats)
 
     assert group["status"] == "collecting"
@@ -84,11 +78,7 @@ def test_group_holds_seats_without_booking_them(client, tokens, group_seats):
 
 
 def test_partial_payment_confirms_nobody(client, tokens, group_seats):
-    """
-    2 out of 3 paid — no one's seat should be booked.
-
-    This is the real test of "all or nothing".
-    """
+    """2 of 3 shares paid — nobody's seat should be booked. The real test of "all or nothing"."""
     group = _make_group(client, tokens[0], group_seats)
     st = group["share_token"]
 
@@ -141,7 +131,7 @@ def test_expired_group_releases_seats_and_refunds(client, tokens, group_seats):
     """
     Deadline passed — seats are released and payments are refunded.
 
-    Shift the deadline back in the DB; a real 30-minute wait is not feasible in tests.
+    Shift the deadline back in the DB since waiting 30 minutes isn't feasible in a test.
     """
     from datetime import timedelta
 
@@ -185,7 +175,9 @@ def test_pending_payment_dies_with_the_group(client, tokens, group_seats):
     """
     If the group breaks, any open checkout is invalidated.
 
-    The user was on the gateway page when the deadline passed. The best outcome is to avoid charging them entirely — not charging is better than a refund. Therefore, `break_group` expires pending payments.
+    The user was mid-checkout when the deadline passed — not charging them
+    at all beats charging and refunding, so `break_group` expires the
+    pending payment too.
     """
     from datetime import timedelta
 
@@ -226,13 +218,12 @@ def test_pending_payment_dies_with_the_group(client, tokens, group_seats):
 
 def test_late_webhook_after_expiry_is_refunded_not_booked(client, tokens, group_seats):
     """
-    The most difficult case: the group has expired, but the gateway reports "payment received".
+    Group expires, but the gateway's webhook still reports success afterward.
 
-    The previous test shows we close the checkout. However, the real gateway does not stop when we do — webhooks can arrive late, after the payment has already been processed.
-
-    In that situation, the seat cannot be reclaimed (it was released and perhaps taken by someone else). The only correct response is a **refund**.
-
-    We call `_fulfil` directly here because the `/simulate` endpoint does not handle expired payments, whereas a real webhook would.
+    The seat can't be reclaimed at that point — it may already be taken by
+    someone else — so the only correct response is a refund. Calls
+    `_fulfil` directly since `/simulate` doesn't model this late-webhook
+    path the way a real gateway would.
     """
     from datetime import timedelta
 
@@ -310,11 +301,7 @@ def test_cannot_pay_someone_elses_share(client, tokens, group_seats):
 
 
 def test_group_creation_is_all_or_nothing(client, tokens, group_seats):
-    """
-    If even one seat is unavailable, the ENTIRE group should fail.
-
-    Partial holds are useless — a user shouldn't be left waiting for a 3rd seat that will never be available.
-    """
+    """If even one seat is unavailable, the whole group fails — no point holding a partial set."""
     # Book one seat
     taken = group_seats[2]
     assert client.post("/api/bookings", json={"seat_id": taken},
@@ -353,16 +340,16 @@ def test_only_creator_can_cancel(client, tokens, group_seats):
 
 def test_confirm_and_expiry_race_has_exactly_one_winner(client, tokens, group_seats):
     """
-    The hardest test in this file.
-
-    The last person is paying while the expiry job is breaking the group. Exactly one must win, with proper cleanup for the loser:
+    Last share is paying while the expiry job is breaking the group —
+    exactly one must win, with clean state either way:
 
       confirm wins -> all seats booked, all bookings created
       expire wins  -> all seats available, payments refunded
 
-    Never a partial state: no group stuck in 'collecting', no paid share without a booking.
-
-    This race condition was broken without `FOR UPDATE` — the payment thread would read the group status, the expiry job would expire it, and the share would remain 'paid' without a refund.
+    No partial state: no group stuck in 'collecting', no paid share left
+    without a booking. Without `FOR UPDATE` here, the payment thread reads
+    the group status, the expiry job expires it, and the share ends up
+    'paid' with no refund.
     """
     import random
     import threading
@@ -409,7 +396,8 @@ def test_confirm_and_expiry_race_has_exactly_one_winner(client, tokens, group_se
 
     def expire():
         barrier.wait()
-        # Jitter — without this, expiry always wins (direct function call vs full HTTP stack), and the other path is never tested.
+        # Jitter, or expiry always wins (direct call vs full HTTP stack) and
+        # the other path never gets tested.
         time.sleep(random.uniform(0, 0.12))
         d = SessionLocal()
         try:
@@ -448,13 +436,11 @@ def test_confirm_and_expiry_race_has_exactly_one_winner(client, tokens, group_se
 
 def test_broken_group_does_not_leave_pending_payments(client, tokens, group_seats):
     """
-    If a group is cancelled, its PENDING payments must also be closed.
+    Cancelling a group must also close its pending payments.
 
-    Otherwise, two issues arise:
-      1. `uq_one_pending_payment_per_seat` prevents new checkouts for that seat — it appears 'available' but cannot be purchased.
-      2. A user could complete an old checkout and pay for a defunct group.
-
-    This was a real bug discovered while writing race condition tests.
+    Otherwise: `uq_one_pending_payment_per_seat` blocks new checkouts on a
+    seat that looks 'available', and a user could complete an old checkout
+    and pay into a group that no longer exists.
     """
     from sqlalchemy import select as sa_select
 
@@ -481,12 +467,11 @@ def test_broken_group_does_not_leave_pending_payments(client, tokens, group_seat
     finally:
         db.close()
 
-    # Now the same seat can be purchased normally — this is the actual check.
-    # Previously, this returned 409 because the old pending payment index blocked it.
+    # The same seat can now be purchased normally — this is the actual check.
     res = client.post("/api/payments/checkout",
                       json={"seat_id": group_seats[0]}, headers=auth_headers(tokens[3]))
     assert res.status_code == 201, res.text
 
-    # Do not leave pending payments behind — otherwise, the next test will collide with this index. (The same error we are currently testing.)
+    # Don't leave this payment pending, or the next test collides with the same index.
     client.post(f"/api/payments/{res.json()['payment_id']}/simulate",
                 json={"outcome": "fail"}, headers=auth_headers(tokens[3]))

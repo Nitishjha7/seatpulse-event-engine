@@ -6,19 +6,9 @@ import { useAuth } from '../auth/AuthContext'
 /**
  * Natural language seat search.
  *
- * ---- UX Strategy: Transparency ----
- *
- * If a user searches "3 seats together under 1500 near the stage" and gets
- * 0 results, they need to know why. Was the query misinterpreted, or are
- * there simply no matching seats?
- *
- * We display the interpreted filters (e.g., "3 seats · together · under ₹1500 · front")
- * so the user can verify if the AI correctly parsed their intent.
- *
- * ---- Feature Flagging ----
- *
- * This component is hidden if `aiSearchEnabled` is false. This follows the
- * standard pattern for optional features to avoid UI clutter.
+ * We show the parsed filters back to the user (e.g. "3 seats · together ·
+ * under ₹1500 · front") so a zero-result search is explainable — did the
+ * query get misread, or are there just no matching seats.
  */
 export default function SeatSearch({ eventId, onPick }) {
   const { aiSearchEnabled } = useAuth()
@@ -91,7 +81,7 @@ export default function SeatSearch({ eventId, onPick }) {
 function Results({ result, onPick }) {
   const f = result.filters
 
-  // Display parsed filters to provide feedback on AI interpretation
+  // Show the parsed filters back so the user can see what was understood
   const chips = [
     f.quantity > 1 && `${f.quantity} seats`,
     f.quantity > 1 && (f.together ? 'together' : 'any arrangement'),

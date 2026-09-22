@@ -17,11 +17,10 @@ Google OAuth flow (Authorization Code):
 
   6. Backend sets a refresh cookie and redirects the user to the frontend.
 
-This "Authorization Code" flow is used instead of the legacy "Implicit" flow,
-which exposed tokens in URLs, risking leakage via browser history and server logs.
-
-The `client_secret` remains exclusively on the backend. In frontend-only OAuth,
-the secret would be exposed in the browser, creating a security vulnerability.
+This is the Authorization Code flow rather than the older Implicit flow,
+which put tokens in URLs where they could leak via browser history or
+server logs. `client_secret` never leaves the backend — a frontend-only
+OAuth flow would have to expose it in the browser.
 """
 
 import logging
@@ -140,13 +139,9 @@ def register(
 def login(payload: LoginRequest, response: Response, db: Session = Depends(get_db)):
     email = payload.email.lower()
 
-    # ---- Brute force protection ----
-    # Rate limiting is applied to the EMAIL, not the IP:
-    #
-    #   1. IP-based limits block legitimate users sharing a NAT (e.g., offices).
-    #   2. Email-based limits are more targeted against attackers.
-    #
-    # Only failed attempts consume the rate limit budget.
+    # Brute force protection keyed on email, not IP — an IP-based limit
+    # would block a whole office sharing a NAT. Only failed attempts count
+    # against the budget.
     bucket = f"login:{email}"
     allowed, _, retry_after = check(bucket, LOGIN_FAIL, cost=0)
     if not allowed:
@@ -158,10 +153,8 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
 
     user = db.scalar(select(User).where(User.email == email))
 
-    # Commit immediately after reading to release the DB transaction.
-    #
-    # Bcrypt hashing is CPU-intensive (~100ms). Holding the transaction open
-    # during this time causes "idle in transaction" connection pool exhaustion.
+    # Commit right after the read to release the transaction — bcrypt
+    # (~100ms) would otherwise hold it open and eat into the pool.
     db.commit()
 
     # Use a generic error message to prevent user enumeration.

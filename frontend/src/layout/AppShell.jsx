@@ -6,11 +6,9 @@ import Sidebar from './Sidebar'
 import Topbar from './Topbar'
 
 /**
- * Main application layout containing sidebar, topbar, and content.
- *
- * Uses <Outlet /> for routing. This ensures the sidebar and topbar persist
- * across navigation, maintaining the WebSocket connection held in the
- * parent BookingProvider.
+ * Main layout — sidebar, topbar, and <Outlet /> for routed content. Keeping
+ * sidebar/topbar outside the route tree means they persist across navigation,
+ * along with the WebSocket connection in BookingProvider.
  */
 export default function AppShell() {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -37,7 +35,7 @@ export default function AppShell() {
   )
 }
 
-/** Uses skeleton screens instead of spinners to prevent layout shifts and improve perceived performance. */
+/** Skeleton screens instead of a spinner, to avoid layout shift. */
 function SkeletonPage() {
   return (
     <div className="grid animate-pulse gap-5 xl:grid-cols-[1fr_380px]">

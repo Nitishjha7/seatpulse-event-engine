@@ -68,16 +68,15 @@ def create_booking(
     """
     Book a seat.
 
-    Returns 409 Conflict if the seat is already taken. This is expected
-    behavior during high-traffic flash sales.
+    Returns 409 Conflict if the seat is already taken — expected during
+    high-traffic flash sales.
 
-    User identity is derived from the token. Previously, user_id was
-    accepted in the body, which posed a security risk.
+    User identity comes from the token, not the request body, so a caller
+    can't book on someone else's behalf.
 
-    ---- Idempotency ----
-    Clients can provide an `Idempotency-Key` header. Subsequent requests
-    with the same key return the cached response, preventing issues
-    from double-clicks or network retries.
+    An `Idempotency-Key` header is optional; a repeated request with the
+    same key returns the cached response instead of double-booking on a
+    retry or double-click.
     """
     knobs = _benchmark_knobs(strategy, redis_lock)
 
@@ -138,13 +137,9 @@ def _perform_booking(
     if seat.status == SEAT_BOOKED:
         raise HTTPException(status.HTTP_409_CONFLICT, "Seat already booked")
 
-    # ---- LAYER 1: REDIS LOCK ----
-    # Handles two scenarios:
-    #   a) User previously selected the seat (lock already held).
-    #   b) Direct POST request (lock acquired here).
-    #
-    # Redis prevents database contention by rejecting unauthorized
-    # requests before they reach the DB.
+    # LAYER 1: Redis lock. Covers both cases — the seat was already held
+    # from an earlier select, or this is a direct POST that grabs the lock
+    # here. Rejects unauthorized requests before they hit the DB.
     lock_owner = get_lock_owner(payload.seat_id) if use_redis_lock else None
     lock_taken_here = False
 
@@ -170,18 +165,14 @@ def _perform_booking(
         )
 
     expected_version = seat.version
-    # Use `price_now` to retrieve the locked price or current dynamic price.
-    # Never use `seat.price` directly as it is the base price.
+    # price_now returns the locked/held price or the current dynamic price —
+    # seat.price alone is just the base price.
     amount = price_now(db, seat)
     event_id = seat.event_id
 
-    # ---- LAYER 2: DATABASE-LEVEL CLAIM ----
-    #
-    # Optimistic locking is the default. Pessimistic only exists for the
-    # locking benchmark.
-    #
-    # Optimistic is preferred because it avoids holding DB connections
-    # during contention, preventing connection pool exhaustion.
+    # LAYER 2: DB-level claim. Optimistic locking is the default; pessimistic
+    # only exists for the benchmark. Optimistic avoids holding a DB
+    # connection during contention, which is what actually exhausts the pool.
     if strategy == PESSIMISTIC:
         claim = claim_pessimistic(db, payload.seat_id)
     else:
@@ -204,9 +195,8 @@ def _perform_booking(
     )
     db.add(booking)
 
-    # ---- LAYER 3: DATABASE CONSTRAINT ----
-    # Final safety net: the partial unique index prevents duplicate
-    # confirmed bookings even if application logic fails.
+    # LAYER 3: DB constraint. Final safety net — the partial unique index
+    # blocks duplicate confirmed bookings even if the app logic above fails.
     try:
         db.commit()
     except IntegrityError:

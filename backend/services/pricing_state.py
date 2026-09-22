@@ -1,8 +1,6 @@
 """
-Shared helper to determine the pricing state of an event.
-
-Isolated in a separate file to prevent circular imports, as it is consumed
-by seats, events, bookings, and payments modules.
+Shared helper to determine the pricing state of an event. Split out to
+avoid circular imports — seats, events, bookings, and payments all use it.
 """
 
 from sqlalchemy import func, select
@@ -14,10 +12,9 @@ from services.pricing import PricingInfo, current_price, pricing_for_event
 
 def pricing_state(db: Session, event: Event) -> PricingInfo:
     """
-    Calculates the current pricing state for an event.
-
-    Uses CONFIRMED bookings to determine `sold` count rather than seat status,
-    as bookings are the authoritative source for revenue.
+    Calculates the current pricing state for an event. Uses CONFIRMED
+    bookings for the `sold` count rather than seat status, since bookings
+    are the source of truth for revenue.
     """
     total = db.scalar(select(func.count(Seat.id)).where(Seat.event_id == event.id)) or 0
     sold = db.scalar(
@@ -26,8 +23,8 @@ def pricing_state(db: Session, event: Event) -> PricingInfo:
         )
     ) or 0
 
-    # sample_base: Uses the minimum seat price to estimate surge thresholds,
-    # as the lowest-priced seats are typically the first to sell.
+    # sample_base uses the cheapest seat price to estimate surge thresholds,
+    # since the lowest-priced seats are usually first to sell.
     sample = db.scalar(select(func.min(Seat.price)).where(Seat.event_id == event.id))
 
     return pricing_for_event(
@@ -42,10 +39,9 @@ def pricing_state(db: Session, event: Event) -> PricingInfo:
 
 def price_now(db: Session, seat: Seat) -> float:
     """
-    Returns the current price for a specific seat.
-
-    If the seat is held, return the LOCKED price originally presented to
-    the user. This is a critical requirement for price consistency.
+    Returns the current price for a specific seat. If it's held, returns the
+    locked price originally shown to the user, so the price can't drift
+    mid-checkout.
     """
     if seat.held_price is not None:
         return float(seat.held_price)

@@ -1,24 +1,12 @@
 /**
  * Live indicator for demand-based pricing.
  *
- * ---- Crucial decision: what NOT to show ----
- *
- * Ticketing sites often display "Only 3 left!" or "🔥 Selling fast!"
- * even if 300 seats are available. This is dishonest and erodes
- * trust in the entire product.
- *
- * Every number here is server-sourced and accurate:
- *   - surge_percent          -> current multiplier, calculated
- *   - sold / total           -> actual count
- *   - seats_until_increase   -> derived from actual loop, not an estimate
- *
- * If `seats_until_increase` is null (price won't increase, or
- * max surge reached), we hide the line entirely — better to have
- * empty space than create false urgency.
+ * Deliberately skips the "Only 3 left!" fake-urgency pattern — every number
+ * here is real (surge %, sold/total, seats until next increase). If
+ * `seats_until_increase` is null we just hide the line instead of guessing.
  */
 export default function PricingBanner({ pricing }) {
-  // Hide component if dynamic pricing is disabled. This is the default,
-  // and discussing surge pricing for such events feels inappropriate.
+  // Dynamic pricing is off by default — nothing to show for most events.
   if (!pricing?.enabled) return null
 
   const { surge_percent: surge, sold, total, seats_until_increase: until } = pricing
@@ -51,8 +39,7 @@ export default function PricingBanner({ pricing }) {
         </span>
       </div>
 
-      {/* Sold-out bar. This number determines the price —
-          users should see what the price is tied to. */}
+      {/* Sold-out bar — this is what the price is actually tied to */}
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/5">
         <div
           className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-amber-400
@@ -61,7 +48,7 @@ export default function PricingBanner({ pricing }) {
         />
       </div>
 
-      {/* Only show if data is verified. null = hide. */}
+      {/* null = hide the line */}
       {until != null && (
         <p className="mt-2.5 text-xs text-slate-400">
           {until === 1

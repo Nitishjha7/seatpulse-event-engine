@@ -1,8 +1,8 @@
 """
-Verifies database integrity post-load testing.
+Verifies database integrity after load testing.
 
-While Locust measures throughput and latency, this script validates data
-consistency, which is the ultimate proof of correctness.
+Locust measures throughput and latency; this checks that the data itself
+is still consistent — no oversold seats, no orphaned rows.
 
 Usage:
     docker compose exec backend python verify_integrity.py

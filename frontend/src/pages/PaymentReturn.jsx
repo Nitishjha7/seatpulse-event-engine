@@ -6,19 +6,12 @@ import Confetti from '../components/Confetti'
 import { bookingRef } from '../components/BookingConfirmedModal'
 
 /**
- * This page opens upon returning from the payment gateway.
+ * Landing page after returning from the payment gateway.
  *
- * IMPORTANT: This page does not make any decisions.
- *
- * Payment success is determined by the backend webhook. This page only queries
- * the backend for the status and displays the result.
- *
- * Relying on this redirect to create a booking would allow users to bypass
- * payment by accessing this URL directly.
- *
- * Conversely, if a user closes the tab after paying, this page never loads,
- * but the webhook will still process the booking. Thus, the redirect is
- * UI only, not the source of truth.
+ * This page never decides success/failure itself — it just polls the backend
+ * for the payment status. The webhook is the source of truth; creating the
+ * booking here would let users skip payment by hitting this URL directly.
+ * If the tab closes before this page loads, the webhook still books the seat.
  */
 export default function PaymentReturn() {
   const [params] = useSearchParams()
@@ -47,15 +40,11 @@ export default function PaymentReturn() {
         setPayment(p)
         setAttempts(n)
 
-        // Terminal state? Stop.
         if (p.status !== 'pending') return
 
-        // Webhooks can take time — the redirect often arrives before the
-        // webhook. We poll rather than assuming failure after one check.
-        //
-        // 20 attempts, 1.5s apart = ~30 seconds. After that, we advise the
-        // user to check their bookings, as the webhook will eventually
-        // process the booking.
+        // The redirect often beats the webhook, so poll instead of giving up
+        // after one check. 20 tries at 1.5s = ~30s, then we point the user
+        // to My Bookings — the webhook will finish the job eventually.
         if (n < 20) {
           timer.current = setTimeout(() => poll(n + 1), 1500)
         }

@@ -9,13 +9,9 @@ export function bookingRef(id) {
   return `SP${String(id).padStart(5, '0')}`
 }
 
-/**
- * Success modal displayed upon booking confirmation.
- *
- * Data is sourced directly from the database; no placeholders are used.
- */
+/** Success modal shown after a booking is confirmed. */
 export default function BookingConfirmedModal({ booking, seat, event, onClose }) {
-  // Close on Escape key; standard modal behavior
+  // Close on Escape
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose()
     document.addEventListener('keydown', onKey)

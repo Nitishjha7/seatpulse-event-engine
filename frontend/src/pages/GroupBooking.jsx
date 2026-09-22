@@ -13,10 +13,8 @@ function mmss(total) {
 }
 
 /**
- * Group booking share page — displayed when the link is opened.
- *
- * This page answers one question: **who is holding up the process?**
- * Status and ownership are shown clearly at the top.
+ * Group booking share page. Main job is answering "who's holding this up" —
+ * status and ownership are front and center.
  */
 export default function GroupBooking() {
   const { shareToken } = useParams()
@@ -43,21 +41,16 @@ export default function GroupBooking() {
     load()
   }, [load])
 
-  // Others are paying in different browsers — this page should update
-  // automatically when their payment arrives.
-  //
-  // Using polling here instead of WebSockets. The seat grid subscribes to
-  // socket events; groups are separate and would require a new channel and
-  // subscription lifecycle. 5-second polling is sufficient for this page —
-  // people pay for groups in minutes, not milliseconds.
+  // Others pay from their own browsers, so poll for updates. A WebSocket
+  // channel would need its own subscription lifecycle just for this page —
+  // not worth it when group payments happen over minutes, not milliseconds.
   useEffect(() => {
     if (!group || group.status !== 'collecting') return
     const id = setInterval(load, 5000)
     return () => clearInterval(id)
   }, [group, load])
 
-  // The countdown is for display only. The actual expiry is handled by a
-  // server cron job — nothing happens automatically when it reaches 0.
+  // Display-only countdown — a server cron job handles the actual expiry.
   useEffect(() => {
     if (!group || group.status !== 'collecting') return
     const id = setInterval(() => setSecondsLeft((s) => s - 1), 1000)

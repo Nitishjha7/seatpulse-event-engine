@@ -1,39 +1,24 @@
 """
-Dynamic pricing based on demand.
+Dynamic pricing based on demand — the same model airlines, Uber, and
+concert tickets use: prices rise as inventory depletes.
 
-Airlines, Uber, and concert tickets use this model: prices increase as
-inventory depletes.
+The `price` column on seats is immutable — it's the BASE price, and the
+current price is just base × multiplier. Keeping it immutable preserves
+what each booking actually paid, avoids rewriting thousands of rows per
+sale, keeps a clean audit trail, and sidesteps races from concurrent
+booking updates.
 
----- Design Decision ----
-
-The `price` column in the seats table is immutable; it represents the BASE price.
-
-The current price is calculated as: base × multiplier
-
-Rationale for immutability:
-  - Preserves historical booking references (original price paid).
-  - Avoids updating thousands of rows per booking.
-  - Maintains a clear audit trail of the base price.
-  - Prevents race conditions during concurrent booking updates.
-
-By keeping the base immutable and calculating the multiplier dynamically,
-we ensure data integrity and high performance.
-
----- Formula ----
+Formula:
 
     sold_ratio = booked_seats / total_seats
-    multiplier = 1 + (sold_ratio × demand_factor)
-    multiplier = min(multiplier, max_surge)
+    multiplier = min(1 + sold_ratio * demand_factor, max_surge)
+    current_price = round(base * multiplier)
 
-    current_price = round(base × multiplier)
-
-A demand_factor of 0.5 means the price increases by 1.5× when 100% sold.
-The increase is linear.
-
-This implementation is intentionally simple. Real-world surge pricing
-incorporates time-to-event, booking velocity, and historical demand, but
-those require significant data to avoid guesswork. This formula is
-transparent, allowing us to explain price changes clearly to users.
+demand_factor 0.5 means price is 1.5x at 100% sold, and the increase is
+linear. This is intentionally simple — real surge pricing would factor in
+time-to-event, booking velocity, and historical demand, but that needs a
+lot of data to avoid guessing, and this formula stays easy to explain to
+users.
 """
 
 from dataclasses import dataclass
@@ -64,11 +49,7 @@ class PricingInfo:
 
 
 def multiplier_for(sold: int, total: int, demand_factor: float, max_surge: float) -> float:
-    """
-    Calculates the multiplier based on demand.
-
-    Isolated to facilitate testing and reuse in seat-threshold calculations.
-    """
+    """Calculates the multiplier based on demand. Split out so it's reusable in seat-threshold calculations."""
     if total <= 0:
         return 1.0
 
@@ -78,14 +59,11 @@ def multiplier_for(sold: int, total: int, demand_factor: float, max_surge: float
 
 def apply(base_price: float, multiplier: float) -> float:
     """
-    Applies the multiplier to the base price and rounds the result.
-
-    Python's round() uses banker's rounding (e.g., 100.5 -> 100, 101.5 -> 102).
-    This balances out over time.
-
-    Note: Due to rounding, the final price may remain constant even if the
-    multiplier increases slightly. Therefore, _seats_until_increase
-    simulates price changes rather than estimating them.
+    Applies the multiplier to the base price and rounds. Python's round()
+    uses banker's rounding (100.5 -> 100, 101.5 -> 102), which balances out
+    over time. Because of rounding, the displayed price can stay flat even
+    as the multiplier creeps up — that's why `_seats_until_increase`
+    simulates price changes instead of estimating them analytically.
     """
     raw = base_price * multiplier
     return float(round(raw / ROUND_TO) * ROUND_TO)
@@ -101,15 +79,12 @@ def _seats_until_increase(
     sold: int, total: int, demand_factor: float, max_surge: float, sample_base: float
 ) -> int | None:
     """
-    Calculates how many more seats must be sold before the price increases.
+    Estimates how many more seats must sell before the price ticks up, based
+    on a sample base price (different tiers will trigger at different
+    points). Powers the "N seats left at this price" UI text.
 
-    This is an estimate based on a sample base price. Different price
-    tiers will trigger increases at different points. Used in the UI to
-    display "N seats left at this price."
-
-    The loop is bounded by remaining inventory and is computationally
-    inexpensive. Calculated on-demand to ensure accuracy, as cached
-    pricing data could be misleading.
+    The loop is bounded by remaining inventory, so it's cheap, and it's run
+    on-demand rather than cached since stale pricing data could mislead users.
     """
     if total <= 0 or sold >= total:
         return None
@@ -121,7 +96,7 @@ def _seats_until_increase(
         if later > now:
             return extra
 
-    # Reached max surge or price is stable due to rounding.
+    # Either max surge is reached, or rounding keeps the price stable.
     return None
 
 

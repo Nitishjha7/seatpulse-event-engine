@@ -6,20 +6,9 @@ import { useAuth } from '../auth/AuthContext'
 /**
  * Generates an event draft from a brief description.
  *
- * ---- Critical Design Decision: This does not persist data ----
- *
- * The draft populates form fields directly, requiring the organizer to
- * review and publish manually. The AI is strictly prohibited from
- * triggering a publish action.
- *
- * Rationale: An event description is a binding promise to the attendee.
- * If the model hallucinates details (e.g., "featuring special guests"),
- * the organizer—not the AI—is responsible for the misinformation.
- *
- * Safeguards:
- *   1. System prompt explicitly forbids hallucination.
- *   2. Human-in-the-loop requirement ensures no content is published
- *      without manual verification.
+ * The draft only fills form fields — it never publishes on its own. If the
+ * model hallucinates something ("featuring special guests"), the organizer
+ * has to catch it before hitting publish, not the AI.
  */
 export default function AiDraft({ onDraft }) {
   const { aiSearchEnabled } = useAuth()
@@ -63,7 +52,7 @@ export default function AiDraft({ onDraft }) {
           onChange={(e) => setBrief(e.target.value)}
           maxLength={200}
           placeholder="Arijit Singh concert, DY Patil Mumbai, December"
-          // Prevent default form submission on Enter to trigger the draft process instead.
+          // Enter triggers the draft instead of submitting the form
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault()
@@ -92,7 +81,6 @@ export default function AiDraft({ onDraft }) {
       )}
 
       {filled && !error && (
-        // Disclaimer: Remind the organizer that AI-generated content requires manual review.
         <p className="mt-2 rounded-lg bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-200">
           Draft populated — <strong>please review before publishing</strong>.
           All content will be attributed to your event.

@@ -1,11 +1,6 @@
 import { IconCalendar, IconPin, IconUsers } from '../layout/icons'
 
-/**
- * Event banner.
- *
- * Uses CSS gradients and inline SVG to avoid external image dependencies,
- * preventing CSP issues, offline failures, and unnecessary repo bloat.
- */
+/** Event banner — CSS gradients and inline SVG instead of image assets. */
 export default function EventHero({ event, totalSeats }) {
   if (!event) return null
 

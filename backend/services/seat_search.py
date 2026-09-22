@@ -1,31 +1,17 @@
 """
 Seat search — filters seats based on criteria.
 
----- NO LLM HERE ----
+No LLM in this file. Natural language parsing happens in `ai.py`, which
+turns something like "3 seats together under 1500 near the stage" into
+SeatFilters(quantity=3, together=True, max_price=1500, row_preference=
+"front"); everything from there on is plain deterministic code — no
+models, API calls, or randomness.
 
-Natural language processing is handled in `ai.py`, which performs:
-
-    "3 seats together under 1500 near the stage"
-                    |
-                    v
-    SeatFilters(quantity=3, together=True, max_price=1500,
-                row_preference="front")
-
-All subsequent processing occurs here using standard, deterministic code.
-There are no models, API calls, or randomness involved.
-
-This separation is a deliberate design choice:
-
-  1. **Security.** LLM output is never used as raw SQL. It is mapped to a
-     validated Pydantic object, and queries remain parameterised. Prompt
-     injection can only produce invalid filters, not data leaks or SQL injection.
-
-  2. **Testability.** The search logic is fully testable without API keys.
-     None of the 90+ tests require Gemini.
-
-  3. **Reliability.** The search remains functional even if the model is
-     down or rate-limited. Only natural language input is disabled;
-     standard filters continue to work.
+That split matters: LLM output is never raw SQL, only a validated Pydantic
+object feeding parameterized queries, so prompt injection can produce bad
+filters but not a data leak. It also means this search logic is fully
+testable without an API key, and it keeps working — filters just stop
+accepting natural language — if the model is down or rate-limited.
 """
 
 from dataclasses import dataclass
@@ -67,15 +53,10 @@ def _aisle_positions(layout: dict | None) -> dict[str, set[int]]:
 def _runs(seats: list, quantity: int, aisles: set[int]) -> list[list]:
     """
     Finds all groups of `quantity` contiguous available seats in a row.
-
-    Aisles break "together" status.
-
-    If an aisle exists between seat 5 and 6, they are not considered
-    contiguous, as they are separated by a walkway. Sequential numbering
-    alone isn't enough — this relies on the seat layout's aisle data.
-
-    Without this check, the search might suggest "contiguous" seats that
-    are physically separated, leading to poor user experience at the venue.
+    Aisles break contiguity — seats 5 and 6 with a walkway between them
+    aren't "together" even though the numbers are sequential, so this
+    checks the layout's aisle data too. Otherwise search could suggest
+    seats that are actually split apart at the venue.
     """
     out = []
     run: list = []
@@ -100,13 +81,9 @@ def _runs(seats: list, quantity: int, aisles: set[int]) -> list[list]:
 
 def _row_rank(row_label: str, preference: str | None) -> list[int]:
     """
-    Sort key based on row preference.
-
-    Row A is closest to the stage, by convention. "front" sorts
-    ascending from A; "back" reverses this.
-
-    Returns a list of character codes to ensure correct sorting of labels
-    like "A" vs "A1".
+    Sort key based on row preference. Row A is closest to the stage by
+    convention, so "front" sorts ascending from A and "back" reverses it.
+    Returns character codes so labels like "A" vs "A1" sort correctly.
     """
     sign = -1 if preference == "back" else 1
     return [sign * ord(c) for c in row_label]
@@ -125,24 +102,18 @@ def find(
     limit: int = 12,
 ) -> list[SeatCandidate]:
     """
-    Filters seats based on provided criteria.
-
-    Processing occurs in-memory after the initial SQL query. Reason:
-    calculating "N contiguous available seats" in SQL is complex with
-    window functions. Given the limit of 2000 seats per event, Python
-    processing is significantly faster (milliseconds).
-
-    This approach may need re-evaluation if seat counts reach 100k, but
-    currently, we avoid premature optimization.
+    Filters seats based on provided criteria. Runs in-memory after the SQL
+    query rather than doing "N contiguous seats" with window functions in
+    SQL — with a 2000-seat-per-event cap, Python is plenty fast (ms range).
+    Would need revisiting if seat counts ever hit 100k.
     """
     quantity = max(1, min(quantity, 10))
 
     usable = [s for s in seats if s.status == SEAT_AVAILABLE]
 
-    # `price` is the base; current price is what actually gets shown/charged.
-    #
-    # Use `is None` check; free seats (price 0) are falsy, and `or`
-    # would incorrectly revert to the base price.
+    # `price` is the base; current price is what's actually shown/charged.
+    # Explicit `is None` check because free seats (price 0) are falsy, and
+    # `or` would wrongly fall back to the base price.
     def price_of(seat) -> float:
         display = getattr(seat, "_display_price", None)
         return float(seat.price if display is None else display)
@@ -167,11 +138,9 @@ def find(
         row_seats.sort(key=lambda s: s.seat_number)
 
         if quantity == 1 or not together:
-            # Contiguity not required; treat each seat as an individual match.
-            #
-            # When `together=False` and quantity > 1, we return individual
-            # seats rather than groups. Artificially grouping them would be
-            # misleading.
+            # No contiguity required, so each seat is its own match. With
+            # together=False and quantity > 1 we still return individual
+            # seats rather than forcing a misleading group.
             groups = [[s] for s in row_seats]
         else:
             groups = _runs(row_seats, quantity, aisles.get(row_label.upper(), set()))

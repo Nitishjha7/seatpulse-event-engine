@@ -13,10 +13,9 @@ export function useAuth() {
 /**
  * Centralized authentication state.
  *
- * Access tokens are stored in memory (api.js) and cleared on page reload.
- * We trigger a refresh on mount to restore the session via HTTP-only cookies.
- * This also handles post-Google login redirects where the backend sets the
- * cookie and redirects the user back to the app.
+ * Access tokens live in memory (api.js) and are cleared on reload, so we
+ * refresh on mount to restore the session from the HTTP-only cookie. This
+ * also covers the post-Google-login redirect.
  */
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
@@ -27,11 +26,7 @@ export function AuthProvider({ children }) {
 
   const refreshTimer = useRef(null)
 
-  /**
-   * Silently refreshes the access token 1 minute before expiration.
-   *
-   * Prevents 401 errors during active sessions (e.g., while booking).
-   */
+  /** Silently refreshes the token a minute before it expires, to avoid 401s mid-booking. */
   const scheduleRefresh = useCallback((expiresIn) => {
     clearTimeout(refreshTimer.current)
     const delay = Math.max((expiresIn - 60) * 1000, 10_000)

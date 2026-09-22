@@ -1,16 +1,12 @@
 """
 Group booking routes.
 
-Business logic resides in `groups.py`. This module handles HTTP concerns:
-authentication, ownership, and mapping `GroupError` to appropriate status codes.
+Business logic lives in `groups.py`; this module handles HTTP concerns —
+auth, ownership, and mapping `GroupError` to status codes.
 
----- Access model ----
-
-Groups are accessed via `share_token` rather than ID. This allows anyone with
-the link to view and claim a share. Using sequential IDs (e.g., `/api/groups/1`)
-would allow unauthorized access to other groups.
-
-Login is required to claim a share to track ownership and ensure accountability.
+Groups are accessed via `share_token` rather than ID, so anyone with the
+link can view and claim a share without exposing other groups through
+sequential IDs. Claiming a share still requires login, to track who claimed it.
 """
 
 from datetime import timedelta
@@ -203,7 +199,7 @@ def cancel(
     """
     group = _load(db, share_token)
     if group.created_by != user.id:
-        # Return 404 to maintain consistency with project-wide security patterns.
+        # 404 instead of 403 so we don't reveal the group exists.
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Group not found")
 
     if not break_group(db, group, GROUP_CANCELLED):

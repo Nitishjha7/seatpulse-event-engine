@@ -7,12 +7,17 @@ Token strategy:
   REFRESH TOKEN  7 days   -> Stored in httpOnly cookie, inaccessible to JavaScript.
 
 Rationale:
-  - Storing tokens in localStorage exposes them to XSS (via npm packages or injected scripts). httpOnly cookies are inaccessible to JS.
-  - Using cookies for every request risks CSRF. Therefore, the access token handles authorization via the Authorization header (which is not automatically sent in CSRF scenarios), while the cookie is used solely to obtain a new access token.
-  - Access tokens are short-lived, limiting the impact if compromised.
+  - localStorage exposes tokens to XSS (via npm packages or injected scripts);
+    httpOnly cookies are inaccessible to JS.
+  - Cookies on every request risk CSRF, so the access token authorizes via
+    the Authorization header instead (not auto-sent in CSRF scenarios), and
+    the cookie is only used to obtain a new access token.
+  - Short-lived access tokens limit the blast radius if one leaks.
 
 Refresh token revocation:
-  Each refresh token contains a `jti` (unique ID) whitelisted in Redis. On logout, the ID is removed from Redis, immediately invalidating the token. Relying solely on JWT expiry would leave tokens active for 7 days post-logout.
+  Each refresh token carries a `jti` whitelisted in Redis. On logout the ID
+  is removed from Redis, invalidating the token immediately instead of
+  leaving it valid for 7 more days on JWT expiry alone.
 """
 
 import secrets
@@ -32,8 +37,8 @@ from core.redis_client import redis_client
 
 REFRESH_COOKIE_NAME = "seatpulse_refresh"
 
-# auto_error=False: Prevent FastAPI from raising 403 automatically;
-# allows us to return custom 401 messages.
+# auto_error=False so FastAPI doesn't raise 403 automatically;
+# lets us return custom 401 messages instead.
 _bearer = HTTPBearer(auto_error=False)
 
 
@@ -43,11 +48,9 @@ _bearer = HTTPBearer(auto_error=False)
 
 def hash_password(password: str) -> str:
     """
-    bcrypt: A deliberately slow hashing algorithm.
-
-    Fast hashes like SHA256 are unsuitable here as they allow millions of
-    guesses per second. bcrypt takes ~100ms per hash, making brute force
-    computationally infeasible. Salts are handled automatically.
+    bcrypt is deliberately slow. SHA256 would allow millions of guesses per
+    second; bcrypt takes ~100ms per hash, making brute force infeasible.
+    Salting is handled automatically.
     """
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
@@ -92,8 +95,8 @@ def create_refresh_token(user_id: int) -> str:
     """
     Generate a refresh token and whitelist its ID in Redis.
 
-    The Redis key TTL matches the token expiry, ensuring automatic cleanup
-    without requiring a separate maintenance job.
+    Redis key TTL matches the token expiry, so cleanup is automatic and
+    doesn't need a separate maintenance job.
     """
     jti = uuid.uuid4().hex
     token = _create_token(
@@ -114,11 +117,7 @@ def _refresh_key(user_id: int, jti: str) -> str:
 
 
 def decode_token(token: str, expected_type: str) -> dict:
-    """
-    Verify token. Raises 401 on failure.
-
-    jwt.decode() automatically validates the signature and expiry.
-    """
+    """Verify token, raising 401 on failure. jwt.decode() validates signature and expiry."""
     try:
         payload = jwt.decode(
             token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM]
@@ -156,12 +155,7 @@ def get_current_user(
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: Session = Depends(get_db),
 ) -> User:
-    """
-    Extracts the user for protected routes.
-
-    `user_id` is derived from the token, not the request body, preventing
-    ID spoofing.
-    """
+    """Extracts the user for protected routes. `user_id` comes from the token, not the body, so it can't be spoofed."""
     if creds is None:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
@@ -185,9 +179,9 @@ def require_role(*roles: str):
     Use:
         @router.post("", dependencies=[Depends(require_role(ROLE_ORGANIZER, ROLE_ADMIN))])
 
-    Returns 403 Forbidden. Unlike IDOR cases where 404 is used to hide
-    resource existence, these endpoints are public knowledge; the user simply
-    lacks the required permissions.
+    Returns 403, not 404 — unlike IDOR cases where 404 hides resource
+    existence, these endpoints are public knowledge; the user just lacks
+    the permission.
     """
 
     def dependency(user: User = Depends(get_current_user)) -> User:
@@ -217,13 +211,11 @@ def get_current_user_optional(
 
 def user_from_ws_token(token: str | None, db: Session) -> User | None:
     """
-    WebSocket authentication via query parameter.
+    WebSocket auth via query parameter, since browser WebSocket APIs don't
+    support custom headers — hence `?token=...`.
 
-    WebSocket handshakes do not support custom headers in browser APIs,
-    necessitating the use of `?token=...`.
-
-    Trade-off: URLs may appear in server logs. Only short-lived access tokens
-    are permitted here; refresh tokens are never used.
+    Trade-off: URLs can end up in server logs, so only short-lived access
+    tokens are accepted here; refresh tokens are never used.
     """
     if not token:
         return None

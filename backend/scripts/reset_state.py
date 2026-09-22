@@ -33,10 +33,8 @@ def reset():
     finally:
         db.close()
 
-    # Use pattern-based deletion instead of `flushall`.
-    #
-    # `flushall` would clear refresh tokens, forcing testers to re-authenticate.
-    # Pattern-based deletion preserves session state.
+    # Pattern-based deletion instead of `flushall` — flushall would also
+    # wipe refresh tokens and force testers to log back in.
     for pattern, label in [
         ("seat:*:lock", "seat locks"),
         ("rl:*", "rate limit buckets"),

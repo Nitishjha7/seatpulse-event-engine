@@ -30,8 +30,7 @@ export default function HoldCard({
   // Countdown turns red in the final minute — prompts user to act quickly.
   const urgent = secondsLeft > 0 && secondsLeft <= 60
 
-  // Price locked at the time of hold. This remains unchanged even if other
-  // seats in the grid increase in price — the server will charge this exact amount.
+  // Price is locked at hold time — stays the same even if other seats surge
   const price = seatPrice(seat)
   const lockedBelowMarket =
     seat &&
@@ -69,9 +68,7 @@ export default function HoldCard({
           </p>
           <p className="mt-0.5 text-lg text-slate-300">₹{price}</p>
 
-          {/* Only show if there is a genuine benefit — this line is hidden if
-              there is no surge or price change. Misleading users with "you saved!"
-              is dishonest. */}
+          {/* Only shown when there's an actual price difference to report */}
           {lockedBelowMarket && (
             <p
               className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/10
@@ -81,8 +78,7 @@ export default function HoldCard({
             </p>
           )}
 
-          {/* Displaying version for optimistic locking — this number updates
-              after booking/hold. */}
+          {/* Version number for optimistic locking, updates after each hold/booking */}
           <p className="mt-1 font-mono text-[11px] text-slate-600">
             seat version {seat.version}
           </p>
@@ -103,8 +99,7 @@ export default function HoldCard({
             {booking ? 'Redirecting…' : `Pay ₹${price}`}
           </button>
 
-          {/* Group booking — the held seat is included; additional seats are
-              pulled from server availability. Users don't need to pre-select N seats. */}
+          {/* Held seat is included in the group; the rest come from server availability */}
           {onStartGroup && (
             <div className="mt-2 flex items-center gap-2">
               <select

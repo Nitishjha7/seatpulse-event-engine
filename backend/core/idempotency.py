@@ -1,30 +1,19 @@
 """
 Idempotency keys.
 
----- Problem ----
+Double-clicking "Confirm Booking" or a browser retry after a network glitch
+can send the same request twice. Without this, the seat is already `booked`
+by the second request and it just gets a 409 — a confusing error after a
+booking that actually succeeded. For payments it's worse: "money deducted
+but booking failed" territory.
 
-Users may double-click "Confirm Booking" or browsers may retry requests due to
-network glitches, leading to duplicate requests.
+Fix: the client sends a unique `Idempotency-Key` per booking attempt, and the
+server caches the first response in Redis under that key.
 
-Currently, the second request receives a 409 error because the seat is already
-`booked`. While the outcome is correct, it is accidental rather than by design,
-resulting in a confusing error for the user despite a successful booking.
+  First request      -> process, store response, return it
+  Repeat with same key -> skip processing, return the stored response
 
-For payment processing, this approach is insufficient and can lead to
-"money deducted but booking failed" scenarios.
-
----- Solution ----
-
-The client sends a unique `Idempotency-Key` with each booking attempt. The
-server stores the initial response in Redis keyed by this value.
-
-  First request -> Process, store response, return response
-  Subsequent request -> Do not process, return STORED response
-
-The user sees the same booking result both times, and only one row is created
-in the database.
-
-This is the standard pattern used by Stripe, Razorpay, and other payment APIs.
+Same pattern Stripe and Razorpay use.
 """
 
 import hashlib
@@ -53,12 +42,9 @@ def _key(user_id: int, scope: str, idem_key: str) -> str:
 
 def _fingerprint(payload: dict) -> str:
     """
-    Generate a hash of the request body.
-
-    Used to detect if the same key is reused with a different body, which
-    indicates a bug or attack. We store the hash to validate consistency.
-
-    sort_keys=True ensures {"a":1,"b":2} and {"b":2,"a":1} produce the same hash.
+    Hash the request body so we can detect the same key reused with a
+    different payload (a bug or an attack). sort_keys=True makes
+    {"a":1,"b":2} and {"b":2,"a":1} hash the same.
     """
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
@@ -96,9 +82,9 @@ class Idempotency:
                            if the request is currently in progress.
         """
         if not self.enabled:
-            return None    # No header provided; proceed normally.
+            return None    # no header provided; proceed normally
 
-        # SET NX provides an atomic claim. Only one of multiple parallel requests succeeds.
+        # SET NX is an atomic claim — only one of several parallel requests wins.
         placeholder = json.dumps({"state": "processing", "fp": self.fingerprint})
         if redis_client.set(self.redis_key, placeholder, nx=True, ex=int(LOCK_TTL.total_seconds())):
             return None    # Claim successful.

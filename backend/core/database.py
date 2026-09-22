@@ -20,22 +20,16 @@ engine = create_engine(
     # following database restarts.
     pool_pre_ping=True,
 
-    # These values are tied to the thread pool size.
+    # Sized against the thread pool. Routes are synchronous, so FastAPI runs
+    # them in a thread pool (default 32 threads), and each request holds one
+    # connection from `get_db()` for its whole duration — so pool_size +
+    # max_overflow needs to exceed the thread pool size or we hit
+    # "QueuePool limit reached" under load (bcrypt alone holds a connection
+    # for ~100ms). 20 + 20 = 40 covers it, well under Postgres's default
+    # max_connections of 100.
     #
-    # Since routes are synchronous, FastAPI executes them in a thread pool
-    # (default: 40 threads). Each request holds one connection from `get_db()`
-    # for its entire duration.
-    #
-    # Requirement: pool_size + max_overflow > threadpool size.
-    #
-    # Previously, 10 + 20 = 30 caused "QueuePool limit reached" errors under
-    # load, as bcrypt operations hold connections for ~100ms.
-    #
-    # Current thread pool is 32; pool 20 + 20 = 40 ensures sufficient capacity.
-    # Postgres default max_connections is 100, keeping this safe.
-    #
-    # Configurable via env vars because in multi-worker setups each worker
-    # gets its own pool — 4 workers x 40 would be 160 connections, over
+    # Configurable via env vars because multi-worker setups need smaller
+    # per-worker pools — 4 workers x 40 would be 160 connections, over
     # Postgres's default limit. Prod compose sets these down to 5 + 5.
     pool_size=settings.DB_POOL_SIZE,
     max_overflow=settings.DB_MAX_OVERFLOW,
@@ -45,7 +39,7 @@ engine = create_engine(
 
 SessionLocal = sessionmaker(
     bind=engine,
-    autocommit=False,   # Manual commit for explicit transaction control.
+    autocommit=False,   # explicit transaction control
     autoflush=False,    # manual flush so seat-locking writes commit exactly where intended
 )
 
@@ -59,8 +53,8 @@ def get_db():
     """
     FastAPI dependency providing a scoped DB session per request.
 
-    Uses a generator to ensure the session closes after the request,
-    preventing connection leaks and pool exhaustion.
+    Generator ensures the session closes after the request, so connections
+    don't leak and exhaust the pool.
 
     Usage: def route(db: Session = Depends(get_db))
     """

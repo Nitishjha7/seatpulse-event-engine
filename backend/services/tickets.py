@@ -1,15 +1,11 @@
 """
 Ticket generation — QR code, PDF, and email.
 
-These tasks are intentionally performed outside the request cycle.
-
-Reason: QR generation, PDF rendering, and email dispatch take 2-3 seconds.
-Performing these during checkout would make the payment appear to hang,
-even after the transaction is successful and the booking is created.
-
-The API now returns "confirmed" immediately, and tickets are generated
-in the background. The user sees a "ticket generating" status, which
-accurately reflects the process.
+Done outside the request cycle on purpose: QR generation, PDF rendering,
+and email dispatch take 2-3 seconds, and doing that during checkout would
+make the payment look hung even after it succeeded. The API returns
+"confirmed" right away and generates tickets in the background, with the
+user seeing an accurate "ticket generating" status in the meantime.
 """
 
 import io
@@ -34,11 +30,9 @@ OUTBOX_DIR = Path("/app/tickets/outbox")
 
 def new_qr_token() -> str:
     """
-    Generates a random token for the QR code.
-
-    Do not use the booking ID, as it is sequential. A user could guess
-    subsequent IDs to access other tickets. `token_urlsafe(24)` provides
-    32 characters, making it practically impossible to guess.
+    Generates a random token for the QR code — not the booking ID, since
+    that's sequential and guessable. `token_urlsafe(24)` gives 32 characters,
+    which isn't.
     """
     return secrets.token_urlsafe(24)
 
@@ -70,12 +64,7 @@ def make_ticket_pdf(
     amount: float,
     attendee: str,
 ) -> bytes:
-    """
-    Generates a single-page PDF ticket.
-
-    Uses landscape A5 format, which is standard for physical tickets
-    and optimized for mobile screen display.
-    """
+    """Generates a single-page PDF ticket. Landscape A5 — standard for physical tickets and works well on mobile screens too."""
     buf = io.BytesIO()
     width, height = landscape(A5)
     c = canvas.Canvas(buf, pagesize=landscape(A5))
@@ -179,14 +168,10 @@ def ticket_path(booking_id: int) -> Path:
 
 def send_ticket_email(*, to: str, subject: str, body: str, pdf: bytes, booking_id: int) -> None:
     """
-    Sends the ticket email.
-
-    No actual SMTP integration is implemented here.
-    Uses an **outbox** pattern: emails are written to disk for processing.
-    This mimics Django's console/file email backend used in development.
-
-    To implement real SMTP, only this function needs modification; the
-    surrounding flow (queue, retry, status) remains unchanged.
+    Sends the ticket email. No real SMTP here — uses an outbox pattern
+    where emails are written to disk, similar to Django's file email
+    backend for dev. Swapping in real SMTP only touches this function; the
+    surrounding queue/retry/status flow stays the same.
     """
     OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
 

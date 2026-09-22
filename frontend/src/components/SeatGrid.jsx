@@ -3,24 +3,20 @@ import { Fragment } from 'react'
 import { seatPrice } from '../booking/BookingContext'
 
 /**
- * Seat grid — displays all event seats organized by row.
- *
- * WebSocket updates trigger re-renders only for the specific seat changed,
- * rather than replacing the entire array in state.
+ * Seat grid — all event seats organized by row. WebSocket updates only
+ * re-render the seat that changed, not the whole array.
  */
 
-// Centralized styles for seat statuses to ensure consistency between grid and legend.
+// Shared seat status styles, kept in one place so the grid and legend match
 const SEAT_STYLES = {
   available:
     'bg-emerald-500/85 text-emerald-950 hover:bg-emerald-400 hover:-translate-y-0.5 cursor-pointer',
   locked: 'bg-amber-400/80 text-amber-950 cursor-not-allowed',
-  // Payment in progress — distinct color to signal the seat is being purchased, not just held.
+  // Distinct color so "being purchased" reads differently from just "held"
   payment_pending: 'bg-orange-600/80 text-orange-50 cursor-not-allowed animate-pulse',
   booked: 'bg-rose-600/70 text-rose-100/70 cursor-not-allowed line-through',
-  // Group booking hold — unavailable for individual purchase. Distinct color indicates
-  // a long hold duration (up to 30 mins), signaling it will not be released soon.
+  // Group holds run up to 30 min, so they get their own color to signal that
   group_held: 'bg-sky-600/70 text-sky-50 cursor-not-allowed',
-  // User's own hold — visually distinct from other users' holds (yellow).
   selected:
     'bg-violet-500 text-white ring-2 ring-violet-300 ring-offset-2 ring-offset-[var(--panel)] cursor-pointer',
 }
@@ -46,10 +42,8 @@ function Seat({ seat, isSelected, isMine, onSelect, busy }) {
 }
 
 /**
- * Creates a lookup map: row label -> set of seat numbers followed by an aisle.
- *
- * Layout is optional — events created before layouts existed just have a NULL one.
- * Fallbacks ensure backward compatibility, returning an empty Map for uniform rows.
+ * Row label -> set of seat numbers followed by an aisle. Layout can be null
+ * for events created before layouts existed, so this just returns an empty map then.
  */
 function aisleMap(layout) {
   const map = new Map()
@@ -81,8 +75,7 @@ export default function SeatGrid({
 
   const aisles = aisleMap(layout)
 
-  // Only show section headings if multiple sections exist.
-  // Single-section events don't require redundant labels.
+  // Only show section headings when there's more than one section
   const sectionNames = [...new Set(seats.map((s) => s.section).filter(Boolean))]
   const showSections = sectionNames.length > 1
 

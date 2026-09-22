@@ -37,7 +37,7 @@ export default function MyEvents() {
       setNotice(null)
       await load()
     } catch (err) {
-      // 409 indicates existing confirmed bookings; expected business rule violation
+      // 409 means the event has confirmed bookings — expected, not a bug
       setError(err.message)
     }
   }

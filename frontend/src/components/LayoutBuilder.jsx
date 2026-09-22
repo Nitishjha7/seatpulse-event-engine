@@ -1,19 +1,12 @@
 import { Fragment } from 'react'
 
 /**
- * Visual seat layout builder.
+ * Visual seat layout builder — form-based with a live preview, not
+ * drag-and-drop. Venues are just rows and sections, so typing "12 seats
+ * in Row C, aisle after seat 4" beats dragging boxes around, and skips
+ * the pointer-event/undo/snapping complexity that comes with a canvas.
  *
- * ---- Concept ----
- *
- * This is a form-based builder with a live preview, not a drag-and-drop canvas.
- *
- * Drag-and-drop is intuitive initially, but real venues are structured in rows
- * and sections. Typing "12 seats in Row C, aisle after seat 4" is faster and
- * less error-prone than dragging boxes. It also avoids the complexity of
- * pointer events, undo/redo stacks, and snapping logic.
- *
- * This validation is for UI feedback only. Security validation occurs
- * server-side in `layout.py`.
+ * Validation here is for UI feedback only; the server re-validates in `layout.py`.
  */
 
 const ROW_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -54,12 +47,7 @@ export function emptyLayout() {
   }
 }
 
-/**
- * Client-side validation.
- *
- * Duplicates server-side rules to provide immediate feedback before submission,
- * avoiding unnecessary round-trips. The server remains the source of truth.
- */
+/** Client-side mirror of the server validation rules, for instant feedback before submit. */
 export function validateLayout(layout) {
   const seen = new Map()
   let total = 0
@@ -281,12 +269,7 @@ function RowEditor({ row, canRemove, onChange, onRemove }) {
   )
 }
 
-/**
- * Live preview — visual representation of the attendee experience.
- *
- * Helps visualize seat distribution and aisles, which are difficult to
- * interpret from raw numbers alone.
- */
+/** Live preview so seat distribution and aisles aren't just raw numbers. */
 function LayoutPreview({ layout }) {
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3">

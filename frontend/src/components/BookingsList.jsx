@@ -107,16 +107,10 @@ export default function BookingsList({ bookings, onCancel, compact = false, limi
 }
 
 /**
- * Handles ticket download and status display.
+ * Ticket download + status (pending / ready / failed with retry).
  *
- * States:
- *   pending — Ticket generation in progress
- *   ready   — Download available
- *   failed  — Retry option
- *
- * PDF download cannot use `window.open` because the endpoint requires
- * an `Authorization` header, which browser navigation does not support.
- * We fetch the blob manually instead.
+ * Can't use `window.open` since the endpoint needs an Authorization header
+ * that browser navigation can't send — fetching the blob manually instead.
  */
 function TicketAction({ booking }) {
   const [busy, setBusy] = useState(false)

@@ -1,27 +1,20 @@
 """
 Seat layout — defines venue structure and seat generation logic.
 
----- Background ----
+Events could already be defined with `price_tiers` ("2 rows @ ₹2500, 3 rows
+@ ₹1200", uniform seats per row), which is simple and covers most events.
+Real venues are messier though: aisles (walkways), distinct sections
+(Ground, Balcony) with their own pricing and names, and row capacities that
+vary (fewer seats up front, more in back). This file describes that layout
+and generates the seat entities from it.
 
-Organizers could already define events with `price_tiers`: "2 rows @ ₹2500, 3 rows @ ₹1200", uniform seats per row. That's simple and covers most events.
+`price_tiers` stays supported alongside it — existing event seeds, tests,
+and demos depend on it, and most events don't need a full layout builder;
+"5 rows, 10 seats, one price" shouldn't require one. Both paths produce the
+same seat entities; layout-builder events just also populate `Event.layout`
+so the grid can render aisles and sections.
 
-However, real venues are more complex:
-  - They have AISLEs (walkways).
-  - They have distinct SECTIONS (e.g., Ground, Balcony) with unique pricing and names.
-  - Row capacities vary (fewer seats in front, more in back).
-
-This file handles the description of these layouts and the generation of seat entities.
-
----- Legacy Support ----
-
-`price_tiers` remains supported because:
-
-  1. Data from 17 phases relies on it. Breaking this would invalidate existing event seeds, tests, and demos.
-  2. Most events do not require a complex layout builder. For simple "5 rows, 10 seats, one price" events, a full layout definition is unnecessary overhead.
-
-Both methods result in the same seat entities. Events using the layout builder simply populate `Event.layout` to enable grid visualization of aisles and sections.
-
----- Layout Schema ----
+Layout schema:
 
     {
       "sections": [
@@ -36,7 +29,8 @@ Both methods result in the same seat entities. Events using the layout builder s
       ]
     }
 
-`aisles_after: [4]` indicates a visual gap after seat 4. This is purely for presentation; no seat is created, and no seat number is skipped. It is stored in the layout JSON, not the database.
+`aisles_after: [4]` is a visual gap after seat 4 only — no seat is created
+and no number is skipped. Stored in the layout JSON, not the database.
 """
 
 from dataclasses import dataclass
@@ -63,14 +57,11 @@ class PlannedSeat:
 
 def validate(layout: dict) -> None:
     """
-    Validates the layout structure before seat generation.
-
-    This runs server-side regardless of frontend validation. The layout
-    builder is a UI convenience; the API must remain protected against
-    malformed input.
-
-    Validation is decoupled to allow testing without a database and to
-    identify errors before partial seat expansion occurs.
+    Validates the layout structure before seat generation, server-side
+    regardless of frontend validation — the layout builder is a UI
+    convenience, not a substitute for guarding the API against bad input.
+    Kept separate from `expand()` so it's testable without a database and
+    catches errors before any seats get created.
     """
     sections = layout.get("sections")
     if not isinstance(sections, list) or not sections:
@@ -110,14 +101,10 @@ def validate(layout: dict) -> None:
             if len(label) > MAX_LABEL_LEN:
                 raise LayoutError(f"Row label is too long: {label}")
 
-            # Critical uniqueness check.
-            #
-            # The `seats` table enforces UNIQUE(event_id, row_label, seat_number).
-            # Duplicate row labels across sections would trigger an IntegrityError
-            # after partial insertion. Validating here prevents this.
-            #
-            # Note: Labels must be unique across the entire event, not just
-            # within a section, due to database constraints.
+            # The `seats` table enforces UNIQUE(event_id, row_label,
+            # seat_number), so duplicate row labels across sections would
+            # hit an IntegrityError mid-insert. Catch it here instead —
+            # labels must be unique across the whole event, not per section.
             if label in seen_labels:
                 raise LayoutError(
                     f"Row '{label}' appears twice — every row label must be unique across the event"
@@ -132,7 +119,6 @@ def validate(layout: dict) -> None:
             if not isinstance(aisles, list):
                 raise LayoutError(f"Row '{label}': aisles_after must be a list")
             for a in aisles:
-                # Aisle positions must be within the row range.
                 if not isinstance(a, int) or a < 1 or a >= count:
                     raise LayoutError(
                         f"Row '{label}': aisle position {a} must fall inside the row (1-{count - 1})"
@@ -146,12 +132,9 @@ def validate(layout: dict) -> None:
 
 def expand(layout: dict) -> list[PlannedSeat]:
     """
-    Generates a list of seats from the layout.
-
-    This does not write to the database; it returns a list of objects.
-
-    The caller is responsible for bulk insertion within a transaction to
-    ensure atomicity.
+    Generates a list of seats from the layout. Doesn't touch the database —
+    returns plain objects; the caller does the bulk insert inside a
+    transaction.
     """
     validate(layout)
 
@@ -167,11 +150,7 @@ def expand(layout: dict) -> list[PlannedSeat]:
 
 
 def summarise(layout: dict) -> dict:
-    """
-    Provides a summary of the layout without generating seats.
-
-    Used for live UI previews and validation feedback.
-    """
+    """Summarizes the layout without generating seats — used for live UI previews and validation feedback."""
     try:
         validate(layout)
     except LayoutError as exc:
@@ -194,13 +173,9 @@ def summarise(layout: dict) -> dict:
 
 def from_price_tiers(tiers: list[dict], seats_per_row: int, row_labels: str) -> dict:
     """
-    Converts legacy `price_tiers` to the layout schema.
-
-    Benefits:
-      - Unifies expansion logic.
-      - Allows legacy events to utilize grid visualization.
-
-    Each tier is mapped to a section with auto-generated names.
+    Converts legacy `price_tiers` to the layout schema so both paths share
+    the same expansion logic and legacy events can use grid visualization.
+    Each tier becomes a section with an auto-generated name.
     """
     sections = []
     row_index = 0

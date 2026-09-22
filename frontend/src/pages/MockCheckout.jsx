@@ -5,15 +5,11 @@ import { getPayment, simulatePayment } from '../api'
 import { IconLock } from '../layout/icons'
 
 /**
- * Checkout page for the mock gateway.
+ * Checkout page for the mock gateway — only shows up when STRIPE_SECRET_KEY
+ * isn't set, so the full payment flow can be tested without a Stripe account.
  *
- * This replaces the real Stripe page — it only appears when
- * STRIPE_SECRET_KEY is not set. This allows anyone (including interviewers)
- * to test the full payment flow without a Stripe account.
- *
- * This page makes no decisions — it simply calls the backend `simulate` endpoint,
- * which triggers the same `_fulfil`/`_fail` logic as the real webhook.
- * This ensures the mock and real logic remain identical.
+ * It just calls the backend `simulate` endpoint, which runs the same
+ * `_fulfil`/`_fail` logic as the real webhook, so mock and real stay in sync.
  */
 export default function MockCheckout() {
   const { paymentId } = useParams()

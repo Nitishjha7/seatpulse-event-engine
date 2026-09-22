@@ -149,7 +149,7 @@ export default function AuthPage() {
           </p>
         </div>
 
-        {/* Demo credentials for recruiters/interviewers */}
+        {/* Demo credentials for quick access without signing up */}
         <div className="mt-4 rounded-lg border border-slate-800/60 bg-slate-900/40 p-3 text-center text-xs text-slate-500">
           Demo login —{' '}
           <button

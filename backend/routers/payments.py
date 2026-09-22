@@ -1,31 +1,22 @@
 """
 Payment routes.
 
-The core challenge in this phase is not gateway integration — that is trivial
-with documentation. The real challenge is the "Dual-Write" problem inherent to
-payments:
+Gateway integration itself is trivial. The real problem is the dual-write:
+the user gets charged but the booking fails to create, and now the gateway
+and our DB disagree about what happened.
 
-    The user was charged, but the booking failed. Now what?
+Three decisions that come out of that:
 
-We must keep two systems (the gateway and our database) consistent, even though
-either can fail at any time.
+1. Webhooks are the source of truth, not browser redirects. A user can close
+   the tab after paying (redirect never fires, but the charge went through),
+   or hit the success URL directly without paying. Redirects are only for
+   the "thank you" page, never for actually confirming a booking.
 
----- Design Decisions ----
+2. Fulfilment is idempotent. Webhooks are at-least-once delivery, so the
+   same event can arrive twice — fulfilment has to handle duplicates without
+   creating a duplicate booking.
 
-1. WEBHOOKS ARE THE SOURCE OF TRUTH, not browser redirects.
-   Redirects are unreliable:
-     - Users may close the tab after payment -> redirect never occurs, but the
-       charge succeeded. The booking must still be created.
-     - Malicious users may hit the success URL directly -> this would create
-       bookings without payment.
-   Redirects are strictly for UI/UX ("thank you" pages), not for business logic.
-
-2. FULFILMENT IS IDEMPOTENT.
-   Webhooks are "at-least-once" delivery — the gateway may send the same event
-   multiple times if a response is missed. Fulfilment logic must handle
-   duplicate calls gracefully without creating duplicate bookings.
-
-3. SEATS REMAIN payment_pending DURING PAYMENT.
+3. Seats sit in `payment_pending` while payment is in flight:
    available -> locked -> payment_pending -> booked
                               |
                      (fail/timeout) -> available

@@ -18,11 +18,8 @@ import MyEvents from './pages/organizer/MyEvents'
 import Profile from './pages/Profile'
 
 /**
- * Role-gated route.
- *
- * This is for UX only; actual security is enforced via backend `require_role`.
- * Client-side checks are easily bypassed (e.g., via React DevTools), so do not
- * rely on this for security. It merely prevents navigation to unauthorized views.
+ * Role-gated route — UX only. Real enforcement is backend `require_role`,
+ * since client checks are trivially bypassed via DevTools.
  */
 function RequireRole({ roles, children }) {
   const { user } = useAuth()
@@ -44,11 +41,8 @@ export default function App() {
   if (!isAuthenticated) return <AuthPage />
 
   return (
-    // key={user.id} ensures state resets on user switch, preventing data leakage
-    // between sessions.
-    //
-    // BookingProvider is outside Routes to persist WebSocket and seat state
-    // across navigation, avoiding unnecessary reconnections.
+    // key={user.id} resets state on user switch so sessions don't leak into each other.
+    // BookingProvider sits outside Routes so WebSocket/seat state survives navigation.
     <BookingProvider key={user.id}>
       <Routes>
         <Route element={<AppShell />}>

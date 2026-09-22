@@ -57,19 +57,12 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Admission control
 # ---------------------------------------------------------------------------
-# Load test optimization.
-#
-# Problem: Synchronous routes acquire a DB connection via `get_db` before
-# entering the threadpool. If the threadpool is saturated, connections remain
-# idle in transaction, leading to pool exhaustion and 500 errors:
+# Sync routes grab a DB connection via `get_db` before entering the
+# threadpool, so a saturated threadpool leaves connections idle in
+# transaction and the pool exhausts:
 #     QueuePool limit of size 20 overflow 20 reached, connection timed out
-#
-# Observation: 40/40 connections were "idle in transaction" during peak load.
-#
-# Fix: Implement admission control to limit concurrent requests to the
-# capacity of the connection pool.
-#
-# Slow response is preferable to 500 errors.
+# Saw all 40 connections idle in transaction under load. This semaphore caps
+# concurrent requests at the pool's capacity — better to queue than 500.
 _request_slots = asyncio.Semaphore(settings.MAX_CONCURRENT_REQUESTS)
 
 
@@ -100,15 +93,10 @@ async def event_socket(websocket: WebSocket, event_id: int, token: str | None = 
     Clients receive messages in the format:
         { "type": "seat_update", "action": "locked", "seat": { ... } }
 
-    ---- Auth ----
-    Tokens are passed via query parameter (?token=...) because the browser
-    WebSocket API does not support custom headers.
-
-    Trade-off: Tokens may appear in server logs. Use short-lived access tokens
-    (30 min) only.
-
-    Invalid tokens result in a 1008 (policy violation) close code. Authentication
-    is required to prevent unauthorized resource consumption.
+    Token is passed as a query param (?token=...) since the browser
+    WebSocket API doesn't support custom headers — it can end up in server
+    logs, which is why we only accept short-lived (30 min) access tokens.
+    Invalid tokens close with 1008.
     """
     db = SessionLocal()
     try:

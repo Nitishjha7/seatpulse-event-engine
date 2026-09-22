@@ -23,22 +23,16 @@ class Settings(BaseSettings):
     # Toggle SQL query logging. Useful for debugging, but verbose; default is off.
     DB_ECHO: bool = False
 
-    # Admission control: maximum concurrent requests.
-    #
-    # Must be smaller than the DB pool size. Each request holds a DB
-    # connection until completion; exceeding the pool size results in 500 errors.
-    #
-    # Invariant:  MAX_CONCURRENT_REQUESTS  <  pool_size + max_overflow
-    #             (30 < 40)
+    # Admission control: max concurrent requests. Must stay below the DB pool
+    # size — each request holds a connection until it finishes, so exceeding
+    # the pool size means 500s.
+    # Invariant: MAX_CONCURRENT_REQUESTS < pool_size + max_overflow (30 < 40)
     MAX_CONCURRENT_REQUESTS: int = 30
 
     # ---- Connection pool ----
-    #
-    # Must be configured via environment variables as optimal values depend on
-    # the number of WORKERS.
-    #
-    # Each uvicorn worker is a separate process with its own pool.
-    # Total connections = WORKERS x (pool_size + max_overflow).
+    # Set via env vars since the right values depend on WORKERS. Each uvicorn
+    # worker is a separate process with its own pool, so total connections =
+    # WORKERS x (pool_size + max_overflow).
     #
     # Single worker (dev): 20 + 20 = 40
     # 4 workers (prod):     5 +  5 = 40 total
@@ -46,12 +40,10 @@ class Settings(BaseSettings):
     DB_MAX_OVERFLOW: int = 20
 
     # ---- Benchmark mode ----
-    #
     # Enables extra query params: `strategy` (optimistic/pessimistic) and
-    # `redis_lock` (on/off).
-    #
-    # Default is OFF. Exposing locking semantics via query params is a security
-    # risk in production, as clients could force inefficient code paths.
+    # `redis_lock` (on/off). Default OFF — letting clients pick locking
+    # strategy via query params in production is a security risk since they
+    # could force inefficient code paths.
     BENCHMARK_MODE: bool = False
 
     # "redis" refers to the compose service name.
@@ -106,9 +98,8 @@ class Settings(BaseSettings):
     CURRENCY: str = "INR"
 
     # ---- Natural language seat search ----
-    #
-    # Graceful degradation: if empty, the search UI is hidden.
-    # Only disables natural language input; standard filters remain active.
+    # If empty, the search UI is hidden. Only disables natural language
+    # input; standard filters still work.
     GEMINI_API_KEY: str = ""
 
     @property
@@ -120,11 +111,9 @@ class Settings(BaseSettings):
         """Returns 'stripe' if keys are present, otherwise 'mock'."""
         return "stripe" if self.STRIPE_SECRET_KEY else "mock"
 
-    # Seat lock duration (seconds).
-    # 300 = 5 minutes. Redis automatically releases the lock after this period.
-    #
-    # Trade-off: Short TTLs risk premature lock expiration; long TTLs
-    # increase the number of abandoned seats held in the system.
+    # Seat lock duration in seconds (300 = 5 min). Redis releases it
+    # automatically after this. Too short risks premature expiry mid-checkout;
+    # too long leaves abandoned seats held longer than needed.
     SEAT_LOCK_TTL: int = 300
 
     # Allowed CORS origins.

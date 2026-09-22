@@ -28,15 +28,9 @@ import { useWebSocket } from '../hooks/useWebSocket'
 const BookingContext = createContext(null)
 
 /**
- * Determines the effective price for a seat.
- *
- * Priority order:
- *   1. held_price    — Price locked during the hold; ensures price consistency for the user.
- *   2. current_price — Server-calculated dynamic price.
- *   3. price         — Base price (fallback).
- *
- * Centralizing this logic prevents inconsistencies where components might
- * accidentally ignore the held price.
+ * Effective price for a seat: held_price (locked at hold time) > current_price
+ * (live dynamic price) > price (base). Centralized so no component accidentally
+ * skips the held price.
  */
 export function seatPrice(seat) {
   if (!seat) return null
@@ -60,11 +54,8 @@ export function useBooking() {
 }
 
 /**
- * Manages global booking state.
- *
- * Centralizing state here allows multiple pages (Dashboard, My Bookings, Events)
- * to share data and maintain a single WebSocket connection, preventing duplicate
- * updates and excessive server load.
+ * Global booking state, shared across Dashboard/My Bookings/Events so they
+ * all read from one WebSocket connection instead of each opening their own.
  */
 export function BookingProvider({ children }) {
   const { user } = useAuth()
@@ -150,12 +141,8 @@ export function BookingProvider({ children }) {
   )
 
   /**
-   * Handles dynamic pricing updates.
-   *
-   * We do not calculate `base × multiplier` on the client side to avoid
-   * floating-point rounding discrepancies between JS and Python. We rely
-   * on the server for exact pricing to ensure the displayed price matches
-   * the charged amount.
+   * We don't compute base × multiplier client-side — JS/Python float rounding
+   * can disagree, so we always trust the server's number here.
    */
   const handlePricingUpdate = useCallback((next) => {
     setPricing(next)
@@ -176,10 +163,7 @@ export function BookingProvider({ children }) {
 
   useEffect(() => () => clearTimeout(pricingRefetchRef.current), [])
 
-  /**
-   * Countdown for seat hold.
-   * The actual expiry is handled by Redis TTL on the server.
-   */
+  /** Countdown display only — actual expiry is a Redis TTL on the server. */
   useEffect(() => {
     if (lockSecondsLeft <= 0) return
 
@@ -261,11 +245,7 @@ export function BookingProvider({ children }) {
     await refresh(event.id)
   }
 
-  /**
-   * Initiates checkout.
-   *
-   * Booking is only finalized via webhook after payment confirmation.
-   */
+  /** Booking is only finalized via webhook after payment confirms, not here. */
   async function payForSeat() {
     if (!selectedSeat) return
 
@@ -281,12 +261,7 @@ export function BookingProvider({ children }) {
     }
   }
 
-  /**
-   * Initiates group booking.
-   *
-   * Server-side validation is the source of truth; this logic is a
-   * client-side suggestion to help users select adjacent seats.
-   */
+  /** Picks adjacent seats as a suggestion — server validation is the real source of truth. */
   async function startGroup(size) {
     if (!selectedSeat) return
 

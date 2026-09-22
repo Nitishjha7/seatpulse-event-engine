@@ -5,18 +5,10 @@ Usage:
     docker compose up worker              (service defined in compose)
     arq workers.worker.WorkerSettings     (manual execution)
 
----- Why ARQ instead of Celery ----
-
-Celery has a large ecosystem, but:
-  - It requires a broker (RabbitMQ or Redis) — we already use Redis.
-  - It is sync-first; our app is ASGI.
-  - It is overly complex for our specific requirements.
-
-ARQ runs directly on Redis (no new services), is asyncio-native, and is
-compact (~1500 lines). It is a perfect fit for this project size.
-
-We would only consider Celery if we needed: multiple queues with priorities,
-complex workflows (chains/groups), or if the team required its ecosystem.
+Went with ARQ over Celery: it runs directly on Redis (which we already use),
+is asyncio-native to match the ASGI app, and is small enough not to fight
+with. Celery's ecosystem would only be worth it if we needed multiple
+priority queues or complex chained workflows.
 """
 
 import asyncio
@@ -153,19 +145,14 @@ async def expire_groups(ctx) -> int:
     """
     Expire and release group bookings that have passed their deadline.
 
-    ---- Why cron instead of lazy cleanup ----
+    Other holds get cleaned up lazily when a seat is accessed, which is fine
+    for simple locks. Group bookings involve refunds though, so we can't
+    wait for someone to happen to visit the event page — if nobody does,
+    users would wait indefinitely for their money back. Hence a schedule
+    instead of lazy cleanup.
 
-    Other expired holds are cleaned up "lazily" when seats are accessed.
-    This is efficient and sufficient for simple locks.
-
-    Group bookings are different because they involve refunds. If no one
-    visits the event page, lazy cleanup would never trigger, leaving users
-    waiting indefinitely for their money.
-
-    Refunds cannot depend on external user activity. Thus, this runs on a schedule.
-
-    Job is idempotent: `break_group` uses an atomic conditional UPDATE,
-    ensuring safety even if multiple workers run concurrently.
+    Idempotent: `break_group` uses an atomic conditional UPDATE, so it's
+    safe even if multiple workers run this concurrently.
     """
     db = SessionLocal()
     try:

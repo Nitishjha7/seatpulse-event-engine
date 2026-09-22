@@ -1,10 +1,8 @@
 """
 Database models.
 
-This file is the foundation of the project. The "no overselling" claim relies on these
-constraints, not on application logic.
-
-Three-layer safety (fastest at the top, most robust at the bottom):
+The "no overselling" guarantee lives in these constraints, not in application
+logic. Three layers, fastest at top, most robust at bottom:
   1. Redis lock          -> fast rejection, keeps load off the DB
   2. version column      -> optimistic locking, one of two parallel updates fails
   3. UNIQUE constraint   -> database-level enforcement, holds even if the code has a bug
@@ -84,10 +82,8 @@ ALL_PAYMENT_STATUSES = (
     PAYMENT_REFUNDED,
 )
 
-# User roles.
-#
-# Flat structure; granular permissions (e.g., event.create) are over-engineering
-# for this scale. It is easier to move from flat to granular later than vice versa.
+# User roles. Flat structure — granular permissions (e.g. event.create) are
+# overkill at this scale, and easier to add later than to remove.
 ROLE_ATTENDEE = "attendee"     # View and book seats
 ROLE_ORGANIZER = "organizer"   # Create and manage events
 ROLE_ADMIN = "admin"           # Full platform access
@@ -145,13 +141,9 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    # Explicit foreign_keys are required.
-    #
-    # Booking has two foreign keys to User:
-    #   user_id       -> The purchaser
-    #   checked_in_by -> The staff member who scanned the ticket
-    #
-    # SQLAlchemy requires explicit paths to resolve ambiguity.
+    # Explicit foreign_keys required: Booking has two FKs to User
+    # (user_id = purchaser, checked_in_by = staff who scanned the ticket),
+    # so SQLAlchemy needs the explicit path to resolve the ambiguity.
     bookings: Mapped[list["Booking"]] = relationship(
         back_populates="user", passive_deletes=True, foreign_keys="Booking.user_id"
     )
@@ -183,14 +175,9 @@ class Event(Base):
     category: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     # ---- Seat layout ----
-    #
-    # Venue map (sections, rows, aisles).
-    #
-    # Nullable to maintain compatibility with legacy events. NULL implies a
-    # simple uniform grid.
-    #
-    # This is not the source of truth for seats; the `seats` table is. This
-    # JSON is used for rendering the grid and aisles.
+    # Venue map (sections, rows, aisles). Nullable for legacy events — NULL
+    # means a simple uniform grid. Not the source of truth for seats (the
+    # `seats` table is); this JSON is just for rendering the grid and aisles.
     layout: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # ---- Dynamic pricing ----
@@ -201,20 +188,17 @@ class Event(Base):
     # Price cap to maintain user trust.
     max_surge: Mapped[float] = mapped_column(Numeric(4, 2), default=2.0, nullable=False)
 
-    # Organizer association.
-    #
-    # Nullable for legacy events and admin-created events.
-    # ondelete="SET NULL" ensures events persist if an organizer account is deleted.
+    # Organizer association. Nullable for legacy/admin-created events.
+    # ondelete="SET NULL" so events survive an organizer account deletion.
     organizer_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    # passive_deletes=True is required.
-    #
-    # Without it, SQLAlchemy attempts to load children and set foreign keys to NULL,
-    # which conflicts with the database-level ON DELETE CASCADE.
+    # passive_deletes=True required — otherwise SQLAlchemy tries to load
+    # children and null out their FKs itself, conflicting with the
+    # database-level ON DELETE CASCADE.
     seats: Mapped[list["Seat"]] = relationship(
         back_populates="event", cascade="all, delete-orphan", passive_deletes=True
     )
@@ -239,9 +223,8 @@ class Seat(Base):
     row_label: Mapped[str] = mapped_column(String(4))
     seat_number: Mapped[int] = mapped_column(Integer)
 
-    # Section (e.g., "Ground", "Balcony").
-    #
-    # Nullable for legacy compatibility. Stored here for ticket/check-in access.
+    # Section (e.g., "Ground", "Balcony"). Nullable for legacy compatibility;
+    # kept here for ticket/check-in access.
     section: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     price: Mapped[float] = mapped_column(Numeric(10, 2), default=0)
@@ -250,16 +233,13 @@ class Seat(Base):
     status: Mapped[str] = mapped_column(String(24), default=SEAT_AVAILABLE, index=True)
 
     # ---- OPTIMISTIC LOCKING ----
-    # Incremented on every successful update.
-    #
-    # Prevents race conditions without row-level locking. If the version
-    # mismatch occurs, the update fails (rowcount 0), resulting in a 409 error.
+    # Incremented on every successful update. Avoids row-level locking — a
+    # version mismatch fails the update (rowcount 0) and returns 409.
     version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     # ---- Price lock ----
-    #
-    # Locks the price at the time of hold to prevent price fluctuations
-    # during the checkout process. Cleared when the hold is released.
+    # Freezes the price at hold time so it can't shift during checkout.
+    # Cleared when the hold is released.
     held_price: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
 
     # ---- Redis lock integration ----
@@ -306,9 +286,8 @@ class Booking(Base):
     amount: Mapped[float] = mapped_column(Numeric(10, 2), default=0)
 
     # ---- Ticket ----
-    #
-    # Booking and Ticket are 1:1.
-    # qr_token is random and unique to prevent sequential ID guessing.
+    # Booking and Ticket are 1:1. qr_token is random and unique so it can't
+    # be guessed sequentially.
     qr_token: Mapped[str | None] = mapped_column(
         String(64), unique=True, index=True, nullable=True
     )
@@ -320,8 +299,7 @@ class Booking(Base):
     )
 
     # ---- Check-in ----
-    #
-    # checked_in_at acts as a guard; updates only succeed if NULL.
+    # checked_in_at doubles as a guard — updates only succeed while it's NULL.
     checked_in_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -340,9 +318,9 @@ class Booking(Base):
         ),
 
         # ---- FINAL OVERSALE PROTECTION ----
-        # Partial unique index: only one confirmed booking per seat.
-        # Cancelled bookings are ignored, allowing the seat to be re-sold.
-        # This is the ultimate guarantee against race conditions.
+        # Partial unique index: only one confirmed booking per seat. Cancelled
+        # bookings are excluded so the seat can be re-sold. This is the last
+        # line of defense against race conditions.
         Index(
             "uq_one_confirmed_booking_per_seat",
             "seat_id",
@@ -359,8 +337,8 @@ class Payment(Base):
     """
     Represents a checkout attempt.
 
-    Separate from Booking to maintain history of failed attempts and
-    to handle retry logic correctly.
+    Kept separate from Booking so failed attempts have a history and retries
+    can be handled correctly.
     """
 
     __tablename__ = "payments"
@@ -390,9 +368,8 @@ class Payment(Base):
     failure_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # ---- Group booking ----
-    #
-    # If set, this payment is part of a group share.
-    # Booking is only created once all shares are fulfilled.
+    # If set, this payment belongs to a group share. The booking is only
+    # created once all shares are fulfilled.
     group_share_id: Mapped[int | None] = mapped_column(
         ForeignKey("group_shares.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -412,8 +389,8 @@ class Payment(Base):
             f"status IN ({', '.join(repr(s) for s in ALL_PAYMENT_STATUSES)})",
             name="ck_payment_status",
         ),
-        # Partial unique index: one pending payment per seat.
-        # Prevents multiple checkout sessions for the same seat.
+        # Partial unique index: one pending payment per seat, so a seat
+        # can't have multiple checkout sessions at once.
         Index(
             "uq_one_pending_payment_per_seat",
             "seat_id",
@@ -452,7 +429,7 @@ class GroupBooking(Base):
     # Secret token for group access.
     share_token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
 
-    # Expiry is a business decision, managed by a background job rather than Redis TTL.
+    # Expiry is a business decision, so a background job manages it rather than Redis TTL.
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
     created_at: Mapped[datetime] = mapped_column(
@@ -506,7 +483,7 @@ class GroupShare(Base):
     status: Mapped[str] = mapped_column(
         String(16), default=SHARE_UNPAID, nullable=False, index=True
     )
-    # Amount is frozen here to protect against price surges during the group collection window.
+    # Frozen here so surge pricing during the collection window can't affect it.
     amount: Mapped[float] = mapped_column(Numeric(10, 2))
 
     group: Mapped["GroupBooking"] = relationship(back_populates="shares")

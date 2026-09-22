@@ -1,16 +1,14 @@
 """
-Gate check-in — Validate entry by scanning QR codes.
+Gate check-in — validate entry by scanning QR codes.
 
-This follows the same "exactly once" logic used in seat booking:
+Same "exactly once" logic as seat booking:
 
     Seat booking  : one seat, one confirmed booking
     Check-in      : one ticket, one entry
 
-The solution is an atomic conditional UPDATE. If two gates scan the same QR
-simultaneously, only one will result in a `rowcount` of 1.
-
-Why this matters: If two people use a screenshot of the same QR at different
-gates, both should not be allowed entry. This prevents common ticketing fraud.
+An atomic conditional UPDATE handles it: if two gates scan the same QR at
+the same time, only one gets rowcount 1. This stops the classic screenshot-
+sharing fraud where the same ticket is used to enter at two gates.
 """
 
 import logging
@@ -78,10 +76,8 @@ def check_in(
     """
     Scan QR token and mark entry.
 
-    This endpoint returns **200 even if check-in fails** — with `ok: false`.
-
-    Reason: Gate staff need a clear "go" or "already used" signal. Returning
-    error statuses would force the frontend to parse error bodies unnecessarily.
+    Returns **200 even if check-in fails**, with `ok: false` — gate staff
+    need a clear go/already-used signal, not an error body to parse.
 
     Only system-level errors (permissions, malformed data) return non-200.
     """

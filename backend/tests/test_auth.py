@@ -171,12 +171,7 @@ def test_attendee_cannot_create_event(client, role_tokens):
 
 
 def test_organizer_cannot_touch_another_organizers_event(client, role_tokens, tokens):
-    """
-    Most important RBAC test.
-
-    Passing the role check does not mean you own every resource.
-    Ownership must be checked separately.
-    """
+    """Passing the role check doesn't mean owning every resource — ownership is checked separately."""
     owner = role_tokens["organizer"]
 
     created = client.post(
@@ -191,12 +186,11 @@ def test_organizer_cannot_touch_another_organizers_event(client, role_tokens, to
         },
     ).json()
 
-    # Let's try making user1 an organizer — they have the role, but not the event
+    # user1 has the organizer role but not this event
     admin = auth_headers(role_tokens["admin"])
     other = login(client, "user1@seatpulse.dev")
 
-    # If user1 is not an organizer, they receive 403; if they are, they receive 404 (ownership).
-    # Both indicate "no access" for different reasons.
+    # 403 if user1 isn't an organizer, 404 (ownership) if they are — either way, no access.
     patch = client.patch(
         f"/api/organizer/events/{created['id']}",
         headers=auth_headers(other),

@@ -38,7 +38,7 @@ pnpm-debug.log*
 docker-compose.override.yml
 
 # ---------- Personal notes ----------
-# Build log, setup guides, interview prep — local reference only.
+# Local dev notes and setup scratch — not meant for the repo.
 /notes
 
 # ---------- Editors / OS ----------

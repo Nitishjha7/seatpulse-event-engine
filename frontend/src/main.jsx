@@ -9,8 +9,7 @@ import './index.css'
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <BrowserRouter>
-      {/* AuthProvider is nested within BrowserRouter to ensure navigation
-          context is available for protected route redirects */}
+      {/* AuthProvider needs router context for redirects on protected routes */}
       <AuthProvider>
         <App />
       </AuthProvider>

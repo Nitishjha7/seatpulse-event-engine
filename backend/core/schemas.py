@@ -95,11 +95,8 @@ class EventDetail(EventOut):
 
 class PriceTier(BaseModel):
     """
-    Defines pricing for specific row ranges.
-
-    Tiers are applied sequentially: the first tier starts at row A.
-    Allows organizers to set VIP/normal/balcony pricing without a full
-    layout builder.
+    Pricing for a range of rows. Tiers apply sequentially starting at row A,
+    letting organizers set VIP/normal/balcony pricing without a full layout builder.
     """
     rows: int = Field(..., gt=0, le=26, description="Number of rows in this tier")
     price: float = Field(..., ge=0, le=1_000_000)
@@ -121,14 +118,9 @@ class LayoutSection(BaseModel):
 
 class SeatLayout(BaseModel):
     """
-    Venue map.
-
-    Pydantic validates shape (types, lengths). BUSINESS rules — duplicate
-    row labels, seat caps, aisle positions — are handled in `layout.py`.
-
-    This separation is intentional: shape rules are easy to define in
-    schemas, but cross-field rules (e.g., unique row labels per section)
-    require full layout context and should be testable without HTTP.
+    Venue map. Pydantic validates shape (types, lengths); business rules —
+    duplicate row labels, seat caps, aisle positions — live in `layout.py`
+    since they need full layout context and should be testable without HTTP.
     """
     sections: list[LayoutSection] = Field(..., min_length=1, max_length=10)
 
@@ -141,12 +133,9 @@ class EventCreate(BaseModel):
     category: str | None = Field(None, max_length=40)
 
     # ---- Seat generation strategy ----
-    #
-    # If `layout` is provided, it takes precedence. Otherwise, `price_tiers`
-    # is used.
-    #
-    # Making both required is impractical: simple events shouldn't require
-    # a full map, and layout-based events don't use `seats_per_row`.
+    # `layout` takes precedence if provided, otherwise `price_tiers` is used.
+    # Both required would be impractical — simple events shouldn't need a
+    # full map, and layout-based events don't use `seats_per_row`.
     layout: SeatLayout | None = None
 
     seats_per_row: int = Field(10, gt=0, le=50)
@@ -168,11 +157,10 @@ class EventCreate(BaseModel):
 
 class EventUpdate(BaseModel):
     """
-    Mutable fields for existing events.
-
-    Seat layout and pricing are excluded — modifying these after tickets
-    are sold is prohibited. Events must be deleted and recreated (only
-    possible if no confirmed bookings exist).
+    Mutable fields for existing events. Seat layout and base pricing are
+    excluded — changing those after tickets are sold isn't allowed; the
+    event has to be deleted and recreated instead (only possible with no
+    confirmed bookings).
     """
     name: str | None = Field(None, min_length=3, max_length=200)
     venue: str | None = Field(None, min_length=3, max_length=200)
@@ -180,11 +168,9 @@ class EventUpdate(BaseModel):
     description: str | None = Field(None, max_length=5000)
     category: str | None = Field(None, max_length=40)
 
-    # Pricing knobs are adjustable, but base price is not.
-    #
-    # Changing base price invalidates existing bookings. Adjusting surge
-    # settings only affects future bookings, which is acceptable for
-    # managing slow sales.
+    # Pricing knobs are adjustable, base price isn't — changing base price
+    # would invalidate existing bookings, while surge settings only affect
+    # future ones, which is fine for managing slow sales.
     dynamic_pricing: bool | None = None
     demand_factor: float | None = Field(None, ge=0, le=2.0)
     max_surge: float | None = Field(None, ge=1.0, le=3.0)
@@ -256,11 +242,9 @@ class SeatLockOut(BaseModel):
 
 class BookingCreate(BaseModel):
     """
-    Client input.
-
-    Note: `user_id` is excluded. Previously, this was a security hole
-    allowing users to book on behalf of others. User identity is now
-    derived from the JWT token.
+    Client input. `user_id` is deliberately excluded — accepting it from the
+    client would let a user book on someone else's behalf. Identity comes
+    from the JWT instead.
     """
     seat_id: int = Field(..., gt=0, description="Seat to book")
 
@@ -335,14 +319,11 @@ class AuthConfigOut(BaseModel):
 
 class SeatFilters(BaseModel):
     """
-    Search filters.
-
-    This is the contract between the LLM and the search engine, serving
-    as the security boundary.
-
-    All LLM output is validated here: ranges are clamped, unknown fields
-    are dropped, and types are enforced before reaching `seat_search.find()`.
-    This prevents prompt injection from executing arbitrary SQL.
+    Search filters — the contract between the LLM and the search engine, and
+    the security boundary between them. All LLM output is validated here
+    (ranges clamped, unknown fields dropped, types enforced) before it
+    reaches `seat_search.find()`, so prompt injection can't turn into
+    arbitrary SQL.
     """
     quantity: int = Field(1, ge=1, le=10)
     together: bool = True
@@ -359,13 +340,9 @@ class EventDraftRequest(BaseModel):
 
 class EventDraftOut(BaseModel):
     """
-    AI-generated draft.
-
-    Never saved directly. Populates the organizer form for manual review
-    and publication.
-
-    Event descriptions are a commitment to ticket buyers; human oversight
-    is mandatory.
+    AI-generated draft. Never saved directly — it populates the organizer
+    form for manual review before publishing, since event descriptions are
+    a commitment to ticket buyers and need a human check.
     """
     name: str
     description: str
@@ -440,10 +417,8 @@ class CheckInRequest(BaseModel):
 
 class CheckInResult(BaseModel):
     """
-    Gate response.
-
-    `ok` is in the body, not the HTTP status. Gate operators need a
-    clear response, along with audit data for dispute resolution.
+    Gate response. `ok` lives in the body, not the HTTP status, so gate
+    operators get a clear result plus audit data for dispute resolution.
     """
     ok: bool
     # checked_in | already_checked_in | invalid_ticket | booking_cancelled | ticket_not_issued

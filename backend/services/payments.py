@@ -111,19 +111,13 @@ class StripeProvider:
 
     def verify_webhook(self, payload: bytes, signature: str | None) -> dict:
         """
-        Verify webhook signature.
+        Verify webhook signature. Stripe can't authenticate via our normal
+        headers, so the signature is the only auth mechanism here.
 
-        Since the webhook endpoint cannot be authenticated via standard
-        headers (Stripe does not have our credentials), the signature
-        serves as the primary authentication mechanism.
-
-        Stripe header format:
-            Stripe-Signature: t=1712345678,v1=abc123...,v1=def456...
-
-        Verification process:
-            signed_payload = "{timestamp}.{raw body}"
-            expected = HMAC-SHA256(webhook_secret, signed_payload)
-            Compare expected against provided v1 signatures.
+        Header format: Stripe-Signature: t=1712345678,v1=abc123...,v1=def456...
+        Verification: signed_payload = "{timestamp}.{raw body}", then
+        compare HMAC-SHA256(webhook_secret, signed_payload) against the
+        provided v1 signatures.
         """
         if not signature:
             raise PaymentError("Signature header missing")

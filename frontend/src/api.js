@@ -1,12 +1,10 @@
 /**
- * Centralized API communication module.
+ * Centralized API client.
  *
- * Token strategy:
- *   ACCESS token  -> Stored in module variable (RAM). Cleared on page reload.
- *   REFRESH token -> Stored in httpOnly cookie. Inaccessible to JavaScript.
- *
- * Why not localStorage: Vulnerable to XSS. RAM-based tokens expire on reload,
- * at which point we fetch a new one using the secure cookie.
+ * Access token lives in a module variable (cleared on reload); refresh token
+ * lives in an httpOnly cookie, invisible to JS. Not using localStorage since
+ * it's readable by any injected script — on reload we just fetch a fresh
+ * access token using the cookie.
  */
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
@@ -48,12 +46,7 @@ async function rawRequest(path, options, token) {
   });
 }
 
-/**
- * Centralized request handler.
- *
- * On 401, attempts one refresh and retries. This allows seamless session
- * recovery if the access token expires during use.
- */
+/** On a 401, tries one refresh + retry so an expired token doesn't interrupt the session. */
 async function request(path, options = {}, { retry = true } = {}) {
   let res = await rawRequest(path, options, accessToken);
 
@@ -136,12 +129,7 @@ export const unlockSeat = (seatId) =>
 
 export const getMyEvents = () => request("/api/organizer/events");
 
-/**
- * Draft event listing from a brief.
- *
- * Does not persist data; returns suggestions to pre-fill the form.
- * Publishing is handled separately by the organizer.
- */
+/** Drafts event fields from a brief — doesn't persist anything, just pre-fills the form. */
 export const draftEvent = (brief) =>
   request("/api/organizer/events/draft", {
     method: "POST",
@@ -165,12 +153,7 @@ export const deleteEvent = (eventId) =>
 
 // ---- Gate check-in ----
 
-/**
- * Mark entry via QR token.
- *
- * Returns 200 even if check-in fails (with `ok: false`).
- * Check `result.ok` instead of relying on try/catch.
- */
+/** Check in via QR token. Returns 200 even on failure (`ok: false`) — check that field, not try/catch. */
 export const checkIn = (token) =>
   request("/api/checkin", {
     method: "POST",
@@ -182,11 +165,7 @@ export const getCheckinStats = (eventId) =>
 
 // ---- Group booking (split payment) ----
 
-/**
- * Hold N seats and generate a shareable link.
- *
- * Returns a `share_token` instead of an `id` to prevent enumeration attacks.
- */
+/** Holds N seats and returns a `share_token` (not an id, to avoid enumeration). */
 export const createGroup = (seatIds, deadlineMinutes) =>
   request("/api/groups", {
     method: "POST",
@@ -208,12 +187,7 @@ export const cancelGroup = (shareToken) =>
 
 // ---- Seat search ----
 
-/**
- * Search seats via natural language or filters.
- *
- * `query` requires GEMINI_API_KEY on the server.
- * `filters` are always available.
- */
+/** Search seats via natural language (`query`, needs GEMINI_API_KEY server-side) or `filters`. */
 export const searchSeats = (eventId, body) =>
   request(`/api/events/${eventId}/seats/search`, {
     method: "POST",
@@ -246,12 +220,7 @@ export const simulatePayment = (paymentId, outcome) =>
 
 export const getMyBookings = () => request("/api/bookings");
 
-/**
- * Book a seat.
- *
- * Uses `Idempotency-Key` to prevent duplicate bookings from retries.
- * The key is unique per attempt, ensuring safe retries for the same action.
- */
+/** Books a seat. `Idempotency-Key` per attempt keeps retries from double-booking. */
 export const createBooking = (seatId, idempotencyKey = crypto.randomUUID()) =>
   request("/api/bookings", {
     method: "POST",
@@ -260,11 +229,8 @@ export const createBooking = (seatId, idempotencyKey = crypto.randomUUID()) =>
   });
 
 /**
- * Download ticket PDF.
- *
- * Cannot use `request()` as it expects JSON; we need a binary blob.
- * Browser navigation doesn't support custom headers, so we fetch the blob
- * and trigger a hidden <a> click.
+ * Downloads the ticket PDF. Can't use `request()` (expects JSON, this is a
+ * blob) or a plain link (needs an auth header), so we fetch and click a hidden <a>.
  */
 export async function downloadTicket(bookingId) {
   const res = await fetch(`${API_URL}/api/bookings/${bookingId}/ticket`, {

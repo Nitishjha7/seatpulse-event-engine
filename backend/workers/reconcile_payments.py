@@ -1,24 +1,16 @@
 """
 Payment reconciliation.
 
-Relying solely on webhooks is insufficient.
+Webhooks alone aren't enough — they can be missed from server downtime,
+network issues, or exhausted gateway retries. When that happens the user
+is charged but the booking never gets created and the seat stays blocked.
 
-Webhooks can be missed due to server downtime, network issues, or exhausted
-gateway retries. In such cases, the user is charged, but the booking is not
-created, and the seat remains blocked.
+Every payment has a TTL. This script picks up payments that outlived
+theirs, checks the real status with Stripe, fulfills the booking if it
+actually succeeded, or marks it expired and frees the seat otherwise.
 
-Every payment has a TTL. This script processes pending payments that have
-exceeded their TTL:
-
-  - Query Stripe for the actual payment status.
-  - If succeeded, fulfill the booking (recovering from a missed webhook).
-  - Otherwise, mark as expired and release the seat.
-
-Execution (via cron/scheduler, every 5 minutes):
+Run via cron every 5 minutes:
     docker compose exec backend python reconcile_payments.py
-
-This is a "belt and braces" approach; webhooks provide the fast path,
-while this script acts as a safety net.
 """
 
 import logging

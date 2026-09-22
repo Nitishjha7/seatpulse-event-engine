@@ -37,7 +37,7 @@ def test_checkout_moves_seat_to_payment_pending(client, tokens, free_seat):
     seat = client.get(f"/api/seats/{seat_id}").json()
     assert seat["status"] == "payment_pending"
 
-    # Most important: no booking created yet
+    # No booking should exist yet
     mine = client.get("/api/bookings", headers=auth_headers(tokens[0])).json()
     assert not [b for b in mine if b["seat_id"] == seat_id and b["status"] == "confirmed"]
 
@@ -78,10 +78,7 @@ def test_successful_payment_creates_exactly_one_booking(client, tokens, free_sea
 
 
 def test_fulfilment_is_idempotent(client, tokens, free_seat):
-    """
-    Webhooks are AT-LEAST-ONCE — the gateway may send the same event twice.
-    The second request should return the existing booking, not create a new one.
-    """
+    """Webhooks are at-least-once — a duplicate event returns the existing booking, not a new one."""
     seat_id = free_seat["id"]
     token = tokens[0]
 
@@ -140,11 +137,7 @@ def test_cannot_see_or_settle_someone_elses_payment(client, tokens, free_seat):
 
 
 def test_webhook_rejects_bad_signature(client):
-    """
-    Webhook endpoint is not authenticated — the signature is the only auth.
-
-    Without this, anyone could POST and claim a free ticket.
-    """
+    """Webhook has no auth of its own — the signature is what stops a forged POST."""
     res = client.post(
         "/api/payments/webhook",
         content=b'{"type":"checkout.session.completed"}',
@@ -163,11 +156,7 @@ def test_webhook_without_signature_is_rejected(client):
 # ---------------------------------------------------------------------------
 
 def _wait_for_ticket(client, token, seat_id, timeout=15):
-    """
-    The worker runs in the background — poll to wait for the ticket.
-
-    Avoided fixed `sleep`. It causes flakiness on slow machines and wastes time on fast ones.
-    """
+    """Poll for the ticket instead of a fixed sleep — flaky on slow machines, slow on fast ones."""
     import time
 
     deadline = time.time() + timeout
@@ -181,11 +170,7 @@ def _wait_for_ticket(client, token, seat_id, timeout=15):
 
 
 def test_booking_starts_with_a_pending_ticket(client, tokens, free_seat):
-    """
-    Booking is confirmed immediately — the ticket is generated later.
-
-    This is the whole point of this phase: the API does not make the user wait for 2-3 seconds.
-    """
+    """Booking is confirmed immediately; the API doesn't make the user wait 2-3s for a ticket."""
     seat_id = free_seat["id"]
     res = client.post("/api/bookings", json={"seat_id": seat_id}, headers=auth_headers(tokens[0]))
     assert res.status_code == 201
@@ -217,11 +202,7 @@ def test_worker_generates_a_downloadable_ticket(client, tokens, free_seat):
 
 
 def test_cannot_download_someone_elses_ticket(client, tokens, free_seat):
-    """
-    The most critical ticket test.
-
-    The ticket contains a QR code. Downloading someone else's ticket = free entry.
-    """
+    """The ticket contains a QR code — downloading someone else's ticket means free entry."""
     seat_id = free_seat["id"]
     owner, attacker = tokens[0], tokens[1]
 
@@ -245,9 +226,7 @@ def test_ticket_needs_authentication(client, tokens, free_seat):
 
 
 def test_qr_token_is_not_the_booking_id(client, tokens, free_seat):
-    """
-    The QR should not contain a sequential ID — anyone could generate a QR for 1, 2, or 3 and enter the gate.
-    """
+    """QR shouldn't be a sequential ID — anyone could guess 1, 2, 3 and walk in."""
     from sqlalchemy import select
 
     seat_id = free_seat["id"]
@@ -306,11 +285,7 @@ def test_valid_ticket_checks_in(client, tokens, role_tokens, free_seat):
 
 
 def test_same_qr_cannot_be_used_twice(client, tokens, role_tokens, free_seat):
-    """
-    The core test for this phase.
-
-    If two people take a screenshot of the same QR and go to different gates — neither should be allowed in.
-    """
+    """If two people screenshot the same QR and hit different gates, only one gets in."""
     seat_id = free_seat["id"]
     _, qr = _booked_with_ticket(client, tokens[0], seat_id)
     gate = auth_headers(role_tokens["organizer"])
@@ -326,11 +301,7 @@ def test_same_qr_cannot_be_used_twice(client, tokens, role_tokens, free_seat):
 
 
 def test_concurrent_scans_admit_exactly_one(client, tokens, role_tokens, free_seat):
-    """
-    The real race — 10 gates simultaneously.
-
-    The same "exactly once" problem as in seat booking, just in a different context.
-    """
+    """10 gates scan the same QR at once — the same exactly-once problem as seat booking."""
     seat_id = free_seat["id"]
     _, qr = _booked_with_ticket(client, tokens[0], seat_id)
     gate = auth_headers(role_tokens["organizer"])

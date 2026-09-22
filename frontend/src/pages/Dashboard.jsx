@@ -39,7 +39,7 @@ export default function Dashboard() {
 
   return (
     <div className="animate-rise space-y-5">
-      {/* Right rail moves below the grid on screens smaller than xl */}
+      {/* Right rail drops below the grid on screens smaller than xl */}
       <div className="grid gap-5 xl:grid-cols-[1fr_380px]">
         <div className="space-y-5">
           <EventHero event={event} totalSeats={seats.length} />
@@ -54,18 +54,17 @@ export default function Dashboard() {
         </div>
 
         <div className="space-y-5">
-          {/* AI search component handles its own conditional rendering */}
           <SeatSearch
             eventId={event?.id}
             onPick={(match) => {
-              // Select the first seat to highlight matches in the grid
+              // Highlight the first matched seat in the grid
               const seat = seats.find((s) => s.id === match.seat_ids[0])
               if (seat) selectSeat(seat)
             }}
           />
 
           <EventSummary event={event} counts={counts} />
-          {/* PricingBanner placed above HoldCard to provide context for the 'price locked' badge */}
+          {/* Above HoldCard so the 'price locked' badge has context */}
           <PricingBanner pricing={pricing} />
           <HoldCard
             seat={selectedSeat}
@@ -78,7 +77,6 @@ export default function Dashboard() {
             onGroupSizeChange={setGroupSize}
             onStartGroup={async () => {
               const token = await startGroup(groupSize)
-              // Redirect to share page upon successful token generation
               if (token) navigate(`/groups/${token}`)
             }}
           />

@@ -77,11 +77,9 @@ def test_together_false_returns_individual_seats():
 
 def test_aisle_breaks_togetherness():
     """
-    Uses the seat layout's aisle data.
-
-    There is an aisle between seats 2 and 3. The numbers are consecutive, but the seats are NOT together — people will be passing through.
-
-    Without this check, the search would suggest "adjacent seats" that aren't actually together, which the user would only discover upon arriving at the venue.
+    Uses the seat layout's aisle data — an aisle sits between seats 2 and 3,
+    so the numbers are consecutive but the seats aren't actually together.
+    Without this, "adjacent" seats could turn out to be split by a walkway.
     """
     seats = _seat_row("A", 6)
     layout = {
@@ -155,7 +153,8 @@ def test_search_endpoint_works_without_ai(client, tokens):
     """
     Search must work with filters even without AI.
 
-    This is the most critical invariant of the feature: AI is an addition, not a dependency. If the key is missing, the model is down, or the quota is exhausted — search must still function.
+    AI is an addition, not a dependency — if the key is missing, the model
+    is down, or the quota's used up, search still has to work.
     """
     res = client.post(
         "/api/events/1/seats/search",
@@ -186,9 +185,7 @@ def test_search_respects_max_price(client, tokens):
 
 
 def test_search_needs_auth(client):
-    """
-    Login is required — not because the data is private (seats are public), but because rate limits are per-user and AI call costs must be attributed to a specific user.
-    """
+    """Login required — not for privacy (seats are public), but rate limits and AI cost are per-user."""
     res = client.post("/api/events/1/seats/search", json={"filters": {"quantity": 1}})
     assert res.status_code == 401
 
@@ -203,11 +200,7 @@ def test_search_on_unknown_event_is_404(client, tokens):
 
 
 def test_absurd_filters_are_rejected(client, tokens):
-    """
-    This is a security boundary test.
-
-    `SeatFilters` is where LLM output is validated. If it allows garbage values, the model (or any caller) could create an unbounded query.
-    """
+    """`SeatFilters` validates LLM output — letting garbage through means an unbounded query."""
     res = client.post(
         "/api/events/1/seats/search",
         headers=auth_headers(tokens[0]),
@@ -233,11 +226,9 @@ def test_config_exposes_ai_flag(client):
 # ---------------------------------------------------------------------------
 # AI event copy
 #
-# These tests do not require an API key. The things being tested —
-# RBAC, validation, and "clean 503 if AI is off" — must hold true even without AI.
-#
-# AI OUTPUT cannot be tested (the model writes differently every time, as it should).
-# Therefore, we test the surrounding contract here, not the internal content.
+# No API key needed — RBAC, validation, and "clean 503 if AI is off" all hold
+# regardless of AI. Output itself can't be asserted on since the model writes
+# something different each time, so these test the contract, not the prose.
 # ---------------------------------------------------------------------------
 
 def test_draft_needs_organizer_role(client, tokens, role_tokens):
@@ -273,11 +264,10 @@ def test_draft_rejects_empty_or_huge_briefs(client, role_tokens):
 
 def test_draft_returns_the_three_form_fields(client, role_tokens):
     """
-    The draft should return the same three fields that the form populates.
+    Draft should return the same three fields the form populates.
 
-    We do NOT check content — the model will write differently every time, as it should. We test the contract, not the prose.
-
-    If AI is off, we get a 503, which is a valid outcome — this test ensures the endpoint returns the correct shape OR explicitly denies the request, never a 500.
+    Content isn't checked — the model writes something different each time.
+    A 503 (AI off) is a valid outcome too; this just rules out a 500.
     """
     res = client.post(
         "/api/organizer/events/draft",
@@ -297,11 +287,9 @@ def test_draft_returns_the_three_form_fields(client, role_tokens):
 
 def test_draft_does_not_create_an_event(client, role_tokens):
     """
-    Most important test.
-
-    AI draft does not SAVE anything. The organizer sees it in the form and publishes it themselves after editing.
-
-    The event description is a promise made to the attendee — it must be human-verified. We do not allow AI to reach the publish button.
+    AI draft doesn't save anything — the organizer edits it in the form and
+    publishes it themselves. The event description is a promise to the
+    attendee, so it needs a human on the publish button, not the model.
     """
     token = role_tokens["organizer"]
     before = len(client.get("/api/organizer/events", headers=auth_headers(token)).json())

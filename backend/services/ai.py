@@ -1,35 +1,22 @@
 """
 Natural language to structured filters. Gemini wrapper.
 
----- LLM workload is minimal ----
-
     "3 seats together under 1500 near the stage"
-                        |
                         |  <- LLM handles only this part
                         v
     SeatFilters(quantity=3, together=True, max_price=1500,
                 row_preference="front")
 
-The subsequent search logic resides in `seat_search.py` — standard code, no model.
-This separation is the core design decision:
+The actual search logic lives in `seat_search.py` as plain deterministic
+code, no model involved. That split matters for three reasons: LLM output
+never becomes SQL (it's mapped to a validated Pydantic object, so prompt
+injection can produce bad filters but not a SQL injection or data leak),
+the search logic is fully testable without an API key, and standard filters
+keep working if the model is down, the key is missing, or we hit rate limits.
 
-  **Security** — LLM output never becomes SQL. It produces a validated
-  Pydantic object, and queries remain parameterised. Prompt injection can
-  only create malformed filters, not data leaks or SQL injection.
-
-  **Testability** — The entire search logic is testable without an API key.
-
-  **Reliability** — If the model is down, keys are missing, or rate limits
-  are hit, standard filters remain functional.
-
----- Why structured output instead of prompt engineering ----
-
-Gemini supports `responseSchema`: provide a schema, and the model MUST
-adhere to that shape.
-
-"Please return JSON" prompt engineering is fragile — models often add
-markdown fences or conversational filler, requiring complex parsing logic.
-Using the API's native schema guarantee eliminates this overhead.
+Using Gemini's `responseSchema` instead of "please return JSON" prompting —
+the latter is fragile since models tack on markdown fences or filler text
+that then needs parsing around. The native schema guarantee skips that.
 """
 
 import hashlib
@@ -43,25 +30,18 @@ from core.redis_client import redis_client
 
 logger = logging.getLogger(__name__)
 
-# LITE model — selected based on performance metrics, not intuition.
-#
-# Same query, same output, different models:
-#
+# LITE model, picked by measuring, not guessing:
 #     gemini-3.5-flash        8.5s
-#     gemini-3.1-flash-lite   1.7s     <- Selected
+#     gemini-3.1-flash-lite   1.7s     <- picked
+# The task is just "convert a line to JSON" — a bigger reasoning model adds
+# 5x latency and cost for the same output, and a search box can't eat an
+# 8-second delay.
 #
-# The task is "convert a line to JSON". Using a larger (reasoning) model
-# adds 5x latency and cost for identical output. Users waiting in a search
-# box cannot tolerate 8-second delays.
+# Version pinned rather than `gemini-flash-latest`, since `-latest` can
+# change prompt behavior without a deploy. A parser needs predictable
+# output, not a model that quietly evolves under it.
 #
-# Version is PINNED, not using `gemini-flash-latest`.
-#
-# `-latest` automatically updates, which can change prompt behavior without
-# a deployment. For a parser, this is unacceptable — we require predictable
-# output, not evolving behavior.
-#
-# Available models vary by key:
-#     GET https://generativelanguage.googleapis.com/v1beta/models
+# Available models vary by key: GET .../v1beta/models
 MODEL = "gemini-3.1-flash-lite"
 ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
@@ -132,11 +112,9 @@ Price range: {price_range}
 
 def is_enabled() -> bool:
     """
-    Checks if the API key is configured.
-
-    Frontend uses this to toggle search box visibility — same pattern used
-    for Google OAuth and Stripe. If the feature is unavailable, it stays
-    hidden instead of showing a broken UI.
+    Checks if the API key is configured. Frontend uses this to toggle search
+    box visibility, same pattern as Google OAuth and Stripe — hide the
+    feature instead of showing a broken UI.
     """
     return bool(settings.GEMINI_API_KEY)
 
@@ -148,16 +126,11 @@ def _cache_key(query: str, event_id: int) -> str:
 
 def parse_query(query: str, *, event_id: int, sections: list[str], price_range: tuple) -> dict | None:
     """
-    Extract filters from NL query.
+    Extract filters from a NL query. Returns a dict (validated by Pydantic
+    later) or None if parsing failed, AI is unavailable, or the call errored.
 
-    Return:
-        dict  — filters (validated by Pydantic later)
-        None  — parsing failed, AI unavailable, or call error
-
-    This function NEVER raises exceptions.
-
-    Search must not break due to an AI feature. All failures return `None`,
-    triggering a fallback to standard filters.
+    Never raises — search shouldn't break because of an AI feature, so every
+    failure path returns None and falls back to standard filters.
     """
     if not is_enabled():
         return None
@@ -183,16 +156,8 @@ def parse_query(query: str, *, event_id: int, sections: list[str], price_range: 
     try:
         res = httpx.post(
             ENDPOINT.format(model=MODEL),
-            # Key in HEADER, NOT in query param.
-            #
-            # Previously, `?key=...` caused the full URL (including the key)
-            # to appear in httpx error logs.
-            #
-            #   Client error '404 Not Found' for url
-            #   'https://...:generateContent?key=AQ.Ab8RN6...'
-            #
-            # This risked leaking keys into log aggregators. Moving to headers
-            # ensures the key is never part of the URL string.
+            # Key goes in the header, not `?key=...` — a query param ends up
+            # in httpx error logs (and log aggregators) as part of the URL.
             headers={"x-goog-api-key": settings.GEMINI_API_KEY},
             timeout=TIMEOUT_SECONDS,
             json={
@@ -210,11 +175,8 @@ def parse_query(query: str, *, event_id: int, sections: list[str], price_range: 
         text = res.json()["candidates"][0]["content"]["parts"][0]["text"]
         parsed = json.loads(text)
     except httpx.HTTPStatusError as exc:
-        # Log status code only, not the exception object.
-        #
-        # httpx exception messages may contain the full URL. Keeping the key
-        # out of the URL is critical, but this defensive logging prevents
-        # future regressions.
+        # Log the status code only — httpx exception messages can include
+        # the full URL, and the key must never end up in a log line.
         logger.warning("Gemini returned %s", exc.response.status_code)
         return None
     except Exception as exc:
@@ -238,13 +200,10 @@ def parse_query(query: str, *, event_id: int, sections: list[str], price_range: 
 # Event copy — draft for organizers
 # ---------------------------------------------------------------------------
 
-# This prompt is critical for legal/liability reasons.
-#
-# Event descriptions are promises to attendees. If the model hallucinates
-# "special guests" or "intermission details" and the organizer publishes
-# without review, the organizer is liable for the misinformation, not the AI.
-#
-# The model is strictly instructed not to fabricate facts.
+# This prompt matters for liability: event descriptions are promises to
+# attendees, and if the model invents "special guests" or timings that the
+# organizer publishes without checking, the organizer is on the hook for
+# it — so the model is strictly told not to fabricate facts.
 COPY_PROMPT = """\
 You are drafting an event listing.
 
@@ -286,13 +245,9 @@ COPY_SCHEMA = {
 
 def draft_event_copy(brief: str) -> dict | None:
     """
-    Drafts event listings from organizer briefs.
-
-    This is a DRAFT, not final copy. The route does not save this
-    automatically — it populates a form for the organizer to edit and
-    approve. AI is never allowed to publish directly.
-
-    Like `parse_query`, this never raises exceptions.
+    Drafts event listings from organizer briefs. This is a draft, not final
+    copy — it populates a form for the organizer to edit and approve; the AI
+    never publishes directly. Like `parse_query`, never raises.
     """
     if not is_enabled():
         return None
@@ -305,15 +260,14 @@ def draft_event_copy(brief: str) -> dict | None:
         res = httpx.post(
             ENDPOINT.format(model=MODEL),
             headers={"x-goog-api-key": settings.GEMINI_API_KEY},
-            timeout=TIMEOUT_SECONDS * 2,      # Copy generation is longer than parsing
+            timeout=TIMEOUT_SECONDS * 2,      # copy generation takes longer than parsing
             json={
                 "systemInstruction": {"parts": [{"text": COPY_PROMPT}]},
                 "contents": [{"parts": [{"text": brief}]}],
                 "generationConfig": {
                     "responseMimeType": "application/json",
                     "responseSchema": COPY_SCHEMA,
-                    # Creativity is desired here. Unlike parse_query,
-                    # varying output for the same input is a feature.
+                    # Some variety is wanted here, unlike parse_query.
                     "temperature": 0.8,
                 },
             },

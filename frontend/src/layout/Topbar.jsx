@@ -23,7 +23,7 @@ export default function Topbar({ onMenu }) {
       </button>
 
       <div className="ml-auto flex items-center gap-2 sm:gap-3">
-        {/* Display status pills; hide labels on small screens to save space */}
+        {/* Status pills — labels hidden on small screens to save space */}
         {health && (
           <div className="flex items-center gap-1.5 sm:gap-2">
             <Pill ok={health.database === 'connected'} label="DB" />
@@ -62,7 +62,7 @@ function UserMenu({ user, onLogout }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
 
-  // Close menu when clicking outside; standard pattern for dropdowns
+  // Close menu on outside click
   useEffect(() => {
     if (!open) return
     const handler = (e) => {

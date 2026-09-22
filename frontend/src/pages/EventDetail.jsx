@@ -12,7 +12,7 @@ export default function EventDetail() {
   const { id } = useParams()
   const { events, event: loaded, counts } = useBooking()
 
-  // Loaded event contains full details (description/price); others are list-only.
+  // Loaded event has full details (description/price); list entries don't
   const isLoaded = String(loaded?.id) === id
   const event = isLoaded ? loaded : events.find((e) => String(e.id) === id)
 
@@ -34,7 +34,7 @@ export default function EventDetail() {
 
       <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
         <div className="flex flex-col gap-5 p-5 sm:flex-row sm:p-6">
-          {/* Poster: CSS gradient and stage beams; no external assets */}
+          {/* Poster is a CSS gradient + stage beams, no image asset */}
           <div className="relative h-40 shrink-0 overflow-hidden rounded-xl bg-gradient-to-br from-violet-700 via-indigo-900 to-slate-950 sm:h-36 sm:w-52">
             <svg className="absolute inset-0 h-full w-full opacity-70" preserveAspectRatio="none" aria-hidden="true">
               <defs>
@@ -89,7 +89,7 @@ export default function EventDetail() {
         <h2 className="text-base font-semibold text-slate-100">About the Event</h2>
 
         {event.description ? (
-          // Paragraphs split by double newlines from database
+          // Description paragraphs are separated by double newlines in the DB
           <div className="mt-2.5 space-y-3">
             {event.description.split('\n\n').map((para, i) => (
               <p key={i} className="text-sm leading-relaxed text-slate-400">
@@ -101,7 +101,7 @@ export default function EventDetail() {
           <p className="mt-2.5 text-sm text-slate-600">No description available.</p>
         )}
 
-        {/* Chips reflect real-time inventory data. */}
+        {/* Chips reflect live inventory */}
         <div className="mt-5 flex flex-wrap gap-2">
           <Tag>
             <IconTicket width={13} height={13} />

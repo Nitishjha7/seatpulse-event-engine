@@ -1,10 +1,10 @@
 import { IconCalendar, IconPin, IconTicket } from '../layout/icons'
 
 /**
- * Displays live event seat counts and details.
+ * Live event seat counts and details.
  *
- * Counts are derived from the `seats` array in BookingContext rather than the server,
- * ensuring they update automatically via WebSocket events.
+ * Counts come from the `seats` array in BookingContext, not a separate
+ * server call, so they update automatically as WebSocket events land.
  */
 export default function EventSummary({ event, counts }) {
   if (!event) return null

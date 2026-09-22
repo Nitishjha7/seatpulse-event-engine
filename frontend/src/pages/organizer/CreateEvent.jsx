@@ -33,8 +33,7 @@ export default function CreateEvent() {
 
   // 'tiers'  = simple method (N rows x M seats, one price per tier)
   // 'layout' = full map — sections, custom row sizes, aisles
-  //
-  // 'tiers' is the default. Most events don't require a custom map, and the simple form takes 20 seconds to fill. Use the layout builder only when necessary.
+  // Default to 'tiers' since most events don't need a custom map.
   const [mode, setMode] = useState('tiers')
   const [layout, setLayout] = useState(emptyLayout)
 
@@ -48,7 +47,7 @@ export default function CreateEvent() {
   const tooManyRows = totalRows > 26
   const tooManySeats = totalSeats > 2000
 
-  // In layout mode, seat count and validity are derived from the LayoutBuilder, not the tiers calculation.
+  // In layout mode, seat count and validity come from LayoutBuilder, not the tiers math
   const layoutError = mode === 'layout' ? validateLayout(layout) : null
   const layoutSeats =
     mode === 'layout'
@@ -75,7 +74,7 @@ export default function CreateEvent() {
     setBusy(true)
     setError(null)
     try {
-      // Send only the selected mode. Sending both would force the server to guess the user's intent, which is prone to errors.
+      // Only send the selected mode — sending both would make the server guess intent
       const seatPlan =
         mode === 'layout'
           ? {
@@ -353,7 +352,7 @@ export default function CreateEvent() {
                       +{Math.round(surge.demand_factor * 100)}% when sold out
                     </span>
                   </div>
-                  {/* Using a slider because 0.5 isn't immediately intuitive — but "+50% when sold out" is clear */}
+                  {/* Slider because "0.5" means nothing but "+50% when sold out" is clear */}
                   <input
                     type="range"
                     min="0"

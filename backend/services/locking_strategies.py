@@ -1,38 +1,23 @@
 """
 Benchmarking seat claim strategies.
 
-The project uses OPTIMISTIC locking by default. This file implements a 
-PESSIMISTIC approach (`SELECT ... FOR UPDATE`) to compare performance 
-under identical load.
+The app uses OPTIMISTIC locking by default. This file adds a PESSIMISTIC
+path (`SELECT ... FOR UPDATE`) to compare performance under identical load.
 
----- Comparison Summary ----
+    OPTIMISTIC  — try, then fail on conflict: UPDATE ... WHERE version =
+                  <read_version>. Rowcount 0 means someone else won; fails
+                  immediately.
+    PESSIMISTIC — lock first, then process: SELECT ... FOR UPDATE blocks
+                  everyone else until the transaction commits.
 
-    OPTIMISTIC  — "Try, then fail on conflict."
-                  UPDATE ... WHERE version = <read_version>
-                  Rowcount 0 indicates a conflict. Fails immediately.
+Both prevent overselling, so the interesting difference is behavior under
+contention: optimistic losers get a 409 right away, pessimistic losers queue
+up and only find out the seat's gone once they reach the front. Fail-fast
+vs. wait-then-fail — with 500 users on one seat, that gap is the whole point
+of this benchmark.
 
-    PESSIMISTIC — "Lock first, then process."
-                  SELECT ... FOR UPDATE -> Locks the row; others wait
-                  until the transaction commits.
-
----- Correctness ----
-
-Both strategies prevent overselling. The comparison focuses on 
-**behaviour under contention**:
-
-    Optimistic   -> Losers return 409 immediately.
-    Pessimistic  -> Losers queue up, only to find the seat taken 
-                    upon acquisition, then return 409.
-
-Optimistic provides "fail-fast" behavior, while pessimistic involves 
-"wait-then-fail." Under high contention (e.g., 500 users for one seat), 
-this difference is significant and is the primary metric for this benchmark.
-
----- Benchmark-only code ----
-
-The pessimistic path is only reachable when `settings.BENCHMARK_MODE` 
-is enabled. Production defaults to optimistic locking. See 
-`routers/bookings.py` for the rationale.
+The pessimistic path only runs when `settings.BENCHMARK_MODE` is on;
+production always uses optimistic locking (see `routers/bookings.py`).
 """
 
 from dataclasses import dataclass
@@ -47,8 +32,7 @@ PESSIMISTIC = "pessimistic"
 
 _CLAIMABLE = (SEAT_AVAILABLE, SEAT_LOCKED)
 
-# Values to set upon booking; must be identical across strategies to 
-# ensure valid benchmark comparisons.
+# Values to set upon booking; must match across strategies for a fair comparison.
 _CLAIM_VALUES = {
     "status": SEAT_BOOKED,
     "locked_by": None,
@@ -60,21 +44,16 @@ _CLAIM_VALUES = {
 @dataclass
 class ClaimResult:
     won: bool
-    # Failure reasons differ by strategy; this distinction is central 
-    # to the benchmark analysis.
+    # Failure reasons differ by strategy — that's the core of the analysis.
     reason: str | None = None
 
 
 def claim_optimistic(db: Session, seat_id: int, expected_version: int) -> ClaimResult:
     """
-    Atomic UPDATE with no locks or waiting.
-
-    The logic relies on the WHERE clause: the version must match the 
-    previously read state. Only one of multiple parallel requests will 
-    match; others will return 0 rows and fail immediately.
-
-    This is "optimistic" concurrency: assuming no conflict, but 
-    detecting and aborting if one occurs.
+    Atomic UPDATE, no locks or waiting. The WHERE clause requires the
+    version to match what was last read, so only one of several parallel
+    requests matches — the rest get 0 rows and fail immediately. Assumes no
+    conflict, detects and aborts if there was one.
     """
     result = db.execute(
         update(Seat)
@@ -94,20 +73,18 @@ def claim_optimistic(db: Session, seat_id: int, expected_version: int) -> ClaimR
 
 def claim_pessimistic(db: Session, seat_id: int) -> ClaimResult:
     """
-    Lock the row, verify state, then update.
+    Lock the row, verify state, then update. `with_for_update()` blocks —
+    requests wait here until the transaction holding the lock commits or
+    rolls back.
 
-    `with_for_update()` blocks. Requests wait here until the 
-    transaction holding the lock commits or rolls back.
+    Blocking holds a database connection open, so high contention (say 500
+    users on one seat) can exhaust the pool if it's smaller than the number
+    of waiting requests — the same class of problem as a slow bcrypt call
+    holding a connection during login.
 
-    Blocking consumes database connections. High contention (e.g., 500
-    users) can lead to pool exhaustion if the connection pool is smaller
-    than the number of waiting requests — the same class of issue as the
-    bcrypt-held-open-transaction bug in login.
-
-    Unlike the optimistic version, this does not strictly require a 
-    `version` column for safety, as the row lock prevents concurrent 
-    access. The version is still incremented to notify WebSocket clients 
-    and maintain data consistency across strategies.
+    Doesn't strictly need the `version` column for safety since the row
+    lock already prevents concurrent access, but it's still bumped to
+    notify WebSocket clients and keep data consistent across strategies.
     """
     seat = db.execute(
         select(Seat).where(Seat.id == seat_id).with_for_update()
@@ -116,11 +93,9 @@ def claim_pessimistic(db: Session, seat_id: int) -> ClaimResult:
     if seat is None:
         return ClaimResult(False, "not_found")
 
-    # Check status after acquiring the lock.
-    #
-    # By the time this request acquires the lock, the previous holder 
-    # may have already booked the seat. Re-verifying status is necessary 
-    # and reliable because the row is now locked.
+    # Re-check status after acquiring the lock — the previous holder may
+    # have already booked the seat by the time we got here, and the row
+    # lock makes this check reliable now.
     if seat.status not in _CLAIMABLE:
         return ClaimResult(False, f"already_{seat.status}")
 

@@ -28,19 +28,13 @@ async def _enqueue(function: str, *args) -> str | None:
 
 def enqueue_ticket(booking_id: int) -> None:
     """
-    Add ticket generation to the queue.
+    Add ticket generation to the queue. Never raises.
 
-    This never raises an exception.
-
-    Rationale: Called after booking completion. Raising an error if Redis is
-    down would return a 500 to the user despite a successful database
-    transaction, which is unacceptable.
-
-    On failure, the booking remains `ticket_status = pending` and is
-    subsequently processed by `retry_pending_tickets.py`.
-
-    Same reasoning as the WebSocket broadcasts: notifications are
-    "nice to have," bookings are "must have."
+    This runs after the booking is already committed, so a Redis outage
+    here shouldn't turn into a 500 for a booking that actually succeeded.
+    If it fails, the booking stays `ticket_status = pending` and gets
+    picked up later by `retry_pending_tickets.py`. Same idea as the
+    WebSocket broadcasts — the booking is the must-have, this is not.
     """
     try:
         # Executed from a synchronous context (FastAPI route); run in a

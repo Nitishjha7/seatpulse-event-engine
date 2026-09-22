@@ -1,20 +1,14 @@
 """
 Organizer routes — create and manage events.
 
-RBAC is implemented here: these endpoints are restricted to users with
-`organizer` or `admin` roles.
+These endpoints are restricted to `organizer` or `admin` roles.
 
-Distinguish between these concepts:
+  AUTHENTICATION — who are you (the JWT proves this)
+  AUTHORIZATION  — what can you do (role, checked here)
+  OWNERSHIP      — is this resource yours
 
-  AUTHENTICATION  — Who are you?          (the JWT proves this)
-  AUTHORIZATION   — What can you do?      (this file, based on role)
-
-And a third, equally critical concept:
-
-  OWNERSHIP       — Is this resource yours?
-
-Role checks are insufficient. An `organizer` role does not grant
-permission to edit any event — only those they own.
+Role alone isn't enough: an `organizer` role doesn't grant permission to
+edit any event, only the ones they own.
 """
 
 import string
@@ -54,18 +48,17 @@ ROW_LABELS = string.ascii_uppercase   # A..Z
 
 def _owned_event(event_id: int, user: User, db: Session) -> Event:
     """
-    Retrieve an event only if owned by the user (or if user is admin).
+    Retrieve an event only if owned by the user (or the user is admin).
 
-    This check is required for all organizer endpoints to prevent IDOR,
-    where an organizer could otherwise modify another's event.
+    Used by every organizer endpoint that touches a specific event, so an
+    organizer can't modify someone else's event by guessing an ID.
     """
     event = db.get(Event, event_id)
     if event is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
 
     if user.role != ROLE_ADMIN and event.organizer_id != user.id:
-        # Return 404 instead of 403 to prevent leaking event existence.
-        # Consistent with IDOR fixes in booking endpoints.
+        # 404 instead of 403 so we don't leak that the event exists.
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
 
     return event
@@ -266,11 +259,7 @@ def delete_event(
     db: Session = Depends(get_db),
     user: User = Depends(require_role(ROLE_ORGANIZER, ROLE_ADMIN)),
 ):
-    """
-    Delete an event only if no confirmed bookings exist.
-
-    Critical business rule: prevents deletion of events with active tickets.
-    """
+    """Delete an event, but only if it has no confirmed bookings."""
     event = _owned_event(event_id, user, db)
 
     confirmed = db.scalar(

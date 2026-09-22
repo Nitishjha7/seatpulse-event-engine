@@ -4,13 +4,11 @@ import { checkIn, getCheckinStats } from '../../api'
 import { useBooking } from '../../booking/BookingContext'
 
 /**
- * Gate check-in portal.
+ * Gate check-in portal — scans QR codes via camera, or falls back to manual entry.
  *
- * Scans QR codes via camera, or allows manual entry if no camera is available.
- *
- * No external library used for QR scanning. We use the native browser `BarcodeDetector` (available in Chrome/Edge/Android). It is not supported in Firefox/Safari, which fall back to manual entry.
- *
- * Libraries like html5-qrcode or jsQR add ~200KB. For a gate portal often running on specific devices, this is too heavy—and manual entry is required anyway (for damaged QRs or dead batteries).
+ * Uses the native `BarcodeDetector` API (Chrome/Edge/Android only) instead of
+ * a library like html5-qrcode or jsQR — those add ~200KB, and manual entry is
+ * needed anyway for damaged QRs or dead batteries, so it's not worth the weight.
  */
 export default function GatePortal() {
   const { event } = useBooking()

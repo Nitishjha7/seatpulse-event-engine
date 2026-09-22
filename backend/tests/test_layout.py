@@ -14,9 +14,9 @@ from helpers import auth_headers
 #
 # Two parts:
 #   1. validate/expand — pure functions, no DB access.
-#   2. HTTP flow — both paths (layout and price_tiers) lead to the same destination.
+#   2. HTTP flow — both paths (layout and price_tiers) lead to the same place.
 #
-# Most important invariant: **existing events (layout NULL) must not break.**
+# Key invariant: existing events with a NULL layout must not break.
 # ---------------------------------------------------------------------------
 
 def _layout(*sections):
@@ -47,11 +47,7 @@ def test_expand_produces_every_seat():
 
 
 def test_aisles_do_not_create_or_skip_seats():
-    """
-    Aisles are purely visual.
-
-    A common mistake is treating an aisle as an "empty seat" or skipping numbering after it. Both are wrong — an attendee requesting "seat 5" should not receive seat 6.
-    """
+    """Aisles are purely visual — they shouldn't add a phantom seat or skip numbering."""
     with_aisle = seat_layout.expand(_layout(_section("X", 100, _row("A", 6, [3]))))
     without = seat_layout.expand(_layout(_section("X", 100, _row("A", 6))))
 
@@ -63,7 +59,8 @@ def test_duplicate_row_label_across_sections_is_rejected():
     """
     `seats` has a UNIQUE(event_id, row_label, seat_number) constraint.
 
-    Without catching this, expansion would fail with an IntegrityError AFTER inserting 500 seats — by which time the transaction would be heavy.
+    Catch this before expansion, or it fails with an IntegrityError after
+    hundreds of seats are already inserted.
     """
     with pytest.raises(seat_layout.LayoutError, match="appears twice"):
         seat_layout.validate(
@@ -111,11 +108,7 @@ def test_empty_and_oversized_layouts_are_rejected():
 
 
 def test_price_tiers_convert_to_the_same_shape():
-    """
-    The legacy path also uses the layout generator.
-
-    Maintaining two separate generators leads to bugs in two places — and they eventually start behaving differently.
-    """
+    """The legacy path uses the same layout generator, so there's only one place for this to break."""
     converted = seat_layout.from_price_tiers(
         [{"rows": 1, "price": 1500}, {"rows": 2, "price": 500}],
         seats_per_row=4,
@@ -166,9 +159,10 @@ def test_create_event_from_layout(client, role_tokens):
 
 def test_bad_layout_creates_no_event(client, role_tokens):
     """
-    No seats (or events) should be created with an invalid layout.
+    No seats or event should be created when the layout is invalid.
 
-    Validation runs BEFORE expansion, so the DB remains untouched. A partially created event is the worst-case scenario.
+    Validation runs before expansion, so a bad request never touches the DB
+    — a partially created event would be the worst outcome here.
     """
     token = role_tokens["organizer"]
     before = len(client.get("/api/organizer/events", headers=auth_headers(token)).json())
@@ -194,9 +188,7 @@ def test_bad_layout_creates_no_event(client, role_tokens):
 
 
 def test_price_tiers_path_still_works_and_stores_a_layout(client, role_tokens):
-    """
-    Backwards compatibility — the legacy request body has to work exactly as it always did.
-    """
+    """Backwards compatibility — the legacy request body has to keep working exactly as before."""
     token = role_tokens["organizer"]
     res = client.post(
         "/api/organizer/events",
@@ -226,9 +218,9 @@ def test_price_tiers_path_still_works_and_stores_a_layout(client, role_tokens):
 
 def test_old_events_without_a_layout_still_work(client):
     """
-    Most important test.
-
-    Event 1 comes from the seed and has a NULL `layout`. 17 phases of demo data, tests, and bookings rely on it. The new column is optional, and nothing should break because of it.
+    Event 1 comes from the seed with a NULL `layout`, and a lot of other
+    tests and demo data rely on it. The new column is optional — nothing
+    should break because of it.
     """
     detail = client.get("/api/events/1").json()
     assert detail["layout"] is None

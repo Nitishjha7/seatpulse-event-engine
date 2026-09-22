@@ -15,13 +15,9 @@ import {
 } from './icons'
 
 /**
- * Left navigation.
- *
- * Only includes implemented pages. Unimplemented features (Settings) are
- * disabled to maintain shell consistency without broken links.
- *
- * Role-based sections are hidden via UI logic. This is for UX only;
- * security is enforced via `require_role` on the backend.
+ * Left navigation — only lists implemented pages; unbuilt ones (Settings)
+ * stay visible but disabled. Role-based sections are UI-only; the backend
+ * `require_role` is what actually enforces access.
  */
 const NAV = [
   { to: '/', label: 'Dashboard', Icon: IconHome, end: true },
@@ -128,7 +124,7 @@ export default function Sidebar({ open, onClose }) {
           ))}
         </nav>
 
-        {/* Core project value proposition */}
+        {/* Headline stat, shown in the sidebar footer */}
         <div className="m-3 rounded-xl border border-violet-500/20 bg-violet-600/10 p-4">
           <p className="text-sm font-semibold text-slate-100">Zero overselling</p>
           <p className="mt-1 text-xs leading-relaxed text-slate-400">
