@@ -1,7 +1,7 @@
 """
 Core authentication logic: password hashing, JWT tokens, and current-user dependency.
 
-Token strategy (design decision, often discussed in interviews):
+Token strategy:
 
   ACCESS TOKEN   30 min   -> Returned in JSON, stored in frontend RAM.
   REFRESH TOKEN  7 days   -> Stored in httpOnly cookie, inaccessible to JavaScript.

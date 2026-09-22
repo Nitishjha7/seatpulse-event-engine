@@ -12,16 +12,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 from helpers import CONCURRENCY, auth_headers
 
-# Unique suffix for each pytest run.
-#
-# Idempotency keys were previously fixed (`test-100-once`). They persist
-# in Redis until TTL, meaning the NEXT test run would replay on the same key:
-# it would return 201, but no new booking was created — and the test would
-# fail on "0 bookings found".
-#
-# This bug was caught on a multi-worker stack and initially misidentified as
-# a multi-worker issue. It wasn't — tests relied on reset_state.py, which
-# could be skipped. Now each run uses its own keys, eliminating this dependency.
+# Unique suffix for each pytest run, so idempotency keys never collide
+# across runs. A fixed key like "test-100-once" persists in Redis until its
+# TTL expires — run the suite twice in a row and the second run replays the
+# same key, gets a 201 back with no new booking created, and fails on
+# "0 bookings found" for a reason that has nothing to do with the test.
 RUN_ID = uuid.uuid4().hex[:8]
 
 

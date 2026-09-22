@@ -1,25 +1,17 @@
 """
 Payment providers.
 
-Implementations share a common interface:
+Two implementations behind one interface:
 
-  StripeProvider — Production gateway (test mode).
-  MockProvider   — Fallback when Stripe keys are unavailable.
+  StripeProvider — real gateway, test mode
+  MockProvider   — used when Stripe keys aren't set, so checkout still
+                   works end to end without needing a Stripe account.
+                   Same degrade-gracefully pattern as Google OAuth.
 
-Why a Mock:
-To ensure the repository remains functional for reviewers without requiring
-Stripe credentials. This allows the full checkout flow to be tested,
-demonstrating the architecture even without live payment processing.
-
-This follows the pattern used for Google OAuth: features degrade gracefully
-when credentials are missing rather than breaking the entire application.
-
----- Why not use the Stripe SDK? ----
-
-`httpx` is already a dependency, and the Stripe REST API is straightforward.
-Avoiding the SDK reduces dependency bloat and, more importantly, prevents
-webhook signature verification from becoming a black box. Implementing it
-manualy ensures a clear understanding of the security mechanism.
+No Stripe SDK — httpx was already a dependency and the REST API is simple
+enough that pulling in another package wasn't worth it. Writing the webhook
+signature check by hand also means I actually know what it's doing instead
+of trusting a library method I've never read.
 """
 
 import hashlib
