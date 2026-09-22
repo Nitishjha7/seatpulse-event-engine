@@ -301,6 +301,30 @@ documents/        Architecture walkthrough and screenshots
 
 ---
 
+## Deploying on free tiers
+
+`docker-compose.prod.yml` runs everything as long-lived containers, which is the straightforward path on a VPS. On free hosting, though, a persistent background worker usually isn't available — this stack works around that with four separate free services instead of one box:
+
+| Piece | Where | Why |
+|---|---|---|
+| Frontend | Cloudflare Pages | Static build, genuinely free, no sleep |
+| Backend API | Render free Web Service | Sleeps after 15 min idle, wakes on the next request (~30s) |
+| Database | [Neon](https://neon.tech) | Free Postgres with no time-limited expiry |
+| Redis | [Upstash](https://upstash.com) | Free tier, enough for seat locks and rate limiting |
+| Background jobs | Cloudflare Worker + Cron Trigger | See below — this replaces the `worker` container |
+
+**The worker problem.** Free web-service tiers don't offer an always-on process, so the ARQ worker container has nowhere to run. `POST /api/cron/tick` (`backend/routers/cron.py`) is the fix: it runs the same two jobs — generate pending tickets, expire overdue groups — synchronously, behind a shared secret instead of a user login. `cron-worker/` is a tiny Cloudflare Worker (free) whose only job is to call that endpoint every couple of minutes. It isn't running any of this project's Python — it's just the clock. On docker-compose, `CRON_SECRET` stays empty and the endpoint just 401s harmlessly, since the real worker container is already handling everything.
+
+**Steps:**
+
+1. Create a Neon Postgres project and an Upstash Redis database — both free, both give you a connection string.
+2. Deploy `backend/` to Render as a Docker web service — root directory `backend`, and point it at the `prod` build stage in `backend/Dockerfile` (Render's UI for selecting a multi-stage target has moved around over the years, so check their current docs for the exact field name). Set `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET` (generate a new one), `CORS_ORIGINS` (your Pages URL), `COOKIE_SECURE=True`, `CRON_SECRET` (any random string), `WORKERS=1`, `DB_POOL_SIZE=3`, `DB_MAX_OVERFLOW=2`.
+3. From Render's shell: `alembic upgrade head` then `python -m scripts.seed`.
+4. Deploy `frontend/` to Cloudflare Pages (build command `npm run build`, output `dist`, env var `VITE_API_URL` pointing at the Render URL).
+5. Deploy `cron-worker/` with Wrangler (see [cron-worker/README.md](cron-worker/README.md)) — set `BACKEND_URL` and the same `CRON_SECRET` as secrets, then `wrangler deploy`.
+
+---
+
 ## Not built
 
 Stated plainly rather than implied:

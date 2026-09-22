@@ -1,0 +1,12 @@
+name = "seatpulse-cron"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# Every 2 minutes.
+[triggers]
+crons = ["*/2 * * * *"]
+
+# Set BACKEND_URL and CRON_SECRET with:
+#   wrangler secret put BACKEND_URL
+#   wrangler secret put CRON_SECRET
+# rather than committing them here.
