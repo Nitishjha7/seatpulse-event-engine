@@ -1,8 +1,6 @@
 """
 Redis distributed seat locking.
 
-⭐ Core component of Phase 4. Critical for interview assessments.
-
 Purpose:
   When a user selects a seat, hold it for 5 minutes to allow payment processing
   without interference from other users.

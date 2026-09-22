@@ -1,11 +1,14 @@
 """
-Phase 16 proof — WebSocket broadcast crosses worker process boundaries.
+Proof that a WebSocket broadcast actually crosses worker process boundaries.
 
----- Why this test is necessary ----
+---- Why this test exists ----
 
-In Phase 5, I used Redis pub/sub for broadcasting instead of a simple Python dict. The reason: "In multi-worker setups, each worker is a separate process; in-memory dicts are not shared."
+Redis pub/sub is used for broadcasting instead of a plain Python dict,
+on the reasoning that in multi-worker setups each worker is a separate
+process and an in-memory dict isn't shared between them.
 
-However, that claim was NEVER tested because dev environments only run one worker. An unverified argument is just a hope.
+That claim was never actually tested, though — dev only ever ran one
+worker. An argument nobody's checked is just a guess with confidence.
 
 ---- What the test does ----
 
@@ -38,7 +41,7 @@ async def probe_workers(n=40):
     """
     Check how many distinct worker processes are responding.
 
-    ⚠️ Each probe requires a NEW connection.
+    Each probe requires a NEW connection.
 
     Sending 40 requests via a single httpx client reuses the same keep-alive
     TCP connection, which is pinned to one worker. Result: Even with 4 workers,
@@ -76,7 +79,7 @@ async def main():
         print(f"\nResponding worker processes: {len(pids)}  -> {sorted(pids)}")
 
         if len(pids) < 2:
-            print("\n⚠️  Only one worker found. This test proves nothing")
+            print("\n Only one worker found. This test proves nothing")
             print("   on a single-worker setup — run with the prod stack:")
             print("   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d")
             return 1

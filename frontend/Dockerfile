@@ -1,4 +1,5 @@
-# Build targets: `dev` (Vite dev server) and `prod` (built assets + nginx).
+# dev target runs the vite dev server; prod builds static assets and
+# serves them through nginx
 
 # ---------------------------------------------------------------------------
 FROM node:20-alpine AS dev
@@ -18,17 +19,13 @@ FROM node:20-alpine AS build
 
 WORKDIR /app
 
-# Use npm ci (not npm install) to strictly follow the lockfile.
-# Silent dependency version changes in production builds are bugs
-# that only appear after deployment.
 COPY package*.json ./
 RUN npm ci
 
 COPY . .
 
-# ⚠️ Vite env vars are baked in at BUILD TIME, not runtime.
-# This means the API URL is embedded in the image and cannot be
-# changed after the container starts. Hence, it is a build arg.
+# baked in at build time, not runtime — can't be changed once the
+# container is running, has to be set as a build arg
 ARG VITE_API_URL=http://localhost:8000
 ENV VITE_API_URL=$VITE_API_URL
 
@@ -37,8 +34,6 @@ RUN npm run build
 # ---------------------------------------------------------------------------
 FROM nginx:1.27-alpine AS prod
 
-# Only built static files — no node_modules or source. Dev image is ~500MB,
-# while this is ~50MB.
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 

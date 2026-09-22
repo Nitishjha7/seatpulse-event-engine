@@ -52,7 +52,7 @@ def seed():
         #   named    — demo / organizer / admin for role-based testing.
         #   numbered — user1 ... userN for load and concurrency testing.
         #
-        # ⚠️ Numbering is fixed to ensure consistency.
+        # Numbering is fixed to ensure consistency.
         #
         # Previously, dynamic ranges caused user1 and user2 to be skipped,
         # breaking tests that relied on those specific accounts.
@@ -104,7 +104,7 @@ def seed():
 
         # ---- Event ----
         #
-        # ⚠️ organizer_id is mandatory.
+        # organizer_id is mandatory.
         #
         # Missing organizer_id causes 403 errors during gate check-in and
         # prevents events from appearing in the organizer portal.

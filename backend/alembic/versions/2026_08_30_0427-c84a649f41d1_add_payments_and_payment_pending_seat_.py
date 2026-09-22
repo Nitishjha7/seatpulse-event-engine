@@ -54,7 +54,7 @@ def upgrade() -> None:
         existing_nullable=False,
     )
 
-    # ⚠️ Alembic autogenerate does not compare existing check constraints.
+    # Alembic autogenerate does not compare existing check constraints.
     #
     # The existing constraint only allows available/locked/booked.
     # Constraints must be dropped and recreated to modify them.

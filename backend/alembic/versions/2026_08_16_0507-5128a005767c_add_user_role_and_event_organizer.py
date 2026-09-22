@@ -25,7 +25,7 @@ def upgrade() -> None:
         ['organizer_id'], ['id'], ondelete='SET NULL',
     )
 
-    # ⚠️ server_default is required to populate existing rows in the table.
+    # server_default is required to populate existing rows in the table.
     # Postgres requires a default value when adding a NOT NULL column to a non-empty table.
     # The default is removed immediately after to allow the application to manage values.
     op.add_column(

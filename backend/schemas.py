@@ -54,7 +54,7 @@ class GroupShareOut(BaseModel):
 
 
 class GroupOut(BaseModel):
-    # ⚠️ `id` is intentionally omitted. Groups are addressed via share_token.
+    # `id` is intentionally omitted. Groups are addressed via share_token.
     # Exposing sequential IDs would allow enumeration of other groups.
     share_token: str
     event_id: int
@@ -91,7 +91,7 @@ class EventDetail(EventOut):
     layout: dict | None = None
 
 
-# ---------- Organizer (Phase 10) ----------
+# ---------- Organizer ----------
 
 class PriceTier(BaseModel):
     """
@@ -155,7 +155,7 @@ class EventCreate(BaseModel):
         max_length=10,
     )
 
-    # ---- Dynamic pricing (Phase 14) ----
+    # ---- Dynamic pricing ----
     # Default OFF. Surge pricing is not suitable for all events (e.g., free
     # community meetups). Organizers must enable it explicitly.
     dynamic_pricing: bool = False
@@ -170,7 +170,7 @@ class EventUpdate(BaseModel):
     """
     Mutable fields for existing events.
 
-    ⚠️ Seat layout and pricing are excluded — modifying these after tickets
+    Seat layout and pricing are excluded — modifying these after tickets
     are sold is prohibited. Events must be deleted and recreated (only
     possible if no confirmed bookings exist).
     """
@@ -230,14 +230,14 @@ class SeatOut(ORMModel):
     locked_by: int | None = None
     locked_until: datetime | None = None
 
-    # ---- Pricing (Phase 14) ----
+    # ---- Pricing ----
     # `price` is the immutable base price. `current_price` is the dynamic price.
     current_price: float | None = None
     # Price locked at the time of hold — applied during checkout.
     held_price: float | None = None
 
 
-# ---------- Seat Lock (Phase 4) ----------
+# ---------- Seat lock ----------
 
 class SeatLockOut(BaseModel):
     seat_id: int
@@ -258,7 +258,7 @@ class BookingCreate(BaseModel):
     """
     Client input.
 
-    ⭐ Note: `user_id` is excluded. Previously, this was a security hole
+    Note: `user_id` is excluded. Previously, this was a security hole
     allowing users to book on behalf of others. User identity is now
     derived from the JWT token.
     """
@@ -331,13 +331,13 @@ class AuthConfigOut(BaseModel):
     ai_search_enabled: bool = False
 
 
-# ---------- Seat search (Phase 19) ----------
+# ---------- Seat search ----------
 
 class SeatFilters(BaseModel):
     """
     Search filters.
 
-    ⚠️ This is the contract between the LLM and the search engine, serving
+    This is the contract between the LLM and the search engine, serving
     as the security boundary.
 
     All LLM output is validated here: ranges are clamped, unknown fields
@@ -361,7 +361,7 @@ class EventDraftOut(BaseModel):
     """
     AI-generated draft.
 
-    ⚠️ Never saved directly. Populates the organizer form for manual review
+    Never saved directly. Populates the organizer form for manual review
     and publication.
 
     Event descriptions are a commitment to ticket buyers; human oversight
@@ -398,7 +398,7 @@ class SeatSearchOut(BaseModel):
     interpreted: bool = False
 
 
-# ---------- Payments (Phase 11) ----------
+# ---------- Payments ----------
 
 class CheckoutRequest(BaseModel):
     seat_id: int = Field(..., gt=0)
@@ -432,7 +432,7 @@ class PaymentOut(ORMModel):
     created_at: datetime
 
 
-# ---------- Check-in (Phase 13) ----------
+# ---------- Check-in ----------
 
 class CheckInRequest(BaseModel):
     token: str = Field(..., min_length=8, max_length=64)
@@ -442,7 +442,7 @@ class CheckInResult(BaseModel):
     """
     Gate response.
 
-    ⚠️ `ok` is in the body, not the HTTP status. Gate operators need a
+    `ok` is in the body, not the HTTP status. Gate operators need a
     clear response, along with audit data for dispute resolution.
     """
     ok: bool

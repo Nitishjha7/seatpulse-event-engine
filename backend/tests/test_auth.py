@@ -172,7 +172,7 @@ def test_attendee_cannot_create_event(client, role_tokens):
 
 def test_organizer_cannot_touch_another_organizers_event(client, role_tokens, tokens):
     """
-    ⭐ Most important RBAC test.
+    Most important RBAC test.
 
     Passing the role check does not mean you own every resource.
     Ownership must be checked separately.
@@ -221,7 +221,7 @@ def test_organizer_cannot_touch_another_organizers_event(client, role_tokens, to
 
 def test_event_with_bookings_cannot_be_deleted(client, role_tokens):
     """
-    ⚠️ Business rule: paid tickets must never disappear.
+    Business rule: paid tickets must never disappear.
 
     Cascade delete is enabled, so without this guard, a DELETE would wipe out
     tickets purchased by users.

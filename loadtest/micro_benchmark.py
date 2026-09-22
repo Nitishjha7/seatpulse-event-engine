@@ -17,7 +17,7 @@ Therefore, here:
 Run:
     docker compose exec backend python /loadtest/micro_benchmark.py
 
-⚠️ Backend must be running with BENCHMARK_MODE=true.
+Backend must be running with BENCHMARK_MODE=true.
 """
 
 import asyncio
@@ -141,7 +141,7 @@ def _clear_buckets():
     """
     Clear rate limit buckets.
 
-    ⚠️ The prefix is `rl:` (in rate_limit.py), not `ratelimit:`. Previously, the wrong prefix prevented buckets from clearing, causing 429 errors from the 4th round onwards. These 429s were skewing latency numbers, which the "errors" column helped identify.
+    The prefix is `rl:` (in rate_limit.py), not `ratelimit:`. Previously, the wrong prefix prevented buckets from clearing, causing 429 errors from the 4th round onwards. These 429s were skewing latency numbers, which the "errors" column helped identify.
     """
     from redis_client import redis_client
 

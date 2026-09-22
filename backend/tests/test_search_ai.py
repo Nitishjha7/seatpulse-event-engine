@@ -11,11 +11,11 @@ from helpers import auth_headers
 
 
 # ---------------------------------------------------------------------------
-# Phase 19 — Seat search
+# Seat search
 #
-# ⭐ NONE of these tests require Gemini.
-#
-# This is intentional. The LLM only performs "text -> filters"; the entire search process thereafter is standard code. If these tests required an API key, they would be skipped in CI — and skipped tests appear green (a mistake caught in Phase 16).
+# None of these need Gemini — the model only does "text -> filters", the
+# actual search is plain code. Tests that needed a key would just get
+# skipped in CI, and a skipped test still shows green.
 # ---------------------------------------------------------------------------
 
 class _FakeSeat:
@@ -77,7 +77,7 @@ def test_together_false_returns_individual_seats():
 
 def test_aisle_breaks_togetherness():
     """
-    ⭐⭐ Phase 18 layout data is used here.
+    Uses the seat layout's aisle data.
 
     There is an aisle between seats 2 and 3. The numbers are consecutive, but the seats are NOT together — people will be passing through.
 
@@ -123,7 +123,7 @@ def test_row_preference_beats_price():
     """
     If "near the stage" is requested, don't prioritize cheaper seats further back.
 
-    Row A is closest to the stage — this has been the convention since Phase 3.
+    Row A is closest to the stage, by convention.
     """
     seats = _seat_row("A", 2, price=3000, start_id=1) + _seat_row("Z", 2, price=100, start_id=10)
 
@@ -153,7 +153,7 @@ def test_quantity_is_clamped():
 
 def test_search_endpoint_works_without_ai(client, tokens):
     """
-    ⭐ Search must work with filters even without AI.
+    Search must work with filters even without AI.
 
     This is the most critical invariant of the feature: AI is an addition, not a dependency. If the key is missing, the model is down, or the quota is exhausted — search must still function.
     """
@@ -204,7 +204,7 @@ def test_search_on_unknown_event_is_404(client, tokens):
 
 def test_absurd_filters_are_rejected(client, tokens):
     """
-    ⭐ This is a security boundary test.
+    This is a security boundary test.
 
     `SeatFilters` is where LLM output is validated. If it allows garbage values, the model (or any caller) could create an unbounded query.
     """
@@ -231,7 +231,7 @@ def test_config_exposes_ai_flag(client):
 
 
 # ---------------------------------------------------------------------------
-# Phase 20 — AI event copy
+# AI event copy
 #
 # These tests do not require an API key. The things being tested —
 # RBAC, validation, and "clean 503 if AI is off" — must hold true even without AI.
@@ -275,7 +275,7 @@ def test_draft_returns_the_three_form_fields(client, role_tokens):
     """
     The draft should return the same three fields that the form populates.
 
-    ⚠️ We do NOT check content — the model will write differently every time, as it should. We test the contract, not the prose.
+    We do NOT check content — the model will write differently every time, as it should. We test the contract, not the prose.
 
     If AI is off, we get a 503, which is a valid outcome — this test ensures the endpoint returns the correct shape OR explicitly denies the request, never a 500.
     """
@@ -297,7 +297,7 @@ def test_draft_returns_the_three_form_fields(client, role_tokens):
 
 def test_draft_does_not_create_an_event(client, role_tokens):
     """
-    ⭐ Most important test.
+    Most important test.
 
     AI draft does not SAVE anything. The organizer sees it in the form and publishes it themselves after editing.
 

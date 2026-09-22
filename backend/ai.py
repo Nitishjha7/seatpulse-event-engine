@@ -43,7 +43,7 @@ from redis_client import redis_client
 
 logger = logging.getLogger(__name__)
 
-# ⭐ LITE model — selected based on performance metrics, not intuition.
+# LITE model — selected based on performance metrics, not intuition.
 #
 # Same query, same output, different models:
 #
@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 # adds 5x latency and cost for identical output. Users waiting in a search
 # box cannot tolerate 8-second delays.
 #
-# ⚠️ Version is PINNED, not using `gemini-flash-latest`.
+# Version is PINNED, not using `gemini-flash-latest`.
 #
 # `-latest` automatically updates, which can change prompt behavior without
 # a deployment. For a parser, this is unacceptable — we require predictable
@@ -134,9 +134,9 @@ def is_enabled() -> bool:
     """
     Checks if the API key is configured.
 
-    Frontend uses this to toggle search box visibility — following the
-    pattern used for Google OAuth (Phase 7) and Stripe (Phase 11).
-    If the feature is unavailable, it remains hidden to prevent broken UI.
+    Frontend uses this to toggle search box visibility — same pattern used
+    for Google OAuth and Stripe. If the feature is unavailable, it stays
+    hidden instead of showing a broken UI.
     """
     return bool(settings.GEMINI_API_KEY)
 
@@ -154,7 +154,7 @@ def parse_query(query: str, *, event_id: int, sections: list[str], price_range: 
         dict  — filters (validated by Pydantic later)
         None  — parsing failed, AI unavailable, or call error
 
-    ⚠️ This function NEVER raises exceptions.
+    This function NEVER raises exceptions.
 
     Search must not break due to an AI feature. All failures return `None`,
     triggering a fallback to standard filters.
@@ -183,7 +183,7 @@ def parse_query(query: str, *, event_id: int, sections: list[str], price_range: 
     try:
         res = httpx.post(
             ENDPOINT.format(model=MODEL),
-            # ⚠️ Key in HEADER, NOT in query param.
+            # Key in HEADER, NOT in query param.
             #
             # Previously, `?key=...` caused the full URL (including the key)
             # to appear in httpx error logs.
@@ -210,7 +210,7 @@ def parse_query(query: str, *, event_id: int, sections: list[str], price_range: 
         text = res.json()["candidates"][0]["content"]["parts"][0]["text"]
         parsed = json.loads(text)
     except httpx.HTTPStatusError as exc:
-        # ⚠️ Log status code only, not the exception object.
+        # Log status code only, not the exception object.
         #
         # httpx exception messages may contain the full URL. Keeping the key
         # out of the URL is critical, but this defensive logging prevents
@@ -238,7 +238,7 @@ def parse_query(query: str, *, event_id: int, sections: list[str], price_range: 
 # Event copy — draft for organizers
 # ---------------------------------------------------------------------------
 
-# ⚠️ This prompt is critical for legal/liability reasons.
+# This prompt is critical for legal/liability reasons.
 #
 # Event descriptions are promises to attendees. If the model hallucinates
 # "special guests" or "intermission details" and the organizer publishes
@@ -248,7 +248,7 @@ def parse_query(query: str, *, event_id: int, sections: list[str], price_range: 
 COPY_PROMPT = """\
 You are drafting an event listing.
 
-⚠️ CRITICAL RULE: Do not fabricate facts.
+CRITICAL RULE: Do not fabricate facts.
 
 Only include information provided by the user. The following are FORBIDDEN:
 - Lineup, guest artists, opening acts
@@ -261,7 +261,7 @@ Create a clean, engaging listing based only on provided details. If
 information is missing, remain silent — do not guess.
 
 Style:
-- ⚠️ Match the language of the brief. English brief -> English output,
+- Match the language of the brief. English brief -> English output,
   Hindi brief -> Hindi output.
 - name: concise, under 60 characters.
 - description: 2 short paragraphs, under 500 characters. The second
@@ -288,7 +288,7 @@ def draft_event_copy(brief: str) -> dict | None:
     """
     Drafts event listings from organizer briefs.
 
-    ⚠️ This is a DRAFT, not final copy. The route does not save this
+    This is a DRAFT, not final copy. The route does not save this
     automatically — it populates a form for the organizer to edit and
     approve. AI is never allowed to publish directly.
 

@@ -20,7 +20,7 @@ import {
  * Only includes implemented pages. Unimplemented features (Settings) are
  * disabled to maintain shell consistency without broken links.
  *
- * Role-based sections are hidden via UI logic. ⚠️ This is for UX only;
+ * Role-based sections are hidden via UI logic. This is for UX only;
  * security is enforced via `require_role` on the backend.
  */
 const NAV = [

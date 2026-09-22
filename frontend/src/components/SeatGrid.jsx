@@ -48,7 +48,7 @@ function Seat({ seat, isSelected, isMine, onSelect, busy }) {
 /**
  * Creates a lookup map: row label -> set of seat numbers followed by an aisle.
  *
- * ⚠️ Layout is optional. Events created before Phase 18 have a NULL layout.
+ * Layout is optional — events created before layouts existed just have a NULL one.
  * Fallbacks ensure backward compatibility, returning an empty Map for uniform rows.
  */
 function aisleMap(layout) {

@@ -38,7 +38,7 @@ router = APIRouter(prefix="/api/events", tags=["search"])
 @router.post(
     "/{event_id}/seats/search",
     response_model=SeatSearchOut,
-    # ⭐ Rate limiting is critical due to AI costs.
+    # Rate limiting is critical due to AI costs.
     #
     # Each NL query triggers a paid API call. Rate limiting prevents
     # quota exhaustion from automated loops, which would otherwise
@@ -69,8 +69,8 @@ def search_seats(
         select(Seat).where(Seat.event_id == event_id).order_by(Seat.row_label, Seat.seat_number)
     ).all()
 
-    # Apply dynamic pricing to the current view. `seat.price` is the base
-    # value (Phase 14).
+    # Apply dynamic pricing to the current view — `seat.price` is just the
+    # base value, this computes what it actually costs right now.
     info = pricing_state(db, event)
     for seat in seats:
         seat._display_price = current_price(float(seat.price), info)
@@ -135,7 +135,7 @@ def _resolve_filters(
         return SeatFilters(), False
 
     try:
-        # ⭐ Validate model output. `understood` is internal metadata,
+        # Validate model output. `understood` is internal metadata,
         # not a valid filter field.
         parsed.pop("understood", None)
         return SeatFilters(**parsed), True

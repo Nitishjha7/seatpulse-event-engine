@@ -1,8 +1,6 @@
 """
 WebSocket connections + real-time broadcasting.
 
-⭐ Core of Phase 5.
-
 Problem solved:
   When User A holds a seat, User B sees it as available until they refresh.
   If B clicks, they receive a 409 error, resulting in a poor experience.
@@ -24,7 +22,7 @@ Architecture — Why Redis Pub/Sub instead of direct broadcasting:
   SUBSCRIBES to that channel to notify its local sockets. Redis acts as
   the message bus.
 
-  Bonus: Redis is already in use (since Phase 4) — no new services required.
+  Bonus: Redis is already in use for seat locking — no new service to run.
 """
 
 import asyncio

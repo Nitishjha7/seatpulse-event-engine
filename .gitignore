@@ -40,7 +40,7 @@ docker-compose.override.yml
 # ---------- Personal Notes ----------
 # Setup guides and command references — for local reference only,
 # Do not push to GitHub
-
+/notes
 # ---------- Editors / OS ----------
 .vscode/*
 !.vscode/extensions.json

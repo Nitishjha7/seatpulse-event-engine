@@ -30,7 +30,7 @@ def enqueue_ticket(booking_id: int) -> None:
     """
     Add ticket generation to the queue.
 
-    ⚠️ This never raises an exception.
+    This never raises an exception.
 
     Rationale: Called after booking completion. Raising an error if Redis is
     down would return a 500 to the user despite a successful database
@@ -39,8 +39,8 @@ def enqueue_ticket(booking_id: int) -> None:
     On failure, the booking remains `ticket_status = pending` and is
     subsequently processed by `retry_pending_tickets.py`.
 
-    This follows the same design as WebSocket broadcasts (Phase 5):
-    notifications are "nice to have," while bookings are "must have."
+    Same reasoning as the WebSocket broadcasts: notifications are
+    "nice to have," bookings are "must have."
     """
     try:
         # Executed from a synchronous context (FastAPI route); run in a

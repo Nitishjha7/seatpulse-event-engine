@@ -1,7 +1,7 @@
 """
 Gate check-in — Validate entry by scanning QR codes.
 
-⭐ This follows the same "exactly once" logic used in seat booking:
+This follows the same "exactly once" logic used in seat booking:
 
     Seat booking  : one seat, one confirmed booking
     Check-in      : one ticket, one entry
@@ -78,7 +78,7 @@ def check_in(
     """
     Scan QR token and mark entry.
 
-    ⚠️ This endpoint returns **200 even if check-in fails** — with `ok: false`.
+    This endpoint returns **200 even if check-in fails** — with `ok: false`.
 
     Reason: Gate staff need a clear "go" or "already used" signal. Returning
     error statuses would force the frontend to parse error bodies unnecessarily.
@@ -90,7 +90,7 @@ def check_in(
     booking = db.scalar(select(Booking).where(Booking.qr_token == token))
 
     if booking is None:
-        # ⚠️ Do not disclose why the scan failed to prevent token brute-forcing.
+        # Do not disclose why the scan failed to prevent token brute-forcing.
         logger.warning("Check-in: unknown token scanned by user %s", staff.id)
         return _result(ok=False, reason="invalid_ticket")
 
@@ -100,8 +100,8 @@ def check_in(
 
     # ---- Authorization: restrict scanning to owned events ----
     #
-    # Prevents organizers from scanning tickets for other events.
-    # Follows the role-vs-ownership pattern from Phase 10.
+    # Prevents organizers from scanning tickets for other events —
+    # same role-vs-ownership check used everywhere else in this file.
     if staff.role != ROLE_ADMIN and event.organizer_id != staff.id:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, "This ticket does not belong to your event."
@@ -120,7 +120,7 @@ def check_in(
             booking=booking, seat=seat, event=event, attendee=attendee,
         )
 
-    # ---- ⭐ ATOMIC CHECK-IN ----
+    # ---- ATOMIC CHECK-IN ----
     #
     # `WHERE checked_in_at IS NULL` acts as the primary guard.
     #

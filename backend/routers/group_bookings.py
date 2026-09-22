@@ -124,8 +124,8 @@ def create(
             status.HTTP_400_BAD_REQUEST, "All seats must belong to the same event"
         )
 
-    # Price is frozen at creation to protect against surge pricing changes
-    # during the group booking window (Phase 14).
+    # Price is frozen at creation, so surge pricing can't move the price
+    # out from under people while they're still collecting payments.
     quoted = {s.id: price_now(db, s) for s in seats}
 
     try:
@@ -245,7 +245,7 @@ def pay_share(
     """
     Create a checkout session for a specific share.
 
-    ⚠️ Distinct from `/api/payments/checkout` which is for individual seats.
+    Distinct from `/api/payments/checkout` which is for individual seats.
     Here, the seat is already held by the group. We do not re-claim the seat;
     we only process payment. The seat status remains `group_held` until the
     entire group is settled.

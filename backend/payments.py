@@ -6,7 +6,7 @@ Implementations share a common interface:
   StripeProvider — Production gateway (test mode).
   MockProvider   — Fallback when Stripe keys are unavailable.
 
-⭐ Why a Mock:
+Why a Mock:
 To ensure the repository remains functional for reviewers without requiring
 Stripe credentials. This allows the full checkout flow to be tested,
 demonstrating the architecture even without live payment processing.
@@ -84,7 +84,7 @@ class StripeProvider:
     def create_checkout(self, *, payment_id: int, amount: float, description: str) -> CheckoutSession:
         frontend = settings.FRONTEND_URL.rstrip("/")
 
-        # ⚠️ Stripe requires the smallest currency unit (e.g., cents for USD).
+        # Stripe requires the smallest currency unit (e.g., cents for USD).
         # Passing 800 for ₹800 would result in a charge of ₹8.
         minor_units = int(round(amount * 100))
 
@@ -119,7 +119,7 @@ class StripeProvider:
 
     def verify_webhook(self, payload: bytes, signature: str | None) -> dict:
         """
-        ⭐ Verify webhook signature.
+        Verify webhook signature.
 
         Since the webhook endpoint cannot be authenticated via standard
         headers (Stripe does not have our credentials), the signature
@@ -143,7 +143,7 @@ class StripeProvider:
         if not timestamp:
             raise PaymentError("Signature missing timestamp")
 
-        # ⚠️ Replay protection: Ensure the webhook is recent.
+        # Replay protection: Ensure the webhook is recent.
         if abs(time.time() - int(timestamp)) > WEBHOOK_TOLERANCE_SECONDS:
             raise PaymentError("Webhook timestamp expired")
 
@@ -155,7 +155,7 @@ class StripeProvider:
         # Extract all v1 signatures (supports secret rotation).
         provided = [v for k, v in (p.split("=", 1) for p in signature.split(",") if "=" in p) if k == "v1"]
 
-        # ⚠️ Use compare_digest to prevent timing attacks.
+        # Use compare_digest to prevent timing attacks.
         if not any(hmac.compare_digest(expected, got) for got in provided):
             raise PaymentError("Signature mismatch")
 

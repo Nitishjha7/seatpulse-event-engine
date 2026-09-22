@@ -103,7 +103,7 @@ def _seats_until_increase(
     """
     Calculates how many more seats must be sold before the price increases.
 
-    ⚠️ This is an estimate based on a sample base price. Different price
+    This is an estimate based on a sample base price. Different price
     tiers will trigger increases at different points. Used in the UI to
     display "N seats left at this price."
 

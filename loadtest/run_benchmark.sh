@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# Phase 15 — Pessimistic vs Optimistic locking benchmark.
+# Pessimistic vs optimistic locking benchmark.
 #
 # Runs four scenarios, clearing the database and Redis before each. An integrity check follows every run — because performance comparisons are only valid if both are correct.
 #
 # Run from project root:
 #     bash loadtest/run_benchmark.sh
 #
-# ⚠️ Backend must run with BENCHMARK_MODE=true, otherwise it ignores strategy parameters and all runs will be identical.
+# Backend must run with BENCHMARK_MODE=true, otherwise it ignores strategy parameters and all runs will be identical.
 #
 # Reset between runs is necessary because:
 #   - Target seats are already booked (subsequent runs would return 409)

@@ -168,7 +168,7 @@ export const deleteEvent = (eventId) =>
 /**
  * Mark entry via QR token.
  *
- * ⚠️ Returns 200 even if check-in fails (with `ok: false`).
+ * Returns 200 even if check-in fails (with `ok: false`).
  * Check `result.ok` instead of relying on try/catch.
  */
 export const checkIn = (token) =>
@@ -206,7 +206,7 @@ export const payShare = (shareToken, shareId) =>
 export const cancelGroup = (shareToken) =>
   request(`/api/groups/${shareToken}`, { method: "DELETE" });
 
-// ---- Seat search (Phase 19) ----
+// ---- Seat search ----
 
 /**
  * Search seats via natural language or filters.
@@ -262,7 +262,7 @@ export const createBooking = (seatId, idempotencyKey = crypto.randomUUID()) =>
 /**
  * Download ticket PDF.
  *
- * ⚠️ Cannot use `request()` as it expects JSON; we need a binary blob.
+ * Cannot use `request()` as it expects JSON; we need a binary blob.
  * Browser navigation doesn't support custom headers, so we fetch the blob
  * and trigger a hidden <a> click.
  */

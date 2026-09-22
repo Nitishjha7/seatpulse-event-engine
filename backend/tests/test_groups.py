@@ -10,7 +10,7 @@ from helpers import auth_headers
 
 
 # ---------------------------------------------------------------------------
-# Phase 17 — Group booking (split payment)
+# Group booking (split payment)
 #
 # The core question here differs from single-seat booking. There, "exactly once"
 # meant: one seat, one booking. Here it means: **all or nothing**,
@@ -85,7 +85,7 @@ def test_group_holds_seats_without_booking_them(client, tokens, group_seats):
 
 def test_partial_payment_confirms_nobody(client, tokens, group_seats):
     """
-    ⭐ 2 out of 3 paid — no one's seat should be booked.
+    2 out of 3 paid — no one's seat should be booked.
 
     This is the real test of "all or nothing".
     """
@@ -139,7 +139,7 @@ def test_all_paid_confirms_everyone(client, tokens, group_seats):
 
 def test_expired_group_releases_seats_and_refunds(client, tokens, group_seats):
     """
-    ⭐ Deadline passed — seats are released and payments are refunded.
+    Deadline passed — seats are released and payments are refunded.
 
     Shift the deadline back in the DB; a real 30-minute wait is not feasible in tests.
     """
@@ -226,7 +226,7 @@ def test_pending_payment_dies_with_the_group(client, tokens, group_seats):
 
 def test_late_webhook_after_expiry_is_refunded_not_booked(client, tokens, group_seats):
     """
-    ⭐⭐ The most difficult case: the group has expired, but the gateway reports "payment received".
+    The most difficult case: the group has expired, but the gateway reports "payment received".
 
     The previous test shows we close the checkout. However, the real gateway does not stop when we do — webhooks can arrive late, after the payment has already been processed.
 
@@ -311,7 +311,7 @@ def test_cannot_pay_someone_elses_share(client, tokens, group_seats):
 
 def test_group_creation_is_all_or_nothing(client, tokens, group_seats):
     """
-    ⭐ If even one seat is unavailable, the ENTIRE group should fail.
+    If even one seat is unavailable, the ENTIRE group should fail.
 
     Partial holds are useless — a user shouldn't be left waiting for a 3rd seat that will never be available.
     """
@@ -327,7 +327,7 @@ def test_group_creation_is_all_or_nothing(client, tokens, group_seats):
     )
     assert res.status_code == 409
 
-    # ⭐ The remaining two seats should be RELEASED — not stuck in group_held.
+    # The remaining two seats should be RELEASED — not stuck in group_held.
     for seat_id in group_seats[:2]:
         assert _seat(client, seat_id)["status"] == "available", \
             "Failed group creation left seats in hold."
@@ -353,7 +353,7 @@ def test_only_creator_can_cancel(client, tokens, group_seats):
 
 def test_confirm_and_expiry_race_has_exactly_one_winner(client, tokens, group_seats):
     """
-    ⭐⭐ The most difficult test in Phase 17.
+    The hardest test in this file.
 
     The last person is paying while the expiry job is breaking the group. Exactly one must win, with proper cleanup for the loser:
 
@@ -438,7 +438,7 @@ def test_confirm_and_expiry_race_has_exactly_one_winner(client, tokens, group_se
         else:
             assert all(x == "available" for x in seat_states), seat_states
             assert all(s.booking_id is None for s in shares)
-            # ⭐ Payments already received must be refunded.
+            # Payments already received must be refunded.
             for s in shares:
                 assert s.status in ("refunded", "unpaid"), \
                     f"Share '{s.status}' in expired group — payment is stuck."

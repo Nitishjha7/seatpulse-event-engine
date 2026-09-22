@@ -66,7 +66,7 @@ def _generate(booking_id: int) -> str:
 
         booking, seat, event, user = row
 
-        # ⚠️ IDEMPOTENT: Jobs may run multiple times (ARQ retries or manual
+        # IDEMPOTENT: Jobs may run multiple times (ARQ retries or manual
         # re-enqueuing). Skip if already ready to avoid regenerating the
         # QR token and invalidating existing tickets.
         if booking.ticket_status == TICKET_READY and booking.qr_token:
@@ -133,7 +133,7 @@ async def generate_ticket(ctx: dict, booking_id: int) -> str:
     """
     ARQ job.
 
-    ⚠️ Raising exceptions is intentional — ARQ handles retries based on
+    Raising exceptions is intentional — ARQ handles retries based on
     `max_tries`. We only mark as `failed` after all retries are exhausted
     to prevent the user from seeing a permanent "generating..." state.
     """
@@ -164,7 +164,7 @@ async def expire_groups(ctx) -> int:
 
     Refunds cannot depend on external user activity. Thus, this runs on a schedule.
 
-    ⚠️ Job is idempotent: `break_group` uses an atomic conditional UPDATE,
+    Job is idempotent: `break_group` uses an atomic conditional UPDATE,
     ensuring safety even if multiple workers run concurrently.
     """
     db = SessionLocal()

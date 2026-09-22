@@ -114,7 +114,7 @@ export default function BookingsList({ bookings, onCancel, compact = false, limi
  *   ready   — Download available
  *   failed  — Retry option
  *
- * ⚠️ PDF download cannot use `window.open` because the endpoint requires
+ * PDF download cannot use `window.open` because the endpoint requires
  * an `Authorization` header, which browser navigation does not support.
  * We fetch the blob manually instead.
  */

@@ -1,7 +1,7 @@
 """
 Payment routes.
 
-⭐ The core challenge in this phase is not gateway integration — that is trivial
+The core challenge in this phase is not gateway integration — that is trivial
 with documentation. The real challenge is the "Dual-Write" problem inherent to
 payments:
 
@@ -124,7 +124,7 @@ def start_checkout(
     elif owner != user.id:
         raise HTTPException(status.HTTP_409_CONFLICT, "Seat is held by another user")
     else:
-        # ⚠️ Extend lock TTL. Checkout requires user input; prevent expiration
+        # Extend lock TTL. Checkout requires user input; prevent expiration
         # during the payment process.
         redis_client.expire(f"seat:{payload.seat_id}:lock", settings.PAYMENT_TTL_SECONDS)
 
@@ -153,7 +153,7 @@ def start_checkout(
     provider = get_provider()
     expires_at = utcnow() + timedelta(seconds=settings.PAYMENT_TTL_SECONDS)
 
-    # ⭐ Calculate price once to ensure consistency between DB and gateway.
+    # Calculate price once to ensure consistency between DB and gateway.
     quoted = price_now(db, seat)
 
     payment = Payment(
@@ -169,7 +169,7 @@ def start_checkout(
     db.add(payment)
 
     try:
-        # ⚠️ Flush to generate payment ID for the gateway.
+        # Flush to generate payment ID for the gateway.
         db.flush()
     except IntegrityError:
         db.rollback()
@@ -220,14 +220,14 @@ def _checkout_url_for(payment: Payment) -> str:
 
 
 # ---------------------------------------------------------------------------
-# ⭐ Fulfilment — entry point for both webhooks and reconciliation
+# Fulfilment — entry point for both webhooks and reconciliation
 # ---------------------------------------------------------------------------
 
 def _fulfil(db: Session, payment: Payment) -> Booking | None:
     """
     Finalize payment: create booking and update seat status.
 
-    ⚠️ Group share payments are handled separately in groups.py.
+    Group share payments are handled separately in groups.py.
     """
     # If already succeeded, return the existing booking.
     if payment.status == PAYMENT_SUCCEEDED and payment.booking_id:
@@ -336,7 +336,7 @@ def _fail(db: Session, payment: Payment, reason: str) -> None:
 @router.post("/webhook", include_in_schema=False)
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     """
-    ⭐ Stripe webhook: The primary source of truth.
+    Stripe webhook: The primary source of truth.
     """
     raw = await request.body()
     provider = get_provider()

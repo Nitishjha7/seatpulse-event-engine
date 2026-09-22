@@ -8,7 +8,7 @@ import { useBooking } from '../../booking/BookingContext'
  *
  * Scans QR codes via camera, or allows manual entry if no camera is available.
  *
- * ⚠️ No external library used for QR scanning. We use the native browser `BarcodeDetector` (available in Chrome/Edge/Android). It is not supported in Firefox/Safari, which fall back to manual entry.
+ * No external library used for QR scanning. We use the native browser `BarcodeDetector` (available in Chrome/Edge/Android). It is not supported in Firefox/Safari, which fall back to manual entry.
  *
  * Libraries like html5-qrcode or jsQR add ~200KB. For a gate portal often running on specific devices, this is too heavy—and manual entry is required anyway (for damaged QRs or dead batteries).
  */

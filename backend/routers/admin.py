@@ -40,7 +40,7 @@ def platform_stats(
       Redis    — current seat holds
       Memory   — active WebSocket clients on this worker
 
-    ⚠️ `live_connections` reflects only the current worker. In multi-worker
+    `live_connections` reflects only the current worker. In multi-worker
     deployments, this value is local to each instance. Global totals would
     require Redis-based tracking; this limitation is intentional for now.
     """

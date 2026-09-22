@@ -80,9 +80,9 @@ def new_share_token() -> str:
     """
     Generates a secret for the share link.
 
-    Uses `secrets` instead of `random` to prevent predictability, which would
-    allow unauthorized access to other groups. Same rationale as the ticket
-    QR token in Phase 12.
+    Uses `secrets` instead of `random` — a predictable share link would let
+    someone guess their way into another group. Same reasoning as the
+    ticket QR tokens.
     """
     return secrets.token_urlsafe(24)
 
@@ -101,7 +101,7 @@ def create_group(
     """
     Holds N seats and initializes a group.
 
-    ⚠️ This is a single transaction by design.
+    This is a single transaction by design.
 
     If any seat is unavailable, the entire group must fail. Otherwise, a user
     might hold 3 seats while waiting indefinitely for a 4th that will never
@@ -196,7 +196,7 @@ def claim_share(db: Session, share: GroupShare, user) -> GroupShare:
 
 
 # ---------------------------------------------------------------------------
-# ⭐ Payment and Decision
+# Payment and Decision
 # ---------------------------------------------------------------------------
 
 def mark_share_paid(db: Session, payment: Payment) -> None:
@@ -210,7 +210,7 @@ def mark_share_paid(db: Session, payment: Payment) -> None:
         logger.error("Group share not found for payment %s", payment.id)
         return
 
-    # ⭐⭐ Uses a PESSIMISTIC LOCK on the group row.
+    # Uses a PESSIMISTIC LOCK on the group row.
     #
     # While the project generally uses optimistic locking, this is an intentional
     # exception for correctness. Without this lock, a race condition exists:
@@ -266,7 +266,7 @@ def _try_confirm(db: Session, group: GroupBooking) -> bool:
     if unpaid is not None:
         return False
 
-    # ⭐ The decision point.
+    # The decision point.
     #
     # Multiple payments might trigger this simultaneously, or an expiry job
     # might be running. This UPDATE determines the winner.
@@ -351,11 +351,9 @@ def break_group(db: Session, group: GroupBooking, reason: str) -> bool:
         if share.status == SHARE_PAID and share.payment_id:
             _refund_share(db, share, db.get(Payment, share.payment_id))
 
-        # ⚠️ Must also invalidate pending payments.
-        #
-        # 1. Prevents `uq_one_pending_payment_per_seat` (Phase 11) from blocking
-        #    new checkouts on these seats.
-        # 2. Prevents users from completing a checkout for a dissolved group.
+        # Also invalidate any pending payments on these seats — otherwise
+        # `uq_one_pending_payment_per_seat` blocks new checkouts, and a user
+        # could complete a checkout for a group that no longer exists.
         db.execute(
             update(Payment)
             .where(
@@ -393,7 +391,7 @@ def _refund_share(db: Session, share: GroupShare, payment: Payment | None) -> No
     """
     Refunds a share.
 
-    ⚠️ In the mock provider, this only updates the status. In production, this
+    In the mock provider, this only updates the status. In production, this
     would trigger an API call to the gateway, requiring a `refund_pending`
     state to handle the asynchronous confirmation webhook.
     """

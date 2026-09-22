@@ -138,7 +138,7 @@ def check(bucket_key: str, limit: Limit, cost: int = 1) -> tuple[bool, int, int]
 
     Returns: (allowed, tokens_remaining, retry_after_seconds)
 
-    ⚠️ If Redis is down the request is ALLOWED (fail-open). Failing closed
+    If Redis is down the request is ALLOWED (fail-open). Failing closed
     would take the whole site down with Redis. Rate limiting is a
     protection, not a correctness guarantee — and booking correctness
     already has three independent layers.
@@ -200,7 +200,7 @@ def client_ip(request: Request) -> str:
     """
     Best-effort client IP.
 
-    ⚠️ X-Forwarded-For **can be spoofed** unless a trusted proxy sets it.
+    X-Forwarded-For **can be spoofed** unless a trusted proxy sets it.
     It is therefore used only as a best-effort key on unauthenticated
     endpoints, never for a security decision.
     """

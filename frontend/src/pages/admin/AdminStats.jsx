@@ -77,7 +77,7 @@ export default function AdminStats() {
           <Live
             value={stats.live_connections}
             label="WebSocket clients"
-            hint="⚠️ Count for this worker only"
+            hint="Count for this worker only"
             className="text-emerald-400"
           />
         </div>

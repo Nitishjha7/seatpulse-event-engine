@@ -14,7 +14,7 @@ from helpers import CONCURRENCY, auth_headers
 
 # Unique suffix for each pytest run.
 #
-# ⚠️ Idempotency keys were previously fixed (`test-100-once`). They persist
+# Idempotency keys were previously fixed (`test-100-once`). They persist
 # in Redis until TTL, meaning the NEXT test run would replay on the same key:
 # it would return 201, but no new booking was created — and the test would
 # fail on "0 bookings found".
@@ -98,7 +98,7 @@ def test_wrong_password_eventually_rate_limited(client):
 
 def test_same_idempotency_key_returns_same_booking(client, tokens, free_seat):
     """
-    ⭐ Real test for double-clicks.
+    Real test for double-clicks.
 
     Same key again -> same booking, and only ONE row in the database.
     """
@@ -214,9 +214,9 @@ def test_version_increments_on_change(client, tokens, free_seat):
 
 
 # ---------------------------------------------------------------------------
-# Phase 15 — Locking strategies
+# Locking strategies
 #
-# ⭐ These tests must pass in both modes.
+# These tests must pass in both modes.
 #
 # When BENCHMARK_MODE is off, the server ignores the `strategy` param and runs
 # optimistic. When on, it runs the pessimistic path. In both cases, one thing

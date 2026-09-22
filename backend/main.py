@@ -47,7 +47,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
-    # ⚠️ Required for cross-origin cookie authentication (5173 -> 8000).
+    # Required for cross-origin cookie authentication (5173 -> 8000).
     # allow_credentials=True prevents the use of allow_origins=["*"].
     allow_credentials=True,
     allow_methods=["*"],
@@ -57,7 +57,7 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Admission control
 # ---------------------------------------------------------------------------
-# ⭐ Load test optimization.
+# Load test optimization.
 #
 # Problem: Synchronous routes acquire a DB connection via `get_db` before
 # entering the threadpool. If the threadpool is saturated, connections remain
@@ -157,10 +157,8 @@ def health_check(db: Session = Depends(get_db)):
         "version": "0.6.0",
         "database": db_status,
         "redis": redis_status,
-        # Worker PID for debugging multi-worker deployments.
-        #
-        # Helps identify if specific workers are failing.
-        # Phase 16: Validates load distribution across processes.
+        # Worker PID — useful for spotting a specific worker misbehaving,
+        # or checking load is actually spread across all of them.
         "worker_pid": os.getpid(),
         "time": datetime.now(timezone.utc).isoformat(),
     }

@@ -26,7 +26,7 @@
   <a href="#quick-start">Quick start</a> ·
   <a href="#how-overselling-is-prevented">How it works</a> ·
   <a href="#measured-results">Results</a> ·
-  <a href="documents/">Engineering notes</a>
+  <a href="documents/walkthrough.md">Walkthrough</a>
 </p>
 
 ---
@@ -82,7 +82,7 @@ flowchart LR
     class L,P,T,PG store
 ```
 
-Redis pub/sub — rather than an in-process dictionary — is what lets broadcasts survive across worker processes. That claim is [verified by a test](documents/phases/16-multiworker-ci.md), not assumed.
+Redis pub/sub — rather than an in-process dictionary — is what lets broadcasts survive across worker processes. Tested by running two backend workers and checking a client connected to worker A gets updates caused by worker B.
 
 ---
 
@@ -161,8 +161,6 @@ Locust against the Docker Compose stack, single uvicorn worker, all services on 
 
 Same 200-user flash sale, before and after: **1,250 requests / 58 failures / 21 s p99 → 8,154 requests / 0 failures / 1.4 s p99.**
 
-Full method and raw numbers: [Load testing](documents/phases/06-load-testing.md).
-
 ---
 
 ## Quick start
@@ -220,20 +218,20 @@ docker compose exec backend python seed.py
   <em>Organizer view — AI drafts the listing, the layout builder describes sections, row sizes and aisles.</em>
 </p>
 
-| Area | What it does | Notes |
-|---|---|---|
-| **Concurrency** | Redis lock → optimistic version → partial unique index | [Phase 4](documents/phases/04-redis-locking.md) |
-| **Real time** | Seat changes broadcast over Redis pub/sub → WebSocket | Survives multiple worker processes |
-| **Auth** | JWT access in memory, refresh in httpOnly cookie, `jti` whitelist for revocation, Google OAuth | [Phase 7](documents/phases/07-auth-google-oauth.md) |
-| **Payments** | Webhook is the source of truth, HMAC-verified, idempotent fulfilment, reconciliation job | [Phase 11](documents/phases/11-payments.md) |
-| **Tickets** | ARQ worker renders QR + PDF off the request path, with retries | [Phase 12](documents/phases/12-background-tickets.md) |
-| **Gate check-in** | Camera QR scan; one atomic statement admits exactly once | [Phase 13](documents/phases/13-gate-checkin.md) |
-| **Dynamic pricing** | Demand-based surge; the quoted price is **locked at hold time** so checkout never costs more than shown | [Phase 14](documents/phases/14-dynamic-pricing.md) |
-| **Group booking** | Shareable split-payment link, all-or-nothing against a deadline | [Phase 17](documents/phases/17-group-booking.md) |
-| **Seat layouts** | Sections, per-row seat counts, aisles — validated server-side | [Phase 18](documents/phases/18-seat-layout.md) |
-| **AI search** | A sentence becomes validated filters; an ordinary query runs them | [Phase 19](documents/phases/19-nl-seat-search.md) |
-| **Rate limiting** | Token bucket in Lua, keyed to identity — never to IP | [Phase 9](documents/phases/09-rate-limit-idempotency.md) |
-| **RBAC** | Three flat roles, with ownership checked separately from role | [Phase 10](documents/phases/10-rbac-organizer.md) |
+| Area | What it does |
+|---|---|
+| **Concurrency** | Redis lock → optimistic version → partial unique index |
+| **Real time** | Seat changes broadcast over Redis pub/sub → WebSocket, survives multiple worker processes |
+| **Auth** | JWT access in memory, refresh in httpOnly cookie, `jti` whitelist for revocation, Google OAuth |
+| **Payments** | Webhook is the source of truth, HMAC-verified, idempotent fulfilment, reconciliation job |
+| **Tickets** | ARQ worker renders QR + PDF off the request path, with retries |
+| **Gate check-in** | Camera QR scan; one atomic statement admits exactly once |
+| **Dynamic pricing** | Demand-based surge; the quoted price is **locked at hold time** so checkout never costs more than shown |
+| **Group booking** | Shareable split-payment link, all-or-nothing against a deadline |
+| **Seat layouts** | Sections, per-row seat counts, aisles — validated server-side |
+| **AI search** | A sentence becomes validated filters; an ordinary query runs them |
+| **Rate limiting** | Token bucket in Lua, keyed to identity — never to IP |
+| **RBAC** | Three flat roles, with ownership checked separately from role |
 
 Optional integrations degrade gracefully: no Google keys hides the login button, no Stripe keys switches to a mock provider, no Gemini key hides the AI search box. Nothing breaks.
 
@@ -272,8 +270,6 @@ docker compose --profile loadtest run --rm locust \
 
 Tests run against a **live stack** rather than mocks, because race conditions only appear when uvicorn, Redis and Postgres are all really running. None of them require an AI API key.
 
-More: [testing reference](documents/reference/testing.md).
-
 ---
 
 ## Project structure
@@ -282,22 +278,15 @@ More: [testing reference](documents/reference/testing.md).
 backend/          FastAPI app — routers, models, Redis, ARQ worker, tests
 frontend/         React app — seat grid, booking context, organizer + gate portals
 loadtest/         Locust scenarios, locking benchmark, multi-worker verification
-documents/        Phase-by-phase engineering notes and decisions
+documents/        Architecture walkthrough and screenshots
 .github/          CI: full stack, 110 tests, production image assertions
 ```
 
 ---
 
-## Engineering notes
+## Walkthrough
 
-Every feature is documented with the reasoning behind it — including the decisions that turned out to be wrong.
-
-| | |
-|---|---|
-| [Phase index](documents/) | All 20 phases, what each one changed and why |
-| [Locking benchmark](documents/phases/15-locking-benchmark.md) | Optimistic vs `SELECT … FOR UPDATE`, measured. The assumption did not hold |
-| [Multi-worker + CI](documents/phases/16-multiworker-ci.md) | Three bugs that only a clean database exposed |
-| [Interview prep](documents/interview-prep.md) | Deep Q&A on the design decisions |
+[documents/walkthrough.md](documents/walkthrough.md) goes through the booking flow end to end and the reasoning behind the locking strategy, if you want more detail than the sections above. [documents/decisions.md](documents/decisions.md) is a shorter table of the same kind of tradeoffs, for a quicker read.
 
 ---
 

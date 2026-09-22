@@ -10,7 +10,7 @@ from helpers import auth_headers
 
 
 # ---------------------------------------------------------------------------
-# Phase 18 — Seat layout
+# Seat layout
 #
 # Two parts:
 #   1. validate/expand — pure functions, no DB access.
@@ -48,7 +48,7 @@ def test_expand_produces_every_seat():
 
 def test_aisles_do_not_create_or_skip_seats():
     """
-    ⭐ Aisles are purely visual.
+    Aisles are purely visual.
 
     A common mistake is treating an aisle as an "empty seat" or skipping numbering after it. Both are wrong — an attendee requesting "seat 5" should not receive seat 6.
     """
@@ -61,7 +61,7 @@ def test_aisles_do_not_create_or_skip_seats():
 
 def test_duplicate_row_label_across_sections_is_rejected():
     """
-    ⭐ `seats` has a UNIQUE(event_id, row_label, seat_number) constraint.
+    `seats` has a UNIQUE(event_id, row_label, seat_number) constraint.
 
     Without catching this, expansion would fail with an IntegrityError AFTER inserting 500 seats — by which time the transaction would be heavy.
     """
@@ -166,7 +166,7 @@ def test_create_event_from_layout(client, role_tokens):
 
 def test_bad_layout_creates_no_event(client, role_tokens):
     """
-    ⭐ No seats (or events) should be created with an invalid layout.
+    No seats (or events) should be created with an invalid layout.
 
     Validation runs BEFORE expansion, so the DB remains untouched. A partially created event is the worst-case scenario.
     """
@@ -195,7 +195,7 @@ def test_bad_layout_creates_no_event(client, role_tokens):
 
 def test_price_tiers_path_still_works_and_stores_a_layout(client, role_tokens):
     """
-    Backwards compatibility — the legacy request body must work exactly as it did in Phase 10.
+    Backwards compatibility — the legacy request body has to work exactly as it always did.
     """
     token = role_tokens["organizer"]
     res = client.post(
@@ -226,7 +226,7 @@ def test_price_tiers_path_still_works_and_stores_a_layout(client, role_tokens):
 
 def test_old_events_without_a_layout_still_work(client):
     """
-    ⭐⭐ Most important test.
+    Most important test.
 
     Event 1 comes from the seed and has a NULL `layout`. 17 phases of demo data, tests, and bookings rely on it. The new column is optional, and nothing should break because of it.
     """

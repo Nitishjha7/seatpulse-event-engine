@@ -138,7 +138,7 @@ def get_seat(seat_id: int, db: Session = Depends(get_db)):
 @router.post(
     "/seats/{seat_id}/lock",
     response_model=SeatLockOut,
-    # ⭐ High-traffic endpoint; target for bots.
+    # High-traffic endpoint; target for bots.
     # 15 burst allowed (for users selecting multiple seats), then 5/s.
     dependencies=[Depends(limit_user(SEAT_LOCK))],
 )
@@ -148,7 +148,7 @@ def lock_seat(
     user: User = Depends(get_current_user),
 ):
     """
-    ⭐ Hold a seat.
+    Hold a seat.
 
     This is a high-concurrency endpoint. Decisions are made via atomic
     Redis commands before hitting the database.
@@ -186,7 +186,7 @@ def lock_seat(
 
     # Lock acquired. Update DB so other users see the seat as 'locked' in the grid.
     #
-    # ⚠️ The WHERE clause status check is CRITICAL to prevent race conditions:
+    # The WHERE clause status check is CRITICAL to prevent race conditions:
     #
     #   B: read seat (locked by A)      -> check passes
     #   A: book seat                    -> status=booked, Redis lock released

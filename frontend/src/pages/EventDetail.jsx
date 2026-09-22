@@ -101,7 +101,7 @@ export default function EventDetail() {
           <p className="mt-2.5 text-sm text-slate-600">No description available.</p>
         )}
 
-        {/* ⚠️ Chips reflect real-time inventory data. */}
+        {/* Chips reflect real-time inventory data. */}
         <div className="mt-5 flex flex-wrap gap-2">
           <Tag>
             <IconTicket width={13} height={13} />

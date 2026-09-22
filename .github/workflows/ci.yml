@@ -1,25 +1,20 @@
 name: CI
 
-# Run on both push and PR. PRs prevent broken code from reaching main — finding issues after merge is too late.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
 
-# Cancel previous runs on the same branch to save runner minutes and avoid stale results.
+# don't waste runner time on stale pushes to the same branch
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # ---------------------------------------------------------------------
-  # Full test suite — run the entire stack and execute 66 tests.
-  #
-  # ⚠️ `services:` block intentionally NOT used.
-  #
-  # GitHub services only provide DB/Redis containers, requiring the app to run separately on the runner. This means CI would test an environment that doesn't match production. We run the same docker-compose used locally to ensure CI catches configuration errors.
-  # ---------------------------------------------------------------------
+  # runs against the same docker-compose stack used locally instead of
+  # GitHub's `services:` containers, so this actually exercises the real
+  # setup instead of a different one that happens to also have postgres/redis
   test:
     name: Tests (full stack)
     runs-on: ubuntu-latest
@@ -29,7 +24,6 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Create env file
-        # Compose requires a root .env file. The example file is sufficient as it contains only development defaults, not actual secrets.
         run: |
           cp .env.example .env
           cp backend/.env.example backend/.env
@@ -41,7 +35,6 @@ jobs:
         run: docker compose up -d --build
 
       - name: Wait for backend
-        # Polling is better than a blind `sleep 30`: proceed immediately when ready, or fail with logs if it times out.
         run: |
           for i in $(seq 1 60); do
             if curl -sf http://localhost:8000/api/health > /dev/null; then
@@ -58,14 +51,12 @@ jobs:
         run: docker compose exec -T backend alembic upgrade head
 
       - name: Seed data
-        # Tests require 500 users and an event. Without seeding, fixtures are skipped, which can lead to false-positive green test results.
         run: docker compose exec -T backend python seed.py
 
       - name: Pytest
         run: docker compose exec -T backend python -m pytest tests/ -v
 
       - name: Integrity check
-        # Post-test DB invariants check — ensure no overselling occurred.
         run: docker compose exec -T backend python verify_integrity.py
 
       - name: Logs (on failure only)
@@ -76,11 +67,8 @@ jobs:
         if: always()
         run: docker compose down -v
 
-  # ---------------------------------------------------------------------
-  # Verify production image builds.
-  #
-  # This is a separate job because production images lack dev tools and cannot run tests. Detecting build failures during deployment is too late.
-  # ---------------------------------------------------------------------
+  # separate job because the prod target strips out dev tooling and can't
+  # run pytest — want to catch a broken prod build here, not on deploy
   build-prod:
     name: Production images
     runs-on: ubuntu-latest
@@ -99,7 +87,6 @@ jobs:
             build backend worker frontend
 
       - name: Ensure no dev tools in prod image
-        # This is a critical check: including pytest/locust in production images increases image size and expands the attack surface.
         run: |
           docker compose -f docker-compose.yml -f docker-compose.prod.yml \
             run --rm --no-deps --entrypoint sh backend -c \
@@ -110,7 +97,6 @@ jobs:
 
       - name: Ensure prod image does not run as root
         run: |
-          # 2>/dev/null suppresses compose stderr messages to prevent them from mixing with the UID output. tail -1 captures the final line.
           USER_ID=$(docker compose -f docker-compose.yml -f docker-compose.prod.yml \
             run --rm --no-deps --entrypoint id backend -u 2>/dev/null | tail -1)
           echo "uid = $USER_ID"
@@ -119,9 +105,6 @@ jobs:
             exit 1
           fi
 
-  # ---------------------------------------------------------------------
-  # Ensure frontend build is not broken.
-  # ---------------------------------------------------------------------
   frontend:
     name: Frontend build
     runs-on: ubuntu-latest
@@ -136,7 +119,6 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      # npm ci strictly follows the lockfile. `npm install` can silently update dependency versions in CI, reducing the reliability of test results.
       - run: npm ci
         working-directory: frontend
 

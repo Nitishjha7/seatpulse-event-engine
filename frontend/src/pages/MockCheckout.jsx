@@ -7,7 +7,7 @@ import { IconLock } from '../layout/icons'
 /**
  * Checkout page for the mock gateway.
  *
- * ⚠️ This replaces the real Stripe page — it only appears when
+ * This replaces the real Stripe page — it only appears when
  * STRIPE_SECRET_KEY is not set. This allows anyone (including interviewers)
  * to test the full payment flow without a Stripe account.
  *

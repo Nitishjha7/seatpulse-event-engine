@@ -4,7 +4,7 @@ Capture README screenshots with Playwright.
 Runs inside the compose network: the page is served from the frontend
 container's IP and its API calls go to `backend:8000`.
 
-⚠️ Navigation happens by CLICKING links, never `page.goto()`.
+Navigation happens by CLICKING links, never `page.goto()`.
 
 The access token lives in a module variable (never localStorage), so a full
 page reload loses it — and the refresh cookie is first-party to the API

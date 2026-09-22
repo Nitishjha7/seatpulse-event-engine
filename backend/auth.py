@@ -159,7 +159,7 @@ def get_current_user(
     """
     Extracts the user for protected routes.
 
-    ⭐ `user_id` is derived from the token, not the request body, preventing
+    `user_id` is derived from the token, not the request body, preventing
     ID spoofing.
     """
     if creds is None:
@@ -185,7 +185,7 @@ def require_role(*roles: str):
     Use:
         @router.post("", dependencies=[Depends(require_role(ROLE_ORGANIZER, ROLE_ADMIN))])
 
-    ⚠️ Returns 403 Forbidden. Unlike IDOR cases where 404 is used to hide
+    Returns 403 Forbidden. Unlike IDOR cases where 404 is used to hide
     resource existence, these endpoints are public knowledge; the user simply
     lacks the required permissions.
     """

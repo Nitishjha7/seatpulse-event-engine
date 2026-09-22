@@ -9,7 +9,7 @@ from pricing import apply, multiplier_for, pricing_for_event
 
 
 # ---------------------------------------------------------------------------
-# Phase 14 — Dynamic pricing
+# Dynamic pricing
 #
 # Two separate things are being tested here:
 #   1. The FORMULA is correct (pure functions, no DB).
@@ -166,7 +166,7 @@ def test_price_rises_after_a_booking(client, tokens, surge_event):
 
 def test_held_price_survives_a_price_rise(client, tokens, surge_event):
     """
-    ⭐ The most critical test for this feature.
+    The most critical test for this feature.
 
     User A holds a seat (quoted ₹1000). Then User B buys another seat, increasing demand.
     A must still pay ₹1000 — because that was the quoted price.

@@ -49,7 +49,7 @@ function errorText(err) {
     const wait = err.retryAfter ? ` Please wait ${err.retryAfter} seconds and try again.` : ''
     return `🐢 Slow down!${wait}`
   }
-  if (err.status === 409) return `⚠️ ${err.message}`
+  if (err.status === 409) return `${err.message}`
   return err.message
 }
 
@@ -152,7 +152,7 @@ export function BookingProvider({ children }) {
   /**
    * Handles dynamic pricing updates.
    *
-   * ⚠️ We do not calculate `base × multiplier` on the client side to avoid
+   * We do not calculate `base × multiplier` on the client side to avoid
    * floating-point rounding discrepancies between JS and Python. We rely
    * on the server for exact pricing to ensure the displayed price matches
    * the charged amount.
@@ -264,7 +264,7 @@ export function BookingProvider({ children }) {
   /**
    * Initiates checkout.
    *
-   * ⚠️ Booking is only finalized via webhook after payment confirmation.
+   * Booking is only finalized via webhook after payment confirmation.
    */
   async function payForSeat() {
     if (!selectedSeat) return
@@ -284,7 +284,7 @@ export function BookingProvider({ children }) {
   /**
    * Initiates group booking.
    *
-   * ⚠️ Server-side validation is the source of truth; this logic is a
+   * Server-side validation is the source of truth; this logic is a
    * client-side suggestion to help users select adjacent seats.
    */
   async function startGroup(size) {

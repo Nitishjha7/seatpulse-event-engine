@@ -1,9 +1,6 @@
 """
 Centralized application configuration.
 
-Rationale: Avoid hardcoded values. Database and Redis URLs will be added in
-Phase 2 and Phase 4 respectively; this pattern ensures consistency.
-
 pydantic-settings automatically reads environment variables (and .env files)
 and validates types. Invalid values trigger an immediate startup error rather
 than runtime crashes.
@@ -28,14 +25,14 @@ class Settings(BaseSettings):
 
     # Admission control: maximum concurrent requests.
     #
-    # ⚠️ Must be smaller than the DB pool size. Each request holds a DB
+    # Must be smaller than the DB pool size. Each request holds a DB
     # connection until completion; exceeding the pool size results in 500 errors.
     #
     # Invariant:  MAX_CONCURRENT_REQUESTS  <  pool_size + max_overflow
     #             (30 < 40)
     MAX_CONCURRENT_REQUESTS: int = 30
 
-    # ---- Connection pool (Phase 16) ----
+    # ---- Connection pool ----
     #
     # Must be configured via environment variables as optimal values depend on
     # the number of WORKERS.
@@ -48,7 +45,7 @@ class Settings(BaseSettings):
     DB_POOL_SIZE: int = 20
     DB_MAX_OVERFLOW: int = 20
 
-    # ---- Benchmark mode (Phase 15) ----
+    # ---- Benchmark mode ----
     #
     # Enables extra query params: `strategy` (optimistic/pessimistic) and
     # `redis_lock` (on/off).
@@ -61,7 +58,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://redis:6379/0"
 
     # ---------- Auth ----------
-    # ⚠️ Must be changed in production. Used for signing tokens; if leaked,
+    # Must be changed in production. Used for signing tokens; if leaked,
     # authentication is compromised.
     # Generate new: python -c "import secrets; print(secrets.token_urlsafe(48))"
     JWT_SECRET: str = "dev-only-secret-CHANGE-IN-PRODUCTION"
@@ -108,10 +105,10 @@ class Settings(BaseSettings):
 
     CURRENCY: str = "INR"
 
-    # ---- Natural language seat search (Phase 19) ----
+    # ---- Natural language seat search ----
     #
     # Graceful degradation: if empty, the search UI is hidden.
-    # ⚠️ Only disables natural language input; standard filters remain active.
+    # Only disables natural language input; standard filters remain active.
     GEMINI_API_KEY: str = ""
 
     @property

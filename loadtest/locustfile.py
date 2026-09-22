@@ -40,7 +40,7 @@ USER_POOL_SIZE = int(os.getenv("USER_POOL_SIZE", "499"))
 # Password assigned to all test users by seed.py
 PASSWORD = os.getenv("SEED_PASSWORD", "demo1234")
 
-# ---- Phase 15: locking benchmark configuration ----
+# ---- Locking benchmark configuration ----
 #
 # These only take effect if the backend is running with BENCHMARK_MODE=true.
 # Otherwise, the server ignores them and uses the normal (optimistic +
@@ -70,7 +70,7 @@ class AuthedUser(HttpUser):
     """
     Base class — each Locust user logs in to obtain an authentication token.
 
-    ⭐ Login occurs in `on_start`, not in the task. Otherwise, every request
+    Login occurs in `on_start`, not in the task. Otherwise, every request
     would trigger a login, turning the load test into a login test.
     Bcrypt is intentionally slow (~100ms), which would skew the results.
 

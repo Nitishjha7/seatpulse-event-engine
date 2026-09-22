@@ -12,7 +12,7 @@ import { Fragment } from 'react'
  * less error-prone than dragging boxes. It also avoids the complexity of
  * pointer events, undo/redo stacks, and snapping logic.
  *
- * ⚠️ This validation is for UI feedback only. Security validation occurs
+ * This validation is for UI feedback only. Security validation occurs
  * server-side in `layout.py`.
  */
 

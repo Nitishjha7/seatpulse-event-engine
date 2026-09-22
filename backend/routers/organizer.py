@@ -6,8 +6,8 @@ RBAC is implemented here: these endpoints are restricted to users with
 
 Distinguish between these concepts:
 
-  AUTHENTICATION  — Who are you?          (Phase 7, via token)
-  AUTHORIZATION   — What can you do?      (This phase, via role)
+  AUTHENTICATION  — Who are you?          (the JWT proves this)
+  AUTHORIZATION   — What can you do?      (this file, based on role)
 
 And a third, equally critical concept:
 
@@ -56,7 +56,7 @@ def _owned_event(event_id: int, user: User, db: Session) -> Event:
     """
     Retrieve an event only if owned by the user (or if user is admin).
 
-    ⚠️ This check is required for all organizer endpoints to prevent IDOR,
+    This check is required for all organizer endpoints to prevent IDOR,
     where an organizer could otherwise modify another's event.
     """
     event = db.get(Event, event_id)
@@ -75,7 +75,7 @@ def _event_stats(db: Session, event_ids: list[int]) -> dict[int, dict]:
     """
     Fetch aggregate counts for multiple events.
 
-    ⚠️ Use a single query to avoid N+1 performance issues.
+    Use a single query to avoid N+1 performance issues.
     """
     if not event_ids:
         return {}
@@ -117,7 +117,7 @@ def draft_event(
     """
     Generate an event listing draft from a brief.
 
-    ⚠️ This does not persist data. It returns suggestions for the organizer
+    This does not persist data. It returns suggestions for the organizer
     to review and publish.
 
     AI-generated content is not auto-published; the organizer is responsible
@@ -171,7 +171,7 @@ def create_event(
             ROW_LABELS,
         )
 
-    # ⚠️ Validate before creating seats to avoid partial state on failure.
+    # Validate before creating seats to avoid partial state on failure.
     try:
         planned = seat_layout.expand(plan_source)
     except seat_layout.LayoutError as exc:
@@ -269,7 +269,7 @@ def delete_event(
     """
     Delete an event only if no confirmed bookings exist.
 
-    ⚠️ Critical business rule: prevents deletion of events with active tickets.
+    Critical business rule: prevents deletion of events with active tickets.
     """
     event = _owned_event(event_id, user, db)
 

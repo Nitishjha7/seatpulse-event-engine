@@ -12,7 +12,7 @@ Google OAuth flow (Authorization Code):
 
   4. Google redirects user back to /google/callback with an authorization `code`.
 
-  5. ⭐ BACKEND exchanges the code for user info using `client_secret`.
+  5. BACKEND exchanges the code for user info using `client_secret`.
      This is a server-to-server operation; the browser is not involved.
 
   6. Backend sets a refresh cookie and redirects the user to the frontend.
@@ -141,7 +141,7 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
     email = payload.email.lower()
 
     # ---- Brute force protection ----
-    # ⭐ Rate limiting is applied to the EMAIL, not the IP:
+    # Rate limiting is applied to the EMAIL, not the IP:
     #
     #   1. IP-based limits block legitimate users sharing a NAT (e.g., offices).
     #   2. Email-based limits are more targeted against attackers.
@@ -158,13 +158,13 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
 
     user = db.scalar(select(User).where(User.email == email))
 
-    # ⚠️ Commit immediately after reading to release the DB transaction.
+    # Commit immediately after reading to release the DB transaction.
     #
     # Bcrypt hashing is CPU-intensive (~100ms). Holding the transaction open
     # during this time causes "idle in transaction" connection pool exhaustion.
     db.commit()
 
-    # ⚠️ Use a generic error message to prevent user enumeration.
+    # Use a generic error message to prevent user enumeration.
     if user is None or not verify_password(payload.password, user.hashed_password):
         # Only increment failure count on incorrect credentials.
         check(bucket, LOGIN_FAIL, cost=1)
@@ -181,7 +181,7 @@ def refresh(request: Request, response: Response, db: Session = Depends(get_db))
     """
     Refreshes the access token using the refresh cookie.
 
-    ⭐ ROTATION: Revoke the old refresh token and issue a new one.
+    ROTATION: Revoke the old refresh token and issue a new one.
     This mitigates token theft; if an attacker uses a stolen token, the
     legitimate user's session is invalidated, exposing the breach.
     """
@@ -293,7 +293,7 @@ def google_callback(
 
     try:
         with httpx.Client(timeout=10) as client:
-            # ⭐ Step 5: Exchange code for token. Server-to-server call.
+            # Step 5: Exchange code for token. Server-to-server call.
             token_res = client.post(
                 GOOGLE_TOKEN_URL,
                 data={

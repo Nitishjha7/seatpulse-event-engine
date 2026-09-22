@@ -37,7 +37,7 @@ def test_checkout_moves_seat_to_payment_pending(client, tokens, free_seat):
     seat = client.get(f"/api/seats/{seat_id}").json()
     assert seat["status"] == "payment_pending"
 
-    # ⭐ Most important: no booking created yet
+    # Most important: no booking created yet
     mine = client.get("/api/bookings", headers=auth_headers(tokens[0])).json()
     assert not [b for b in mine if b["seat_id"] == seat_id and b["status"] == "confirmed"]
 
@@ -79,7 +79,7 @@ def test_successful_payment_creates_exactly_one_booking(client, tokens, free_sea
 
 def test_fulfilment_is_idempotent(client, tokens, free_seat):
     """
-    ⭐ Webhooks are AT-LEAST-ONCE — the gateway may send the same event twice.
+    Webhooks are AT-LEAST-ONCE — the gateway may send the same event twice.
     The second request should return the existing booking, not create a new one.
     """
     seat_id = free_seat["id"]
@@ -141,7 +141,7 @@ def test_cannot_see_or_settle_someone_elses_payment(client, tokens, free_seat):
 
 def test_webhook_rejects_bad_signature(client):
     """
-    ⭐ Webhook endpoint is not authenticated — the signature is the only auth.
+    Webhook endpoint is not authenticated — the signature is the only auth.
 
     Without this, anyone could POST and claim a free ticket.
     """
@@ -166,7 +166,7 @@ def _wait_for_ticket(client, token, seat_id, timeout=15):
     """
     The worker runs in the background — poll to wait for the ticket.
 
-    ⚠️ Avoided fixed `sleep`. It causes flakiness on slow machines and wastes time on fast ones.
+    Avoided fixed `sleep`. It causes flakiness on slow machines and wastes time on fast ones.
     """
     import time
 
@@ -184,7 +184,7 @@ def test_booking_starts_with_a_pending_ticket(client, tokens, free_seat):
     """
     Booking is confirmed immediately — the ticket is generated later.
 
-    ⭐ This is the whole point of this phase: the API does not make the user wait for 2-3 seconds.
+    This is the whole point of this phase: the API does not make the user wait for 2-3 seconds.
     """
     seat_id = free_seat["id"]
     res = client.post("/api/bookings", json={"seat_id": seat_id}, headers=auth_headers(tokens[0]))
@@ -218,7 +218,7 @@ def test_worker_generates_a_downloadable_ticket(client, tokens, free_seat):
 
 def test_cannot_download_someone_elses_ticket(client, tokens, free_seat):
     """
-    ⚠️ The most critical ticket test.
+    The most critical ticket test.
 
     The ticket contains a QR code. Downloading someone else's ticket = free entry.
     """
@@ -246,7 +246,7 @@ def test_ticket_needs_authentication(client, tokens, free_seat):
 
 def test_qr_token_is_not_the_booking_id(client, tokens, free_seat):
     """
-    ⚠️ The QR should not contain a sequential ID — anyone could generate a QR for 1, 2, or 3 and enter the gate.
+    The QR should not contain a sequential ID — anyone could generate a QR for 1, 2, or 3 and enter the gate.
     """
     from sqlalchemy import select
 
@@ -307,7 +307,7 @@ def test_valid_ticket_checks_in(client, tokens, role_tokens, free_seat):
 
 def test_same_qr_cannot_be_used_twice(client, tokens, role_tokens, free_seat):
     """
-    ⭐ The core test for this phase.
+    The core test for this phase.
 
     If two people take a screenshot of the same QR and go to different gates — neither should be allowed in.
     """
@@ -327,7 +327,7 @@ def test_same_qr_cannot_be_used_twice(client, tokens, role_tokens, free_seat):
 
 def test_concurrent_scans_admit_exactly_one(client, tokens, role_tokens, free_seat):
     """
-    ⭐ The real race — 10 gates simultaneously.
+    The real race — 10 gates simultaneously.
 
     The same "exactly once" problem as in seat booking, just in a different context.
     """
@@ -354,7 +354,7 @@ def test_invalid_token_is_rejected(client, role_tokens):
 
     assert res["ok"] is False
     assert res["reason"] == "invalid_ticket"
-    # ⚠️ No details should be leaked — otherwise, tokens could be brute-forced.
+    # No details should be leaked — otherwise, tokens could be brute-forced.
     assert res["booking_id"] is None
     assert res["seat_label"] is None
 

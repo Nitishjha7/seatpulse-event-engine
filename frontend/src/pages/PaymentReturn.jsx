@@ -8,7 +8,7 @@ import { bookingRef } from '../components/BookingConfirmedModal'
 /**
  * This page opens upon returning from the payment gateway.
  *
- * ⚠️ IMPORTANT: This page does not make any decisions.
+ * IMPORTANT: This page does not make any decisions.
  *
  * Payment success is determined by the backend webhook. This page only queries
  * the backend for the status and displays the result.
@@ -50,7 +50,7 @@ export default function PaymentReturn() {
         // Terminal state? Stop.
         if (p.status !== 'pending') return
 
-        // ⚠️ Webhooks can take time — the redirect often arrives before the
+        // Webhooks can take time — the redirect often arrives before the
         // webhook. We poll rather than assuming failure after one check.
         //
         // 20 attempts, 1.5s apart = ~30 seconds. After that, we advise the

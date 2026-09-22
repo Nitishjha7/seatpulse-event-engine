@@ -5,9 +5,9 @@ This file is the foundation of the project. The "no overselling" claim relies on
 constraints, not on application logic.
 
 Three-layer safety (fastest at the top, most robust at the bottom):
-  1. Redis lock          -> Phase 4. Fast rejection; prevents load on the DB.
-  2. version column      -> Optimistic locking. Ensures one of two parallel updates fails.
-  3. UNIQUE constraint   -> Database-level enforcement. Guaranteed integrity even if code has bugs.
+  1. Redis lock          -> fast rejection, keeps load off the DB
+  2. version column      -> optimistic locking, one of two parallel updates fails
+  3. UNIQUE constraint   -> database-level enforcement, holds even if the code has a bug
 """
 
 from datetime import datetime, timezone
@@ -39,15 +39,15 @@ def utcnow() -> datetime:
 
 # Seat states
 SEAT_AVAILABLE = "available"
-SEAT_LOCKED = "locked"      # Selected by a user, pending payment (Phase 4)
+SEAT_LOCKED = "locked"      # Selected by a user, pending payment
 SEAT_BOOKED = "booked"
 # Payment in progress — seat is held but not yet sold.
 # Separate status allows the UI to show "purchase in progress" and enables
 # specific cleanup logic distinct from standard locks.
 SEAT_PAYMENT_PENDING = "payment_pending"
-# Held by a group booking (Phase 17).
+# Held by a group booking.
 #
-# ⚠️ Must be distinct from `locked`.
+# Must be distinct from `locked`.
 #
 # `locked` and `payment_pending` seats are cleaned up by `release_expired_locks`
 # via TTL. Group seats cannot be released this way because some users may have
@@ -94,7 +94,7 @@ ROLE_ADMIN = "admin"           # Full platform access
 
 ALL_ROLES = (ROLE_ATTENDEE, ROLE_ORGANIZER, ROLE_ADMIN)
 
-# ---- Group booking (Phase 17) ----
+# ---- Group booking ----
 
 GROUP_COLLECTING = "collecting"   # Link shared, payments in progress
 GROUP_CONFIRMED = "confirmed"     # All payments received, seats secured
@@ -145,7 +145,7 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    # ⚠️ Explicit foreign_keys are required.
+    # Explicit foreign_keys are required.
     #
     # Booking has two foreign keys to User:
     #   user_id       -> The purchaser
@@ -182,7 +182,7 @@ class Event(Base):
     # UI tags (e.g., "Music", "Comedy").
     category: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
-    # ---- Seat layout (Phase 18) ----
+    # ---- Seat layout ----
     #
     # Venue map (sections, rows, aisles).
     #
@@ -193,7 +193,7 @@ class Event(Base):
     # JSON is used for rendering the grid and aisles.
     layout: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
-    # ---- Dynamic pricing (Phase 14) ----
+    # ---- Dynamic pricing ----
     # Off by default to preserve legacy event behavior.
     dynamic_pricing: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # 0.5 = 1.5x price at 100% capacity.
@@ -211,7 +211,7 @@ class Event(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    # ⚠️ passive_deletes=True is required.
+    # passive_deletes=True is required.
     #
     # Without it, SQLAlchemy attempts to load children and set foreign keys to NULL,
     # which conflicts with the database-level ON DELETE CASCADE.
@@ -239,7 +239,7 @@ class Seat(Base):
     row_label: Mapped[str] = mapped_column(String(4))
     seat_number: Mapped[int] = mapped_column(Integer)
 
-    # Section (e.g., "Ground", "Balcony") (Phase 18).
+    # Section (e.g., "Ground", "Balcony").
     #
     # Nullable for legacy compatibility. Stored here for ticket/check-in access.
     section: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -256,13 +256,13 @@ class Seat(Base):
     # mismatch occurs, the update fails (rowcount 0), resulting in a 409 error.
     version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
-    # ---- Price lock (Phase 14) ----
+    # ---- Price lock ----
     #
-    # ⚠️ Locks the price at the time of hold to prevent price fluctuations
+    # Locks the price at the time of hold to prevent price fluctuations
     # during the checkout process. Cleared when the hold is released.
     held_price: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
 
-    # ---- Phase 4 (Redis) integration ----
+    # ---- Redis lock integration ----
     # Redis handles the primary lock. These columns provide a persistent record.
     locked_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
@@ -305,7 +305,7 @@ class Booking(Base):
     status: Mapped[str] = mapped_column(String(16), default=BOOKING_CONFIRMED, index=True)
     amount: Mapped[float] = mapped_column(Numeric(10, 2), default=0)
 
-    # ---- Ticket (Phase 12) ----
+    # ---- Ticket ----
     #
     # Booking and Ticket are 1:1.
     # qr_token is random and unique to prevent sequential ID guessing.
@@ -319,7 +319,7 @@ class Booking(Base):
         DateTime(timezone=True), nullable=True
     )
 
-    # ---- Check-in (Phase 13) ----
+    # ---- Check-in ----
     #
     # checked_in_at acts as a guard; updates only succeed if NULL.
     checked_in_at: Mapped[datetime | None] = mapped_column(
@@ -389,7 +389,7 @@ class Payment(Base):
 
     failure_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    # ---- Group booking (Phase 17) ----
+    # ---- Group booking ----
     #
     # If set, this payment is part of a group share.
     # Booking is only created once all shares are fulfilled.
@@ -412,7 +412,7 @@ class Payment(Base):
             f"status IN ({', '.join(repr(s) for s in ALL_PAYMENT_STATUSES)})",
             name="ck_payment_status",
         ),
-        # ⭐ Partial unique index: one pending payment per seat.
+        # Partial unique index: one pending payment per seat.
         # Prevents multiple checkout sessions for the same seat.
         Index(
             "uq_one_pending_payment_per_seat",

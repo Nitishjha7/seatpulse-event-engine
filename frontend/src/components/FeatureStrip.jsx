@@ -3,7 +3,7 @@ import { IconActivity, IconBolt, IconLock, IconShield } from '../layout/icons'
 /**
  * Feature tiles.
  *
- * ⚠️ Only include implemented features. Avoid speculative claims like
+ * Only include implemented features. Avoid speculative claims like
  * "Multiple payments" to maintain integrity; honest feature sets are
  * more impressive during interviews.
  */

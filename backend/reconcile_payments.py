@@ -1,7 +1,7 @@
 """
 Payment reconciliation.
 
-⭐ Relying solely on webhooks is insufficient.
+Relying solely on webhooks is insufficient.
 
 Webhooks can be missed due to server downtime, network issues, or exhausted
 gateway retries. In such cases, the user is charged, but the booking is not

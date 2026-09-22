@@ -20,7 +20,7 @@ import Profile from './pages/Profile'
 /**
  * Role-gated route.
  *
- * ⚠️ This is for UX only; actual security is enforced via backend `require_role`.
+ * This is for UX only; actual security is enforced via backend `require_role`.
  * Client-side checks are easily bypassed (e.g., via React DevTools), so do not
  * rely on this for security. It merely prevents navigation to unauthorized views.
  */

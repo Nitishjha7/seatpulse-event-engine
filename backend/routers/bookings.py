@@ -1,14 +1,15 @@
 """
 Booking routes.
 
-⭐ Three-layer defense strategy:
+Three-layer defense strategy:
 
   layer 1 — Redis lock         (fast rejection, prevents DB load)
   layer 2 — Optimistic locking (version column)
   layer 3 — Database constraint (partial unique index)
 
-Note: Phase 3 logic was correct even without layer 1. Redis improves
-performance, not correctness. This is a key architectural discussion point.
+Worth remembering: the version column and unique index alone were already
+correct without Redis. Redis is a performance optimization, not what makes
+this safe.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -58,7 +59,7 @@ def create_booking(
     response: Response,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-    # ---- Benchmark-only knobs (Phase 15) ----
+    # ---- Benchmark-only knobs ----
     # Ignored unless BENCHMARK_MODE is enabled.
     # include_in_schema=False hides these from public API documentation.
     strategy: str | None = Query(None, include_in_schema=False),
@@ -123,12 +124,12 @@ def _perform_booking(
     """
     Core booking logic implementing the three-layer defense.
 
-    Separated to maintain a clean idempotency wrapper and preserve
-    the logic structure established in Phase 4.
+    Kept separate from the route handler so the idempotency wrapper stays
+    clean and this function's logic doesn't have to change shape.
 
-    `strategy` and `use_redis_lock` are for benchmarking (Phase 15).
-    Benchmarks must execute this function directly to ensure production
-    parity.
+    `strategy` and `use_redis_lock` only exist for the locking benchmark —
+    it calls this function directly so it's measuring the real code path,
+    not a simulation of it.
     """
     seat = db.get(Seat, payload.seat_id)
     if seat is None:
@@ -176,8 +177,8 @@ def _perform_booking(
 
     # ---- LAYER 2: DATABASE-LEVEL CLAIM ----
     #
-    # Optimistic locking is default for production. Pessimistic is
-    # reserved for benchmarks (Phase 15).
+    # Optimistic locking is the default. Pessimistic only exists for the
+    # locking benchmark.
     #
     # Optimistic is preferred because it avoids holding DB connections
     # during contention, preventing connection pool exhaustion.
@@ -276,7 +277,7 @@ def cancel_booking(
     if booking is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking not found")
 
-    # ⚠️ Ownership check prevents IDOR vulnerabilities.
+    # Ownership check prevents IDOR vulnerabilities.
     # Returns 404 instead of 403 to avoid leaking existence of the booking.
     if booking.user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking not found")
@@ -311,7 +312,7 @@ def download_ticket(
     """
     Download ticket PDF.
 
-    ⚠️ Ownership check prevents unauthorized access to tickets.
+    Ownership check prevents unauthorized access to tickets.
     """
     booking = db.get(Booking, booking_id)
     if booking is None or booking.user_id != user.id:

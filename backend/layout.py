@@ -3,7 +3,7 @@ Seat layout — defines venue structure and seat generation logic.
 
 ---- Background ----
 
-Since Phase 10, organizers have used `price_tiers` to define events: "2 rows @ ₹2500, 3 rows @ ₹1200", with uniform seats per row. This is simple and sufficient for most events.
+Organizers could already define events with `price_tiers`: "2 rows @ ₹2500, 3 rows @ ₹1200", uniform seats per row. That's simple and covers most events.
 
 However, real venues are more complex:
   - They have AISLEs (walkways).
@@ -65,7 +65,7 @@ def validate(layout: dict) -> None:
     """
     Validates the layout structure before seat generation.
 
-    ⚠️ This runs server-side regardless of frontend validation. The layout
+    This runs server-side regardless of frontend validation. The layout
     builder is a UI convenience; the API must remain protected against
     malformed input.
 
@@ -110,7 +110,7 @@ def validate(layout: dict) -> None:
             if len(label) > MAX_LABEL_LEN:
                 raise LayoutError(f"Row label is too long: {label}")
 
-            # ⭐ Critical uniqueness check.
+            # Critical uniqueness check.
             #
             # The `seats` table enforces UNIQUE(event_id, row_label, seat_number).
             # Duplicate row labels across sections would trigger an IntegrityError
@@ -148,7 +148,7 @@ def expand(layout: dict) -> list[PlannedSeat]:
     """
     Generates a list of seats from the layout.
 
-    ⚠️ This does not write to the database; it returns a list of objects.
+    This does not write to the database; it returns a list of objects.
 
     The caller is responsible for bulk insertion within a transaction to
     ensure atomicity.

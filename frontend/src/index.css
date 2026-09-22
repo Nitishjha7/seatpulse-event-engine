@@ -52,7 +52,7 @@ body {
 .animate-rise    { animation: rise 0.3s ease-out both; }
 .animate-confetti { animation: confetti-fall 1.6s ease-in forwards; }
 
-/* ⚠️ Accessibility: Disable animations if "reduce motion" is enabled in OS settings. */
+/* Accessibility: Disable animations if "reduce motion" is enabled in OS settings. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -1,7 +1,7 @@
 """
 Ticket generation — QR code, PDF, and email.
 
-⭐ These tasks are intentionally performed outside the request cycle.
+These tasks are intentionally performed outside the request cycle.
 
 Reason: QR generation, PDF rendering, and email dispatch take 2-3 seconds.
 Performing these during checkout would make the payment appear to hang,
@@ -36,7 +36,7 @@ def new_qr_token() -> str:
     """
     Generates a random token for the QR code.
 
-    ⚠️ Do not use the booking ID, as it is sequential. A user could guess
+    Do not use the booking ID, as it is sequential. A user could guess
     subsequent IDs to access other tickets. `token_urlsafe(24)` provides
     32 characters, making it practically impossible to guess.
     """
@@ -181,7 +181,7 @@ def send_ticket_email(*, to: str, subject: str, body: str, pdf: bytes, booking_i
     """
     Sends the ticket email.
 
-    ⚠️ No actual SMTP integration is implemented here.
+    No actual SMTP integration is implemented here.
     Uses an **outbox** pattern: emails are written to disk for processing.
     This mimics Django's console/file email backend used in development.
 

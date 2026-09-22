@@ -20,7 +20,7 @@ engine = create_engine(
     # following database restarts.
     pool_pre_ping=True,
 
-    # ⚠️ These values are tied to the thread pool size.
+    # These values are tied to the thread pool size.
     #
     # Since routes are synchronous, FastAPI executes them in a thread pool
     # (default: 40 threads). Each request holds one connection from `get_db()`
@@ -34,10 +34,9 @@ engine = create_engine(
     # Current thread pool is 32; pool 20 + 20 = 40 ensures sufficient capacity.
     # Postgres default max_connections is 100, keeping this safe.
     #
-    # ⚠️ Phase 16: Values are now configurable. Note that in multi-worker
-    # setups, each worker maintains its own pool (e.g., 4 workers x 40 = 160
-    # connections), which may exceed Postgres limits. Production compose
-    # settings are currently 5 + 5.
+    # Configurable via env vars because in multi-worker setups each worker
+    # gets its own pool — 4 workers x 40 would be 160 connections, over
+    # Postgres's default limit. Prod compose sets these down to 5 + 5.
     pool_size=settings.DB_POOL_SIZE,
     max_overflow=settings.DB_MAX_OVERFLOW,
     # Fail fast to identify pool exhaustion rather than waiting 30 seconds.
@@ -47,7 +46,7 @@ engine = create_engine(
 SessionLocal = sessionmaker(
     bind=engine,
     autocommit=False,   # Manual commit for explicit transaction control.
-    autoflush=False,    # Manual flush required for locking control in Phase 4.
+    autoflush=False,    # manual flush so seat-locking writes commit exactly where intended
 )
 
 

@@ -28,7 +28,7 @@ Optimistic provides "fail-fast" behavior, while pessimistic involves
 "wait-then-fail." Under high contention (e.g., 500 users for one seat), 
 this difference is significant and is the primary metric for this benchmark.
 
----- ⚠️ Benchmark-only code ----
+---- Benchmark-only code ----
 
 The pessimistic path is only reachable when `settings.BENCHMARK_MODE` 
 is enabled. Production defaults to optimistic locking. See 
@@ -96,13 +96,13 @@ def claim_pessimistic(db: Session, seat_id: int) -> ClaimResult:
     """
     Lock the row, verify state, then update.
 
-    ⚠️ `with_for_update()` blocks. Requests wait here until the 
+    `with_for_update()` blocks. Requests wait here until the 
     transaction holding the lock commits or rolls back.
 
-    Blocking consumes database connections. High contention (e.g., 500 
-    users) can lead to pool exhaustion if the connection pool is smaller 
-    than the number of waiting requests. (Similar to the issue identified 
-    in Phase 7).
+    Blocking consumes database connections. High contention (e.g., 500
+    users) can lead to pool exhaustion if the connection pool is smaller
+    than the number of waiting requests — the same class of issue as the
+    bcrypt-held-open-transaction bug in login.
 
     Unlike the optimistic version, this does not strictly require a 
     `version` column for safety, as the row lock prevents concurrent 
@@ -116,7 +116,7 @@ def claim_pessimistic(db: Session, seat_id: int) -> ClaimResult:
     if seat is None:
         return ClaimResult(False, "not_found")
 
-    # ⭐ Check status after acquiring the lock.
+    # Check status after acquiring the lock.
     #
     # By the time this request acquires the lock, the previous holder 
     # may have already booked the seat. Re-verifying status is necessary 

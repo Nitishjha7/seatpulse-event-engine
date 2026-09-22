@@ -1,39 +1,28 @@
-# Production override — applied on top of dev compose:
+# prod override on top of the dev compose file:
 #
 #     docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 #
-# Why an override file instead of a separate one: db/redis config, network,
-# volumes, and healthchecks must remain consistent. Separate files would
-# drift over time, leading to "it behaves differently in prod" issues.
-# This file only contains what actually changes.
+# kept as an override instead of a fully separate file so db/redis/network
+# config can't drift between dev and prod — only what actually needs to
+# change for prod lives here.
 
 services:
   backend:
     build:
       target: prod
-    # ⭐ This phase is for this line — scaling from 1 worker to 4.
-    #
-    # Each worker is a separate process with its own memory. This means
-    # nothing is shared in-memory — not even WebSocket connections.
-    # That is why broadcasting in Phase 5 used Redis pub/sub, not a
-    # Python dict. That design decision is critical here.
     environment:
       WORKERS: ${WORKERS:-4}
-      # Each worker has its own connection pool. 4 workers x 40 = 160
-      # connections — while Postgres default max_connections is 100.
-      #
-      # Therefore, the per-worker pool MUST be reduced. This is a common
-      # mistake only visible after running in multi-worker mode:
-      #   4 x (5 + 5) = 40 connections, well within the 100 limit.
+      # each of the 4 workers gets its own connection pool, so the
+      # per-worker size has to come down or we blow past postgres's
+      # default max_connections (100): 4 x (5 + 5) = 40, comfortably under
       DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
-      # Admission control is also per-worker, so this must be reduced too.
-      # The invariant remains: MAX_CONCURRENT < pool + overflow.
+      # same reasoning — admission control is per-worker too, so it needs
+      # scaling down along with the pool. keep MAX_CONCURRENT < pool + overflow
       MAX_CONCURRENT_REQUESTS: ${MAX_CONCURRENT_REQUESTS:-8}
-      # Never use benchmark knobs in production.
       BENCHMARK_MODE: "false"
-    # NO source bind-mount. Code is baked into the prod image — mounting
-    # would cause the deployed image and running code to diverge.
+    # no source bind-mount — code is baked into the image here, mounting
+    # the host dir would make the running container diverge from the image
     volumes:
       - ticket_data:/app/tickets
     restart: unless-stopped
@@ -41,9 +30,6 @@ services:
   worker:
     build:
       target: prod
-    # ARQ worker doesn't need web workers — it handles its own
-    # concurrency. However, its pool must also be small, as it
-    # shares the same Postgres instance.
     environment:
       DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
@@ -55,13 +41,11 @@ services:
     build:
       target: prod
       args:
-        # ⚠️ Baked at build time. You must provide the actual domain
-        # during deployment — it cannot be changed once the container
-        # starts.
+        # baked in at build time — set the real domain before building,
+        # can't change it after the container is running
         VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
-    # nginx listens on 80, Vite used to listen on 5173
     ports:
-      - "${FRONTEND_PORT:-3000}:80"
+      - "${FRONTEND_PORT:-3000}:80"   # nginx on 80 here, vite dev server used 5173
     volumes: []
     restart: unless-stopped
 

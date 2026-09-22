@@ -44,7 +44,7 @@ def price_now(db: Session, seat: Seat) -> float:
     """
     Returns the current price for a specific seat.
 
-    ⚠️ If the seat is held, return the LOCKED price originally presented to
+    If the seat is held, return the LOCKED price originally presented to
     the user. This is a critical requirement for price consistency.
     """
     if seat.held_price is not None:

@@ -68,11 +68,11 @@ def _runs(seats: list, quantity: int, aisles: set[int]) -> list[list]:
     """
     Finds all groups of `quantity` contiguous available seats in a row.
 
-    ⚠️ Aisles break "together" status.
+    Aisles break "together" status.
 
     If an aisle exists between seat 5 and 6, they are not considered
     contiguous, as they are separated by a walkway. Sequential numbering
-    alone is insufficient; this logic relies on Phase 18 layout data.
+    alone isn't enough — this relies on the seat layout's aisle data.
 
     Without this check, the search might suggest "contiguous" seats that
     are physically separated, leading to poor user experience at the venue.
@@ -102,7 +102,7 @@ def _row_rank(row_label: str, preference: str | None) -> list[int]:
     """
     Sort key based on row preference.
 
-    Row A is closest to the stage (Phase 3 convention). "front" sorts
+    Row A is closest to the stage, by convention. "front" sorts
     ascending from A; "back" reverses this.
 
     Returns a list of character codes to ensure correct sorting of labels
@@ -139,9 +139,9 @@ def find(
 
     usable = [s for s in seats if s.status == SEAT_AVAILABLE]
 
-    # `price` is the base; current price is used for display (Phase 14).
+    # `price` is the base; current price is what actually gets shown/charged.
     #
-    # ⚠️ Use `is None` check; free seats (price 0) are falsy, and `or`
+    # Use `is None` check; free seats (price 0) are falsy, and `or`
     # would incorrectly revert to the base price.
     def price_of(seat) -> float:
         display = getattr(seat, "_display_price", None)
@@ -169,7 +169,7 @@ def find(
         if quantity == 1 or not together:
             # Contiguity not required; treat each seat as an individual match.
             #
-            # ⚠️ When `together=False` and quantity > 1, we return individual
+            # When `together=False` and quantity > 1, we return individual
             # seats rather than groups. Artificially grouping them would be
             # misleading.
             groups = [[s] for s in row_seats]
