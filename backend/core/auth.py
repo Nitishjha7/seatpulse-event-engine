@@ -236,7 +236,15 @@ def set_refresh_cookie(response, token: str) -> None:
         value=token,
         httponly=True,      # Prevents JS access (XSS protection)
         secure=settings.COOKIE_SECURE,   # False in dev (HTTP)
-        samesite="lax",     # Prevents cross-site POST (CSRF protection)
+        # "none" is required when frontend and backend are on different
+        # domains (e.g. a Cloudflare frontend calling a Render backend) —
+        # "lax" cookies are excluded from cross-site fetch/XHR requests
+        # entirely (only sent on top-level navigation), so every silent
+        # refresh call would just look logged-out. Browsers reject
+        # SameSite=None without Secure, so this only flips in production,
+        # where COOKIE_SECURE is already true; local dev (same site,
+        # different ports) keeps "lax".
+        samesite="none" if settings.COOKIE_SECURE else "lax",
         max_age=settings.REFRESH_TOKEN_DAYS * 24 * 3600,
         path="/api/auth",   # Scoped to auth routes
     )
