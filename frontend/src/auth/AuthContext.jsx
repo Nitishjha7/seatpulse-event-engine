@@ -17,6 +17,7 @@ export function useAuth() {
  * refresh on mount to restore the session from the HTTP-only cookie. This
  * also covers the post-Google-login redirect.
  */
+export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
   const [googleEnabled, setGoogleEnabled] = useState(false)
