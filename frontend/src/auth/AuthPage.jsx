@@ -31,6 +31,7 @@ export default function AuthPage() {
 
   async function handleSubmit(e) {
     e.preventDefault()
+    setBusy(true)
     setError(null)
     try {
       if (isSignup) {
