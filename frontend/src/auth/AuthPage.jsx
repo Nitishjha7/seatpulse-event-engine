@@ -22,7 +22,6 @@ export default function AuthPage() {
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')
   const [error, setError] = useState(null)
-  const [busy, setBusy] = useState(false)
 
   const isSignup = mode === 'signup'
 
