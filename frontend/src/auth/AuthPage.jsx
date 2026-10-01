@@ -50,7 +50,7 @@ export default function AuthPage() {
     <div className="flex min-h-screen items-center justify-center bg-slate-950 p-6 text-slate-100">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <h1 className="text-3xl font-bold tracking-tight">🎟️ SeatPulse</h1>
+          <h1 className="text-3xl font-bold tracking-tight">SeatPulse</h1>
           <p className="mt-1 text-sm text-slate-500">
             High-Concurrency Event Booking Engine
           </p>
